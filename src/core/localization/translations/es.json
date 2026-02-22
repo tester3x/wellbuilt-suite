@@ -1,0 +1,125 @@
+{
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancelar",
+    "done": "Listo",
+    "back": "Atrás",
+    "save": "Guardar",
+    "add": "Agregar",
+    "search": "Buscar"
+  },
+  "companySelect": {
+    "brand": "WellBuilt",
+    "suite": "SUITE",
+    "prompt": "Seleccione su empresa",
+    "searchPlaceholder": "Buscar empresas...",
+    "noResults": "No se encontraron empresas",
+    "footer": "¿No ve su empresa? Contacte a su administrador.",
+    "appsEnabled_one": "{{count}} app habilitada",
+    "appsEnabled_other": "{{count}} apps habilitadas"
+  },
+  "login": {
+    "changeCompany": "Cambiar empresa",
+    "poweredBy": "Desarrollado por",
+    "usernameLabel": "USUARIO",
+    "usernamePlaceholder": "Ingrese usuario",
+    "passwordLabel": "CONTRASEÑA",
+    "passwordPlaceholder": "Ingrese contraseña",
+    "signIn": "Iniciar Sesión",
+    "errorUsername": "Ingrese su usuario",
+    "errorPassword": "Ingrese su contraseña",
+    "errorInvalid": "Usuario o contraseña inválidos",
+    "demoHint": "Demo: cualquier usuario listado arriba / contraseña: 1234"
+  },
+  "home": {
+    "greeting": {
+      "morning": "Buenos días",
+      "afternoon": "Buenas tardes",
+      "evening": "Buenas noches"
+    },
+    "roles": {
+      "admin": "Administrador",
+      "manager": "Gerente",
+      "driver": "Conductor"
+    },
+    "stats": {
+      "apps": "Apps",
+      "active": "Activas",
+      "platform": "Plataforma"
+    },
+    "sections": {
+      "applications": "Aplicaciones",
+      "appCount_one": "{{count}} app",
+      "appCount_other": "{{count}} apps",
+      "byoa": "BYOA",
+      "byoaSubtitle": "Trae Tu Propia App"
+    },
+    "footer": {
+      "version": "WellBuilt Suite v1.0.0",
+      "tagline": "Operaciones de Campo Unificadas"
+    }
+  },
+  "appDetail": {
+    "headerTitle": "Detalles de App",
+    "notFound": "App no encontrada",
+    "about": "Acerca de",
+    "features": "Características",
+    "technical": "Técnico",
+    "platform": "Plataforma",
+    "backend": "Backend",
+    "auth": "Autenticación",
+    "sync": "Sincronización",
+    "values": {
+      "webPlatform": "Next.js / React",
+      "mobilePlatform": "React Native / Expo",
+      "backendValue": "Firebase / Firestore",
+      "authValue": "SSO Suite (Planeado)",
+      "syncValue": "Tiempo Real + Sin Conexión"
+    },
+    "meta": {
+      "webApp": "App Web",
+      "mobileApp": "App Móvil",
+      "active": "Activa",
+      "beta": "Beta",
+      "comingSoon": "Próximamente"
+    },
+    "launch": {
+      "open": "Abrir {{name}}",
+      "notAvailable": "No Disponible",
+      "notDetected": "App no detectada en este dispositivo",
+      "notInstalled": "{{name}} no está instalada en este dispositivo. Instálela primero, luego podrá abrirla desde aquí.",
+      "notInstalledTitle": "App No Instalada",
+      "notConfigured": "El enlace profundo no está configurado para {{name}} aún.",
+      "launchError": "No se pudo abrir {{name}}. Asegúrese de que esté instalada en este dispositivo.",
+      "launchErrorTitle": "Error al Abrir"
+    }
+  },
+  "addAppModal": {
+    "title": "BYOA",
+    "subtitle": "Trae Tu Propia App",
+    "categories": {
+      "navigation": "Navegación",
+      "weather": "Clima",
+      "communication": "Comunicación",
+      "tools": "Herramientas y Medios",
+      "reference": "Referencia"
+    }
+  },
+  "appCard": {
+    "web": "Web",
+    "all": "Todas",
+    "mobile": "Móvil"
+  },
+  "settings": {
+    "title": "Configuración",
+    "language": "Idioma",
+    "languageSubtitle": "Elija su idioma preferido",
+    "skin": "Tema de App",
+    "skinSubtitle": "Elija cómo se ve la app",
+    "currentSkin": "Actual: {{name}}",
+    "languages": {
+      "en": "English",
+      "es": "Español"
+    }
+  }
+}

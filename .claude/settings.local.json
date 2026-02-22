@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"C:\"\" | grep -i \"water|jsa|wellbuilt \")",
+      "Bash(ls:*)",
+      "Bash(npx create-expo-app:*)",
+      "Bash(npx create-expo-app@latest wellbuilt-suite --template blank-typescript)",
+      "Bash(npx expo install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx expo export:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(npm install:*)",
+      "Bash(npm ls:*)",
+      "Bash(npx eas-cli:*)",
+      "Bash(git commit:*)",
+      "Bash(npx --help:*)",
+      "Bash(node -e:*)",
+      "Bash(git -C \"C:/dev/waterticket-app\" log --oneline -20)",
+      "Bash(git -C \"C:/dev/waterticket-app\" ls-files:*)",
+      "WebFetch(domain:deq.nd.gov)",
+      "WebFetch(domain:www.hess.com)",
+      "WebFetch(domain:www.rwpc.us)",
+      "WebFetch(domain:www.dmr.nd.gov)",
+      "WebFetch(domain:tc.canada.ca)",
+      "WebFetch(domain:www.engagemobilize.com)",
+      "Bash(npx eas build:*)",
+      "Bash(npx eas build:view:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:expo.dev)",
+      "WebFetch(domain:gis.dmr.nd.gov)",
+      "Bash(dir:*)"
+    ]
+  }
+}

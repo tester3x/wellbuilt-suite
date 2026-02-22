@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "WellBuilt Suite",
+    "slug": "wellbuilt-suite",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "scheme": "wellbuilt-suite",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#05060B"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.wellbuilt.suite",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "wellbuiltmobile",
+          "wellbuilt-tickets"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#05060B"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.wellbuilt.suite"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "manifestQueries": {
+              "package": [
+                "com.wellbuiltmobile.app",
+                "com.testerxxx.waterticket"
+              ],
+              "intent": [
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "wellbuiltmobile"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "wellbuilt-tickets"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expo-localization",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "202541c3-1f23-43c5-93ab-3cd1c2064595"
+      }
+    }
+  }
+}

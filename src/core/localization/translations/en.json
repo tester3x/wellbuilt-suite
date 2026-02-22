@@ -1,0 +1,125 @@
+{
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "done": "Done",
+    "back": "Back",
+    "save": "Save",
+    "add": "Add",
+    "search": "Search"
+  },
+  "companySelect": {
+    "brand": "WellBuilt",
+    "suite": "SUITE",
+    "prompt": "Select your company",
+    "searchPlaceholder": "Search companies...",
+    "noResults": "No companies found",
+    "footer": "Don't see your company? Contact your administrator.",
+    "appsEnabled_one": "{{count}} app enabled",
+    "appsEnabled_other": "{{count}} apps enabled"
+  },
+  "login": {
+    "changeCompany": "Change company",
+    "poweredBy": "Powered by",
+    "usernameLabel": "USERNAME",
+    "usernamePlaceholder": "Enter username",
+    "passwordLabel": "PASSWORD",
+    "passwordPlaceholder": "Enter password",
+    "signIn": "Sign In",
+    "errorUsername": "Enter your username",
+    "errorPassword": "Enter your password",
+    "errorInvalid": "Invalid username or password",
+    "demoHint": "Demo: any username listed above / password: 1234"
+  },
+  "home": {
+    "greeting": {
+      "morning": "Good morning",
+      "afternoon": "Good afternoon",
+      "evening": "Good evening"
+    },
+    "roles": {
+      "admin": "Administrator",
+      "manager": "Manager",
+      "driver": "Driver"
+    },
+    "stats": {
+      "apps": "Apps",
+      "active": "Active",
+      "platform": "Platform"
+    },
+    "sections": {
+      "applications": "Applications",
+      "appCount_one": "{{count}} app",
+      "appCount_other": "{{count}} apps",
+      "byoa": "BYOA",
+      "byoaSubtitle": "Bring Your Own App"
+    },
+    "footer": {
+      "version": "WellBuilt Suite v1.0.0",
+      "tagline": "Unified Oil Field Operations"
+    }
+  },
+  "appDetail": {
+    "headerTitle": "App Details",
+    "notFound": "App not found",
+    "about": "About",
+    "features": "Features",
+    "technical": "Technical",
+    "platform": "Platform",
+    "backend": "Backend",
+    "auth": "Auth",
+    "sync": "Sync",
+    "values": {
+      "webPlatform": "Next.js / React",
+      "mobilePlatform": "React Native / Expo",
+      "backendValue": "Firebase / Firestore",
+      "authValue": "Suite SSO (Planned)",
+      "syncValue": "Real-time + Offline"
+    },
+    "meta": {
+      "webApp": "Web App",
+      "mobileApp": "Mobile App",
+      "active": "Active",
+      "beta": "Beta",
+      "comingSoon": "Coming Soon"
+    },
+    "launch": {
+      "open": "Open {{name}}",
+      "notAvailable": "Not Available",
+      "notDetected": "App not detected on this device",
+      "notInstalled": "{{name}} is not installed on this device. Install it first, then you can launch it from here.",
+      "notInstalledTitle": "App Not Installed",
+      "notConfigured": "Deep linking is not configured for {{name}} yet.",
+      "launchError": "Could not open {{name}}. Make sure it is installed on this device.",
+      "launchErrorTitle": "Launch Error"
+    }
+  },
+  "addAppModal": {
+    "title": "BYOA",
+    "subtitle": "Bring Your Own App",
+    "categories": {
+      "navigation": "Navigation",
+      "weather": "Weather",
+      "communication": "Communication",
+      "tools": "Tools & Media",
+      "reference": "Reference"
+    }
+  },
+  "appCard": {
+    "web": "Web",
+    "all": "All",
+    "mobile": "Mobile"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "languageSubtitle": "Choose your preferred language",
+    "skin": "App Theme",
+    "skinSubtitle": "Choose how the app looks",
+    "currentSkin": "Current: {{name}}",
+    "languages": {
+      "en": "English",
+      "es": "Español"
+    }
+  }
+}
