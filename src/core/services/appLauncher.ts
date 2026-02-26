@@ -8,10 +8,13 @@ export interface WBAppLaunchOptions {
   scheme?: string;
   /** Android package name for intent fallback */
   androidPackage?: string;
+  /** Web URL for browser-based apps (opens in browser instead of deep link) */
+  webUrl?: string;
   /** SSO params — auto-injected by useAppLauncher hook when driver is logged in */
   sso?: {
     hash: string;
     name: string;
+    companyId?: string;
   };
 }
 
@@ -38,8 +41,16 @@ export async function canLaunchApp(scheme?: string): Promise<boolean> {
  * Launch a WellBuilt ecosystem app via deep link with Android intent fallback.
  */
 export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
-  const { name, scheme, androidPackage, sso } = options;
+  const { name, scheme, androidPackage, webUrl, sso } = options;
   const t = i18n.t.bind(i18n);
+
+  // Web apps open in the browser
+  if (!scheme && webUrl) {
+    try { await Linking.openURL(webUrl); } catch {
+      Alert.alert(name, t('appDetail.launch.launchError', { name }), [{ text: t('common.ok') }]);
+    }
+    return;
+  }
 
   if (!scheme) {
     Alert.alert(
@@ -54,7 +65,9 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
   // can skip its own login screen when launched from WB Suite.
   let url = `${scheme}://`;
   if (sso) {
-    const params = new URLSearchParams({ hash: sso.hash, name: sso.name });
+    const paramObj: Record<string, string> = { hash: sso.hash, name: sso.name };
+    if (sso.companyId) paramObj.companyId = sso.companyId;
+    const params = new URLSearchParams(paramObj);
     url = `${scheme}://login?${params.toString()}`;
   }
 
@@ -89,20 +102,36 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
 
 /**
  * Launch an external/BYOA app via URL scheme with web fallback.
+ * Shows alert if neither native nor web launch succeeds.
  */
 export async function launchExternalApp(options: ExternalLaunchOptions): Promise<void> {
   const { url, webUrl } = options;
+  const t = i18n.t.bind(i18n);
 
   try {
     const supported = await Linking.canOpenURL(url);
     if (supported) {
       await Linking.openURL(url);
-    } else if (webUrl) {
-      await Linking.openURL(webUrl);
+      return;
     }
   } catch {
-    if (webUrl) {
+    // Native scheme failed — try web fallback
+  }
+
+  // Web fallback
+  if (webUrl) {
+    try {
       await Linking.openURL(webUrl);
+      return;
+    } catch {
+      // Web fallback also failed
     }
   }
+
+  // Nothing worked — tell the user
+  Alert.alert(
+    t('common.appNotFound', { defaultValue: 'App Not Found' }),
+    t('common.appNotInstalled', { defaultValue: 'This app doesn\'t appear to be installed on your device.' }),
+    [{ text: t('common.ok') }]
+  );
 }
