@@ -71,67 +71,76 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
     url = `${scheme}://login?${params.toString()}`;
   }
 
+  // Try opening directly — canOpenURL is unreliable on Android 11+
   try {
-    const supported = await Linking.canOpenURL(url);
-    if (supported) {
-      await Linking.openURL(url);
-    } else {
-      // Try Android package intent as fallback
-      if (Platform.OS === 'android' && androidPackage) {
-        const intentUrl = `intent://#Intent;package=${androidPackage};end`;
-        const intentSupported = await Linking.canOpenURL(intentUrl);
-        if (intentSupported) {
-          await Linking.openURL(intentUrl);
-          return;
-        }
-      }
-      Alert.alert(
-        t('appDetail.launch.notInstalledTitle'),
-        t('appDetail.launch.notInstalled', { name }),
-        [{ text: t('common.ok') }]
-      );
-    }
+    await Linking.openURL(url);
+    return;
   } catch {
-    Alert.alert(
-      t('appDetail.launch.launchErrorTitle'),
-      t('appDetail.launch.launchError', { name }),
-      [{ text: t('common.ok') }]
-    );
+    // Deep link failed — try Android intent fallback
   }
+
+  if (Platform.OS === 'android' && androidPackage) {
+    try {
+      const intentUrl = `intent://#Intent;package=${androidPackage};end`;
+      await Linking.openURL(intentUrl);
+      return;
+    } catch {
+      // Intent also failed
+    }
+  }
+
+  Alert.alert(
+    t('appDetail.launch.notInstalledTitle'),
+    t('appDetail.launch.notInstalled', { name }),
+    [{ text: t('common.ok') }]
+  );
 }
 
 /**
  * Launch an external/BYOA app via URL scheme with web fallback.
- * Shows alert if neither native nor web launch succeeds.
+ * Tries opening the native scheme directly (canOpenURL is unreliable
+ * on Android 11+ even with manifest queries declared). Falls back
+ * to web URL only if the native open throws.
  */
 export async function launchExternalApp(options: ExternalLaunchOptions): Promise<void> {
   const { url, webUrl } = options;
   const t = i18n.t.bind(i18n);
+  const isNative = !url.startsWith('http://') && !url.startsWith('https://');
 
-  try {
-    const supported = await Linking.canOpenURL(url);
-    if (supported) {
+  if (isNative) {
+    // Try opening the native app directly — don't pre-check with canOpenURL
+    try {
       await Linking.openURL(url);
       return;
-    }
-  } catch {
-    // Native scheme failed — try web fallback
-  }
-
-  // Web fallback
-  if (webUrl) {
-    try {
-      await Linking.openURL(webUrl);
-      return;
     } catch {
-      // Web fallback also failed
+      // Native scheme failed — fall through to web fallback
+    }
+
+    // Web fallback for native schemes that failed
+    if (webUrl) {
+      try {
+        await Linking.openURL(webUrl);
+        return;
+      } catch {
+        // Web fallback also failed
+      }
+    }
+
+    Alert.alert(
+      t('common.appNotFound', { defaultValue: 'App Not Found' }),
+      t('common.appNotInstalled', { defaultValue: 'This app doesn\'t appear to be installed on your device.' }),
+      [{ text: t('common.ok') }]
+    );
+  } else {
+    // HTTP/HTTPS URL — just open it directly
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(
+        t('common.appNotFound', { defaultValue: 'App Not Found' }),
+        t('common.appNotInstalled', { defaultValue: 'Could not open this link.' }),
+        [{ text: t('common.ok') }]
+      );
     }
   }
-
-  // Nothing worked — tell the user
-  Alert.alert(
-    t('common.appNotFound', { defaultValue: 'App Not Found' }),
-    t('common.appNotInstalled', { defaultValue: 'This app doesn\'t appear to be installed on your device.' }),
-    [{ text: t('common.ok') }]
-  );
 }
