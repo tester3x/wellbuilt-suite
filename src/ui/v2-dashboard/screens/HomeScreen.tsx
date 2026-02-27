@@ -9,7 +9,7 @@ import { useAuth } from '@/core/context/AuthContext';
 import { useUserApps } from '@/core/context/UserAppsContext';
 import { wellbuiltApps } from '@/core/data/apps';
 import { pinnedApps, appCatalog } from '@/core/data/externalApps';
-import { useGreeting, useAppLauncher } from '@/core/hooks';
+import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { CommandHeader } from '../components/CommandHeader';
 import { DashboardStatsPanel } from '../components/DashboardStatsPanel';
 import { AppListItem } from '../components/AppListItem';
@@ -22,7 +22,8 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
   const { enabledAppIds } = useUserApps();
-  const { launchExternalApp } = useAppLauncher();
+  const { launchExternalApp, launchWBApp } = useAppLauncher();
+  const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -44,7 +45,7 @@ export default function HomeScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <CommandHeader
         title={`${greeting}, ${user.displayName}`}
-        subtitle={`${roleLabel} — WellBuilt`}
+        subtitle={`${roleLabel} — ${user.companyName || 'WellBuilt'}`}
         onSettings={() => router.push('/settings')}
         onAction={logout}
         actionIcon="logout"
@@ -63,7 +64,16 @@ export default function HomeScreen() {
         >
           <View style={styles.appList}>
             {companyApps.map(app => (
-              <AppListItem key={app.id} app={app} onPress={() => router.push(`/app-detail?id=${app.id}`)} />
+              <AppListItem key={app.id} app={app}
+                onPress={() => {
+                  if (hasLaunched(app.id)) {
+                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
+                  } else {
+                    router.push(`/app-detail?id=${app.id}`);
+                  }
+                }}
+                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
+              />
             ))}
           </View>
         </WidgetContainer>

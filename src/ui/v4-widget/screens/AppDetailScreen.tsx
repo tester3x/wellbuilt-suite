@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { View, Text, Image, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -7,17 +7,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { wellbuiltApps } from '@/core/data/apps';
-import { useAppLauncher } from '@/core/hooks';
+import { useAppLauncher, useFirstLaunch } from '@/core/hooks';
 
 export default function AppDetailScreen() {
   const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const app = wellbuiltApps.find(a => a.id === id);
-  const { canLaunchApp, launchWBApp } = useAppLauncher();
-  const [canLaunch, setCanLaunch] = useState<boolean | null>(null);
-
-  useEffect(() => { canLaunchApp(app?.scheme).then(setCanLaunch); }, [app?.scheme]);
+  const { launchWBApp } = useAppLauncher();
+  const { markLaunched } = useFirstLaunch();
 
   if (!app) {
     return (
@@ -27,7 +25,11 @@ export default function AppDetailScreen() {
     );
   }
 
-  const handleLaunch = () => launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage });
+  const handleLaunch = () => {
+    markLaunched(app.id);
+    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
+  };
+  const isWebApp = app.platform === 'web';
   const platformLabel = app.platform === 'web' ? t('appDetail.meta.webApp') : t('appDetail.meta.mobileApp');
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
 
@@ -106,17 +108,11 @@ export default function AppDetailScreen() {
       </ScrollView>
 
       <View style={[styles.launchBar, { paddingBottom: insets.bottom + spacing.md }]}>
-        {canLaunch === false && app.scheme && (
-          <View style={styles.notInstalledBanner}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={14} color={colors.status.warning} />
-            <Text style={styles.notInstalledText}>{t('appDetail.launch.notDetected')}</Text>
-          </View>
-        )}
         <Pressable onPress={handleLaunch} style={({ pressed }) => [styles.launchButton, pressed && styles.launchButtonPressed]}>
           <LinearGradient colors={[app.color, `${app.color}CC`]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.launchGradient}>
-            <MaterialCommunityIcons name={canLaunch ? 'launch' : app.scheme ? 'download' : 'lock-outline'} size={20} color={colors.text.inverse} />
+            <MaterialCommunityIcons name={isWebApp ? 'web' : 'launch'} size={20} color={colors.text.inverse} />
             <Text style={styles.launchText}>
-              {canLaunch || app.scheme ? t('appDetail.launch.open', { name: app.name }) : t('appDetail.launch.notAvailable')}
+              {isWebApp ? t('appDetail.launch.openBrowser', { name: app.name, defaultValue: 'Open in Browser' }) : t('appDetail.launch.open', { name: app.name })}
             </Text>
           </LinearGradient>
         </Pressable>
@@ -156,8 +152,6 @@ const styles = StyleSheet.create({
   techValue: { ...typography.body, color: colors.text.primary, fontWeight: '500' },
 
   launchBar: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: spacing.lg, paddingTop: spacing.md, backgroundColor: colors.bg.primary, borderTopWidth: 1, borderTopColor: colors.border.subtle },
-  notInstalledBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, marginBottom: spacing.sm },
-  notInstalledText: { ...typography.caption, color: colors.status.warning },
   launchButton: { borderRadius: radius.md, overflow: 'hidden' },
   launchButtonPressed: { opacity: 0.9, transform: [{ scale: 0.98 }] },
   launchGradient: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: spacing.md, gap: spacing.sm },

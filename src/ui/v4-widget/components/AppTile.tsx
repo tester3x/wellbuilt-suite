@@ -11,15 +11,16 @@ interface AppTileProps {
   app: WellBuiltApp;
   size: TileSize;
   onPress: () => void;
+  onLongPress?: () => void;
 }
 
-export function AppTile({ app, size, onPress }: AppTileProps) {
+export function AppTile({ app, size, onPress, onLongPress }: AppTileProps) {
   const { t } = useTranslation();
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
 
   if (size === 'large') {
     return (
-      <Pressable onPress={onPress} style={({ pressed }) => [styles.tileLarge, pressed && styles.tilePressed]}>
+      <Pressable onPress={onPress} onLongPress={onLongPress} style={({ pressed }) => [styles.tileLarge, pressed && styles.tilePressed]}>
         <View style={styles.largeTop}>
           <View style={[styles.largeIcon, { backgroundColor: `${app.color}15` }]}>
             {app.logo ? (
@@ -42,7 +43,7 @@ export function AppTile({ app, size, onPress }: AppTileProps) {
 
   if (size === 'medium') {
     return (
-      <Pressable onPress={onPress} style={({ pressed }) => [styles.tileMedium, pressed && styles.tilePressed]}>
+      <Pressable onPress={onPress} onLongPress={onLongPress} style={({ pressed }) => [styles.tileMedium, pressed && styles.tilePressed]}>
         <View style={[styles.mediumIcon, { backgroundColor: `${app.color}15` }]}>
           {app.logo ? (
             <Image source={app.logo} style={styles.mediumLogoImage} resizeMode="contain" />
@@ -61,7 +62,7 @@ export function AppTile({ app, size, onPress }: AppTileProps) {
 
   // small
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.tileSmall, pressed && styles.tilePressed]}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} style={({ pressed }) => [styles.tileSmall, pressed && styles.tilePressed]}>
       <View style={[styles.smallIcon, { backgroundColor: `${app.color}15` }]}>
         <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={20} color={app.color} />
       </View>

@@ -8,14 +8,15 @@ import { WellBuiltApp } from '@/core/data/apps';
 interface SidebarAppItemProps {
   app: WellBuiltApp;
   onPress: () => void;
+  onLongPress?: () => void;
 }
 
-export function SidebarAppItem({ app, onPress }: SidebarAppItemProps) {
+export function SidebarAppItem({ app, onPress, onLongPress }: SidebarAppItemProps) {
   const { t } = useTranslation();
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.container, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} style={({ pressed }) => [styles.container, pressed && styles.pressed]}>
       <View style={[styles.iconWrap, { backgroundColor: `${app.color}15` }]}>
         <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={16} color={app.color} />
       </View>

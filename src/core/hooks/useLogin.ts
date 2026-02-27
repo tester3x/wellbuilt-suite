@@ -53,6 +53,8 @@ export interface UseLoginReturn {
   setDisplayName: (name: string) => void;
   passcode: string;
   setPasscode: (code: string) => void;
+  companyName: string;
+  setCompanyName: (name: string) => void;
   showPasscode: boolean;
   setShowPasscode: (show: boolean) => void;
   error: string;
@@ -74,6 +76,7 @@ export function useLogin(): UseLoginReturn {
   const [mode, setMode] = useState<LoginMode>('checking');
   const [passcode, setPasscode] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [error, setError] = useState('');
   const [pendingName, setPendingName] = useState('');
   const [showPasscode, setShowPasscode] = useState(false);
@@ -182,7 +185,9 @@ export function useLogin(): UseLoginReturn {
           result.displayName,
           result.passcodeHash,
           result.isAdmin || false,
-          result.isViewer || false
+          result.isViewer || false,
+          result.companyId,
+          result.companyName,
         );
         router.replace('/home');
       } else {
@@ -227,6 +232,7 @@ export function useLogin(): UseLoginReturn {
       const result = await submitRegistration({
         passcode: passcode.trim(),
         displayName: displayName.trim(),
+        companyName: companyName.trim() || undefined,
       });
 
       if (result.success) {
@@ -265,6 +271,7 @@ export function useLogin(): UseLoginReturn {
     await clearPendingRegistration();
     setPasscode('');
     setDisplayName('');
+    setCompanyName('');
     setPendingName('');
     setMode('login');
   }, []);
@@ -278,6 +285,7 @@ export function useLogin(): UseLoginReturn {
   const handleSwitchToRegister = useCallback(() => {
     setError('');
     setPasscode('');
+    setCompanyName('');
     setShowPasscode(false);
     setMode('register');
   }, []);
@@ -285,11 +293,14 @@ export function useLogin(): UseLoginReturn {
   const handleSwitchToLogin = useCallback(() => {
     setError('');
     setPasscode('');
+    setCompanyName('');
     setShowPasscode(false);
     setMode('login');
   }, []);
 
-  const canSubmit = !!(passcode.trim() && displayName.trim() && !passcodeError);
+  const canSubmit = mode === 'register'
+    ? !!(passcode.trim() && displayName.trim() && companyName.trim() && !passcodeError)
+    : !!(passcode.trim() && displayName.trim() && !passcodeError);
 
   return {
     mode,
@@ -297,6 +308,8 @@ export function useLogin(): UseLoginReturn {
     setDisplayName,
     passcode,
     setPasscode,
+    companyName,
+    setCompanyName,
     showPasscode,
     setShowPasscode,
     error,

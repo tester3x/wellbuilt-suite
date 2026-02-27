@@ -9,14 +9,15 @@ import { WellBuiltApp } from '@/core/data/apps';
 interface AppListItemProps {
   app: WellBuiltApp;
   onPress: () => void;
+  onLongPress?: () => void;
 }
 
-export function AppListItem({ app, onPress }: AppListItemProps) {
+export function AppListItem({ app, onPress, onLongPress }: AppListItemProps) {
   const { t } = useTranslation();
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.container, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} style={({ pressed }) => [styles.container, pressed && styles.pressed]}>
       <View style={[styles.iconWrap, { backgroundColor: `${app.color}15` }]}>
         <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={24} color={app.color} />
       </View>

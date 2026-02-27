@@ -12,19 +12,24 @@ const CARD_WIDTH = (SCREEN_WIDTH - spacing.lg * 2 - spacing.md) / 2;
 interface AppCardProps {
   app: WellBuiltApp;
   onPress: () => void;
+  onLongPress?: () => void;
   index: number;
+  /** If true, show locked overlay (tier-gated) */
+  locked?: boolean;
 }
 
-export function AppCard({ app, onPress, index }: AppCardProps) {
+export function AppCard({ app, onPress, onLongPress, index, locked }: AppCardProps) {
   const { t } = useTranslation();
   const isLeftColumn = index % 2 === 0;
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={locked ? undefined : onPress}
+      onLongPress={locked ? onPress : onLongPress}
       style={({ pressed }) => [
         styles.container, { marginRight: isLeftColumn ? spacing.md : 0 },
-        pressed && styles.pressed,
+        pressed && !locked && styles.pressed,
+        locked && styles.lockedContainer,
       ]}
     >
       <LinearGradient
@@ -35,14 +40,15 @@ export function AppCard({ app, onPress, index }: AppCardProps) {
         <View style={[styles.iconContainer, { backgroundColor: `${app.color}20` }]}>
           <MaterialCommunityIcons
             name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap}
-            size={28} color={app.color}
+            size={28} color={locked ? colors.text.muted : app.color}
           />
         </View>
-        <Text style={styles.name} numberOfLines={1}>{app.shortName}</Text>
+        <Text style={[styles.name, locked && styles.lockedText]} numberOfLines={1}>{app.shortName}</Text>
         <Text style={styles.subtitle} numberOfLines={1}>{app.subtitle}</Text>
         <View style={styles.footer}>
           <View style={[styles.statusDot, {
-            backgroundColor: app.status === 'active' ? colors.status.online
+            backgroundColor: locked ? colors.text.muted
+              : app.status === 'active' ? colors.status.online
               : app.status === 'beta' ? colors.status.warning : colors.status.offline,
           }]} />
           <Text style={styles.version}>v{app.version}</Text>
@@ -56,6 +62,11 @@ export function AppCard({ app, onPress, index }: AppCardProps) {
             {app.platform === 'web' ? t('appCard.web') : app.platform === 'both' ? t('appCard.all') : t('appCard.mobile')}
           </Text>
         </View>
+        {locked && (
+          <View style={styles.lockOverlay}>
+            <MaterialCommunityIcons name="lock-outline" size={22} color={colors.text.muted} />
+          </View>
+        )}
       </LinearGradient>
     </Pressable>
   );
@@ -73,4 +84,7 @@ const styles = StyleSheet.create({
   version: { ...typography.caption, color: colors.text.muted, fontSize: 11 },
   platformBadge: { position: 'absolute', top: spacing.md, right: spacing.md, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, borderWidth: 1, gap: 3 },
   platformText: { fontSize: 9, fontWeight: '600', color: colors.text.muted },
+  lockedContainer: { opacity: 0.5 },
+  lockedText: { color: colors.text.muted },
+  lockOverlay: { position: 'absolute', top: spacing.md, left: spacing.md, width: 28, height: 28, borderRadius: radius.full, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
 });

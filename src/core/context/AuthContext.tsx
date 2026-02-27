@@ -23,6 +23,8 @@ export interface AuthUser {
   isAdmin: boolean;
   isViewer: boolean;
   role: 'driver' | 'admin' | 'viewer';
+  companyId?: string;
+  companyName?: string;
 }
 
 interface AuthContextType {
@@ -56,6 +58,8 @@ function sessionToUser(session: DriverSession): AuthUser {
     isAdmin: session.isAdmin,
     isViewer: session.isViewer,
     role: session.isAdmin ? 'admin' : session.isViewer ? 'viewer' : 'driver',
+    companyId: session.companyId,
+    companyName: session.companyName,
   };
 }
 
@@ -63,27 +67,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // On mount: check SecureStore for existing session, revalidate against Firebase
+  // On mount: check SecureStore for existing session
+  // OPTIMISTIC AUTH: If local session exists, trust it immediately and revalidate
+  // in the background. This eliminates the 0-10 second splash screen hang on slow
+  // networks. If background revalidation fails, user gets logged out then.
   useEffect(() => {
     (async () => {
       try {
         const session = await getDriverSession();
         if (session) {
-          const stillValid = await revalidateDriverSession();
-          if (stillValid) {
-            // Re-read session in case revalidation updated fields
-            const freshSession = await getDriverSession();
-            if (freshSession) {
-              setUser(sessionToUser(freshSession));
+          // Trust the local session immediately — no waiting for Firebase
+          setUser(sessionToUser(session));
+          setLoading(false);
+
+          // Revalidate in background (non-blocking)
+          revalidateDriverSession().then(async (stillValid) => {
+            if (!stillValid) {
+              console.log('[AuthContext] Background revalidation failed — logging out');
+              setUser(null);
+              // revalidateDriverSession already cleared SecureStore
+            } else {
+              // Re-read session in case revalidation updated fields
+              const freshSession = await getDriverSession();
+              if (freshSession) {
+                setUser(sessionToUser(freshSession));
+              }
             }
-          }
-          // If not valid, revalidateDriverSession already cleared SecureStore
+          }).catch((err) => {
+            // Network error during revalidation — keep the user logged in (offline-friendly)
+            console.log('[AuthContext] Background revalidation error (keeping session):', err);
+          });
+          return; // Early return — loading already set to false above
         }
       } catch (err) {
         console.error('[AuthContext] Error checking session:', err);
-      } finally {
-        setLoading(false);
       }
+      // No session found (or error reading SecureStore) — done loading
+      setLoading(false);
     })();
   }, []);
 
@@ -95,7 +115,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.displayName,
         result.passcodeHash,
         result.isAdmin || false,
-        result.isViewer || false
+        result.isViewer || false,
+        result.companyId,
+        result.companyName
       );
       setUser({
         driverId: result.driverId,
@@ -104,6 +126,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAdmin: result.isAdmin || false,
         isViewer: result.isViewer || false,
         role: result.isAdmin ? 'admin' : result.isViewer ? 'viewer' : 'driver',
+        companyId: result.companyId,
+        companyName: result.companyName,
       });
       return { success: true };
     }

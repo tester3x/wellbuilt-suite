@@ -12,13 +12,14 @@ interface SidebarProps {
   userName: string;
   roleLabel: string;
   onAppPress: (appId: string) => void;
+  onAppLongPress?: (appId: string) => void;
   onSettings: () => void;
   onLogout: () => void;
   collapsed: boolean;
   onToggle: () => void;
 }
 
-export function Sidebar({ apps, companyName, userName, roleLabel, onAppPress, onSettings, onLogout, collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ apps, companyName, userName, roleLabel, onAppPress, onAppLongPress, onSettings, onLogout, collapsed, onToggle }: SidebarProps) {
   const { t } = useTranslation();
 
   if (collapsed) {
@@ -32,7 +33,7 @@ export function Sidebar({ apps, companyName, userName, roleLabel, onAppPress, on
         </View>
         <ScrollView style={styles.collapsedApps} showsVerticalScrollIndicator={false}>
           {apps.map(app => (
-            <Pressable key={app.id} onPress={() => onAppPress(app.id)}
+            <Pressable key={app.id} onPress={() => onAppPress(app.id)} onLongPress={() => onAppLongPress?.(app.id)}
               style={({ pressed }) => [styles.collapsedAppBtn, pressed && styles.collapsedAppBtnPressed]}>
               <View style={[styles.collapsedAppIcon, { backgroundColor: `${app.color}15` }]}>
                 <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={app.color} />
@@ -81,7 +82,7 @@ export function Sidebar({ apps, companyName, userName, roleLabel, onAppPress, on
 
       <ScrollView style={styles.appList} showsVerticalScrollIndicator={false}>
         {apps.map(app => (
-          <SidebarAppItem key={app.id} app={app} onPress={() => onAppPress(app.id)} />
+          <SidebarAppItem key={app.id} app={app} onPress={() => onAppPress(app.id)} onLongPress={() => onAppLongPress?.(app.id)} />
         ))}
       </ScrollView>
 

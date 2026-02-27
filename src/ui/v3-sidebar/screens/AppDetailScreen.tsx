@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { colors, spacing } from '@/core/theme';
 import { wellbuiltApps } from '@/core/data/apps';
 import { useAuth } from '@/core/context/AuthContext';
-import { useAppLauncher } from '@/core/hooks';
+import { useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
 import { CompactHeader } from '../components/CompactHeader';
 import { ContentArea } from '../components/ContentArea';
@@ -19,11 +19,9 @@ export default function AppDetailScreen() {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
   const app = wellbuiltApps.find(a => a.id === id);
-  const { canLaunchApp, launchWBApp } = useAppLauncher();
-  const [canLaunch, setCanLaunch] = useState<boolean | null>(null);
+  const { launchWBApp } = useAppLauncher();
+  const { markLaunched } = useFirstLaunch();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-  useEffect(() => { canLaunchApp(app?.scheme).then(setCanLaunch); }, [app?.scheme]);
 
   if (!user) return null;
 
@@ -41,14 +39,17 @@ export default function AppDetailScreen() {
     );
   }
 
-  const handleLaunch = () => launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage });
+  const handleLaunch = () => {
+    markLaunched(app.id);
+    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.body}>
         <Sidebar
           apps={companyApps}
-          companyName="WellBuilt"
+          companyName={user.companyName || 'WellBuilt'}
           userName={user.displayName}
           roleLabel={roleLabel}
           onAppPress={(appId) => router.push(`/app-detail?id=${appId}`)}
@@ -60,7 +61,7 @@ export default function AppDetailScreen() {
         <View style={styles.mainContent}>
           <CompactHeader title={t('appDetail.headerTitle')} onBack={() => router.back()} />
           <ContentArea>
-            <AppContentPanel app={app} canLaunch={canLaunch} onLaunch={handleLaunch} />
+            <AppContentPanel app={app} onLaunch={handleLaunch} />
           </ContentArea>
         </View>
       </View>

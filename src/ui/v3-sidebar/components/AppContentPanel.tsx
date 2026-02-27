@@ -8,11 +8,10 @@ import { WellBuiltApp } from '@/core/data/apps';
 
 interface AppContentPanelProps {
   app: WellBuiltApp;
-  canLaunch: boolean | null;
   onLaunch: () => void;
 }
 
-export function AppContentPanel({ app, canLaunch, onLaunch }: AppContentPanelProps) {
+export function AppContentPanel({ app, onLaunch }: AppContentPanelProps) {
   const { t } = useTranslation();
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
   const platformLabel = app.platform === 'web' ? t('appDetail.meta.webApp') : t('appDetail.meta.mobileApp');
@@ -80,18 +79,11 @@ export function AppContentPanel({ app, canLaunch, onLaunch }: AppContentPanelPro
         </View>
       </View>
 
-      {canLaunch === false && app.scheme && (
-        <View style={styles.notInstalledBanner}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={14} color={colors.status.warning} />
-          <Text style={styles.notInstalledText}>{t('appDetail.launch.notDetected')}</Text>
-        </View>
-      )}
-
       <Pressable onPress={onLaunch} style={({ pressed }) => [styles.launchButton, pressed && styles.launchButtonPressed]}>
         <LinearGradient colors={[app.color, `${app.color}CC`]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.launchGradient}>
-          <MaterialCommunityIcons name={canLaunch ? 'launch' : app.scheme ? 'download' : 'lock-outline'} size={20} color={colors.text.inverse} />
+          <MaterialCommunityIcons name={app.platform === 'web' ? 'web' : 'launch'} size={20} color={colors.text.inverse} />
           <Text style={styles.launchText}>
-            {canLaunch || app.scheme ? t('appDetail.launch.open', { name: app.name }) : t('appDetail.launch.notAvailable')}
+            {app.platform === 'web' ? t('appDetail.launch.openBrowser', { name: app.name, defaultValue: 'Open in Browser' }) : t('appDetail.launch.open', { name: app.name })}
           </Text>
         </LinearGradient>
       </Pressable>
@@ -122,8 +114,6 @@ const styles = StyleSheet.create({
   techItem: { flex: 1, minWidth: '40%', backgroundColor: colors.bg.card, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border.subtle, padding: spacing.sm },
   techLabel: { ...typography.caption, color: colors.text.muted, fontSize: 9, marginBottom: 4 },
   techValue: { ...typography.bodySmall, color: colors.text.primary, fontWeight: '500' },
-  notInstalledBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs },
-  notInstalledText: { ...typography.caption, color: colors.status.warning },
   launchButton: { borderRadius: radius.md, overflow: 'hidden' },
   launchButtonPressed: { opacity: 0.9, transform: [{ scale: 0.98 }] },
   launchGradient: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: spacing.md, gap: spacing.sm },

@@ -9,7 +9,7 @@ import { useAuth } from '@/core/context/AuthContext';
 import { useUserApps } from '@/core/context/UserAppsContext';
 import { wellbuiltApps } from '@/core/data/apps';
 import { pinnedApps, appCatalog } from '@/core/data/externalApps';
-import { useGreeting, useAppLauncher } from '@/core/hooks';
+import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { TileGrid } from '../components/TileGrid';
 import { AppTile } from '../components/AppTile';
 import { StatTile } from '../components/StatTile';
@@ -21,7 +21,8 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
   const { enabledAppIds } = useUserApps();
-  const { launchExternalApp } = useAppLauncher();
+  const { launchWBApp, launchExternalApp } = useAppLauncher();
+  const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -73,7 +74,14 @@ export default function HomeScreen() {
                 key={app.id}
                 app={app}
                 size={idx === 0 ? 'large' : idx < 3 ? 'medium' : 'small'}
-                onPress={() => router.push(`/app-detail?id=${app.id}`)}
+                onPress={() => {
+                  if (hasLaunched(app.id)) {
+                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
+                  } else {
+                    router.push(`/app-detail?id=${app.id}`);
+                  }
+                }}
+                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
               />
             ))}
           </TileGrid>

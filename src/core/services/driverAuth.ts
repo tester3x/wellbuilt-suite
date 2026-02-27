@@ -47,6 +47,8 @@ export interface DriverSession {
   passcodeHash: string;
   isAdmin: boolean;
   isViewer: boolean;
+  companyId?: string;
+  companyName?: string;
 }
 
 // --- Firebase helpers ---
@@ -166,6 +168,8 @@ export const verifyLogin = async (
   passcodeHash?: string;
   isAdmin?: boolean;
   isViewer?: boolean;
+  companyId?: string;
+  companyName?: string;
   error?: string;
 }> => {
   console.log("[DriverAuth-Suite] Verifying login for:", displayName);
@@ -202,6 +206,8 @@ export const verifyLogin = async (
         passcodeHash: hash,
         isAdmin: driverData.isAdmin === true,
         isViewer: driverData.isViewer === true,
+        companyId: driverData.companyId || undefined,
+        companyName: driverData.companyName || undefined,
       };
     }
 
@@ -221,6 +227,8 @@ export const verifyLogin = async (
           passcodeHash: hash,
           isAdmin: entry.isAdmin === true,
           isViewer: entry.isViewer === true,
+          companyId: entry.companyId || undefined,
+          companyName: entry.companyName || undefined,
         };
       }
     }
@@ -243,7 +251,9 @@ export const saveDriverSession = async (
   displayName: string,
   passcodeHash: string,
   isAdmin: boolean = false,
-  isViewer: boolean = false
+  isViewer: boolean = false,
+  companyId?: string,
+  companyName?: string
 ): Promise<void> => {
   await SecureStore.setItemAsync("driverId", driverId);
   await SecureStore.setItemAsync("driverName", displayName);
@@ -251,6 +261,16 @@ export const saveDriverSession = async (
   await SecureStore.setItemAsync("isAdmin", isAdmin ? "true" : "false");
   await SecureStore.setItemAsync("isViewer", isViewer ? "true" : "false");
   await SecureStore.setItemAsync("driverVerifiedAt", Date.now().toString());
+  if (companyId) {
+    await SecureStore.setItemAsync("companyId", companyId);
+  } else {
+    await SecureStore.deleteItemAsync("companyId");
+  }
+  if (companyName) {
+    await SecureStore.setItemAsync("companyName", companyName);
+  } else {
+    await SecureStore.deleteItemAsync("companyName");
+  }
 
   // Clear any pending registration data
   await clearPendingRegistration();
@@ -265,6 +285,8 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
   const passcodeHash = await SecureStore.getItemAsync("passcodeHash");
   const isAdminStr = await SecureStore.getItemAsync("isAdmin");
   const isViewerStr = await SecureStore.getItemAsync("isViewer");
+  const companyId = await SecureStore.getItemAsync("companyId");
+  const companyName = await SecureStore.getItemAsync("companyName");
 
   if (driverId && displayName && passcodeHash) {
     return {
@@ -272,7 +294,9 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       displayName,
       passcodeHash,
       isAdmin: isAdminStr === "true",
-      isViewer: isViewerStr === "true"
+      isViewer: isViewerStr === "true",
+      companyId: companyId || undefined,
+      companyName: companyName || undefined,
     };
   }
   return null;
@@ -352,6 +376,8 @@ export const clearDriverSession = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("isAdmin");
   await SecureStore.deleteItemAsync("isViewer");
   await SecureStore.deleteItemAsync("driverVerifiedAt");
+  await SecureStore.deleteItemAsync("companyId");
+  await SecureStore.deleteItemAsync("companyName");
   await clearPendingRegistration();
 };
 
@@ -397,17 +423,21 @@ export const isPasscodeAvailable = async (
 export const submitRegistration = async (params: {
   passcode: string;
   displayName: string;
+  companyName?: string;
 }): Promise<{ success: boolean; error?: string }> => {
-  console.log("[DriverAuth-Suite] Submitting registration for:", params.displayName);
+  console.log("[DriverAuth-Suite] Submitting registration for:", params.displayName, "company:", params.companyName);
 
   try {
     const hash = await hashPasscode(params.passcode);
 
-    const registrationData = {
+    const registrationData: Record<string, string> = {
       displayName: params.displayName,
       passcodeHash: hash,
       requestedAt: new Date().toISOString(),
     };
+    if (params.companyName) {
+      registrationData.companyName = params.companyName;
+    }
 
     await firebasePost(DRIVERS_PENDING, registrationData);
 
@@ -415,6 +445,9 @@ export const submitRegistration = async (params: {
     await SecureStore.setItemAsync("pendingPasscodeHash", hash);
     await SecureStore.setItemAsync("pendingDisplayName", params.displayName);
     await SecureStore.setItemAsync("pendingRegistrationTime", Date.now().toString());
+    if (params.companyName) {
+      await SecureStore.setItemAsync("pendingCompanyName", params.companyName);
+    }
 
     console.log("[DriverAuth-Suite] Registration submitted successfully");
     return { success: true };
@@ -430,12 +463,14 @@ export const submitRegistration = async (params: {
 export const getPendingRegistration = async (): Promise<{
   passcodeHash: string;
   displayName: string;
+  companyName?: string;
 } | null> => {
   const passcodeHash = await SecureStore.getItemAsync("pendingPasscodeHash");
   const displayName = await SecureStore.getItemAsync("pendingDisplayName");
+  const companyName = await SecureStore.getItemAsync("pendingCompanyName");
 
   if (passcodeHash && displayName) {
-    return { passcodeHash, displayName };
+    return { passcodeHash, displayName, companyName: companyName || undefined };
   }
   return null;
 };
@@ -501,8 +536,10 @@ export const completeRegistration = async (): Promise<{
     const displayName = driverData.displayName || pending.displayName;
     const isAdmin = driverData.isAdmin === true;
     const isViewer = driverData.isViewer === true;
+    const companyId = driverData.companyId || undefined;
+    const companyName = driverData.companyName || undefined;
 
-    await saveDriverSession(pending.passcodeHash, displayName, pending.passcodeHash, isAdmin, isViewer);
+    await saveDriverSession(pending.passcodeHash, displayName, pending.passcodeHash, isAdmin, isViewer, companyId, companyName);
     return {
       success: true,
       driverId: pending.passcodeHash,
@@ -521,4 +558,5 @@ export const clearPendingRegistration = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("pendingPasscodeHash");
   await SecureStore.deleteItemAsync("pendingDisplayName");
   await SecureStore.deleteItemAsync("pendingRegistrationTime");
+  await SecureStore.deleteItemAsync("pendingCompanyName");
 };

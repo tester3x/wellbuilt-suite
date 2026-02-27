@@ -19,7 +19,7 @@ export function useAppLauncher() {
   // so the target app can skip its login screen.
   const launchWB = useCallback((options: WBAppLaunchOptions) => {
     const sso = user
-      ? { hash: user.passcodeHash, name: user.displayName }
+      ? { hash: user.passcodeHash, name: user.displayName, companyId: user.companyId }
       : undefined;
     return launchWBApp({ ...options, sso });
   }, [user]);

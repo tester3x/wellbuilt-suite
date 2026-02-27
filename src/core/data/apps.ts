@@ -21,6 +21,8 @@ export interface WellBuiltApp {
   scheme?: string;
   /** Android package name for intent-based launching */
   androidPackage?: string;
+  /** Web URL for browser-based apps (e.g. Dashboard) */
+  webUrl?: string;
 }
 
 export const wellbuiltApps: WellBuiltApp[] = [
@@ -68,6 +70,7 @@ export const wellbuiltApps: WellBuiltApp[] = [
     version: '0.1.0',
     platform: 'web',
     status: 'active',
+    webUrl: 'https://wellbuilt-sync.web.app',
   },
   {
     id: 'water-ticket',
@@ -112,5 +115,7 @@ export const wellbuiltApps: WellBuiltApp[] = [
     version: '1.0.0',
     platform: 'mobile',
     status: 'active',
+    scheme: 'jsaapp',
+    androidPackage: 'com.syconik801.jsaapp',
   },
 ];

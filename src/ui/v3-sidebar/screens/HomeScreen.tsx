@@ -9,7 +9,7 @@ import { useAuth } from '@/core/context/AuthContext';
 import { useUserApps } from '@/core/context/UserAppsContext';
 import { wellbuiltApps } from '@/core/data/apps';
 import { pinnedApps, appCatalog } from '@/core/data/externalApps';
-import { useGreeting, useAppLauncher } from '@/core/hooks';
+import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
 import { AddAppModal } from '@/ui/v1-grid/components/AddAppModal';
 
@@ -17,7 +17,8 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
   const { enabledAppIds } = useUserApps();
-  const { launchExternalApp } = useAppLauncher();
+  const { launchExternalApp, launchWBApp } = useAppLauncher();
+  const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -36,10 +37,18 @@ export default function HomeScreen() {
       <View style={styles.body}>
         <Sidebar
           apps={companyApps}
-          companyName="WellBuilt"
+          companyName={user.companyName || 'WellBuilt'}
           userName={user.displayName}
           roleLabel={roleLabel}
-          onAppPress={(appId) => router.push(`/app-detail?id=${appId}`)}
+          onAppPress={(appId) => {
+            const app = companyApps.find(a => a.id === appId);
+            if (app && hasLaunched(app.id)) {
+              launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
+            } else {
+              router.push(`/app-detail?id=${appId}`);
+            }
+          }}
+          onAppLongPress={(appId) => router.push(`/app-detail?id=${appId}`)}
           onSettings={() => router.push('/settings')}
           onLogout={logout}
           collapsed={sidebarCollapsed}
