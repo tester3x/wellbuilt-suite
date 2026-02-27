@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#05060B"
+      "backgroundColor": "#E8E8E8"
     },
     "ios": {
       "supportsTablet": true,
@@ -19,14 +19,41 @@
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "wellbuiltmobile",
-          "wellbuilt-tickets"
+          "wellbuilt-tickets",
+          "jsaapp",
+          "waze",
+          "comgooglemaps",
+          "maps",
+          "spotify",
+          "vnd.youtube",
+          "youtubemusic",
+          "music",
+          "pandora",
+          "netflix",
+          "whatsapp",
+          "fb-messenger",
+          "tg",
+          "sgnl",
+          "slack",
+          "msteams",
+          "discord",
+          "fb",
+          "instagram",
+          "twitter",
+          "snapchat",
+          "reddit",
+          "linkedin",
+          "googledrive",
+          "googletranslate",
+          "accuweather",
+          "windy"
         ]
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#05060B"
+        "backgroundColor": "#E8E8E8"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.wellbuilt.suite"
@@ -44,7 +71,32 @@
             "manifestQueries": {
               "package": [
                 "com.wellbuiltmobile.app",
-                "com.testerxxx.waterticket"
+                "com.testerxxx.waterticket",
+                "com.syconik801.jsaapp",
+                "com.waze",
+                "com.spotify.music",
+                "com.google.android.youtube",
+                "com.google.android.apps.youtube.music",
+                "com.whatsapp",
+                "com.facebook.orca",
+                "org.telegram.messenger",
+                "org.thoughtcrime.securesms",
+                "com.Slack",
+                "com.microsoft.teams",
+                "com.discord",
+                "com.facebook.katana",
+                "com.instagram.android",
+                "com.twitter.android",
+                "com.zhiliaoapp.musically",
+                "com.snapchat.android",
+                "com.reddit.frontpage",
+                "com.linkedin.android",
+                "com.netflix.mediaclient",
+                "com.pandora.android",
+                "com.google.android.apps.maps",
+                "com.google.android.apps.translate",
+                "com.accuweather.android",
+                "co.windyty.android"
               ],
               "intent": [
                 {
@@ -57,6 +109,72 @@
                   "action": "android.intent.action.VIEW",
                   "data": {
                     "scheme": "wellbuilt-tickets"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "jsaapp"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "waze"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "spotify"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "whatsapp"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "fb-messenger"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "tg"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "slack"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "fb"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "instagram"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "twitter"
+                  }
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "netflix"
                   }
                 }
               ]
