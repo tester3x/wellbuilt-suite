@@ -100,7 +100,8 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
  * Launch an external/BYOA app via URL scheme with web fallback.
  * Tries opening the native scheme directly (canOpenURL is unreliable
  * on Android 11+ even with manifest queries declared). Falls back
- * to web URL only if the native open throws.
+ * to web URL only if the native open throws — but asks the user first
+ * so they don't unexpectedly end up on a website.
  */
 export async function launchExternalApp(options: ExternalLaunchOptions): Promise<void> {
   const { url, webUrl } = options;
@@ -116,21 +117,23 @@ export async function launchExternalApp(options: ExternalLaunchOptions): Promise
       // Native scheme failed — fall through to web fallback
     }
 
-    // Web fallback for native schemes that failed
+    // Native failed — offer web fallback if available, otherwise show not installed
     if (webUrl) {
-      try {
-        await Linking.openURL(webUrl);
-        return;
-      } catch {
-        // Web fallback also failed
-      }
+      Alert.alert(
+        t('common.appNotFound', { defaultValue: 'App Not Installed' }),
+        t('common.openInBrowser', { defaultValue: 'This app isn\'t installed. Open in browser instead?' }),
+        [
+          { text: t('common.cancel', { defaultValue: 'Cancel' }), style: 'cancel' },
+          { text: t('common.openBrowser', { defaultValue: 'Open Browser' }), onPress: () => Linking.openURL(webUrl).catch(() => {}) },
+        ]
+      );
+    } else {
+      Alert.alert(
+        t('common.appNotFound', { defaultValue: 'App Not Installed' }),
+        t('common.appNotInstalled', { defaultValue: 'This app doesn\'t appear to be installed on your device.' }),
+        [{ text: t('common.ok') }]
+      );
     }
-
-    Alert.alert(
-      t('common.appNotFound', { defaultValue: 'App Not Found' }),
-      t('common.appNotInstalled', { defaultValue: 'This app doesn\'t appear to be installed on your device.' }),
-      [{ text: t('common.ok') }]
-    );
   } else {
     // HTTP/HTTPS URL — just open it directly
     try {

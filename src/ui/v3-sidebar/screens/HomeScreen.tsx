@@ -22,7 +22,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
   const [showAddModal, setShowAddModal] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
   if (!user) return null;
@@ -69,24 +69,6 @@ export default function HomeScreen() {
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.statsRow}>
-              <View style={styles.statCard}>
-                <MaterialCommunityIcons name="apps" size={20} color={colors.brand.primary} />
-                <Text style={[styles.statValue, { color: colors.brand.primary }]}>{companyApps.length}</Text>
-                <Text style={styles.statLabel}>{t('home.stats.apps')}</Text>
-              </View>
-              <View style={styles.statCard}>
-                <MaterialCommunityIcons name="check-circle" size={20} color={colors.status.online} />
-                <Text style={[styles.statValue, { color: colors.status.online }]}>{companyApps.filter(a => a.status === 'active').length}</Text>
-                <Text style={styles.statLabel}>{t('home.stats.active')}</Text>
-              </View>
-              <View style={styles.statCard}>
-                <MaterialCommunityIcons name="link-variant" size={20} color={colors.brand.accent} />
-                <Text style={[styles.statValue, { color: colors.brand.accent }]}>{allByoaApps.length}</Text>
-                <Text style={styles.statLabel}>BYOA</Text>
-              </View>
-            </View>
-
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>{t('home.sections.byoa')}</Text>
               <Pressable onPress={() => setShowAddModal(true)} style={styles.addBtn}>
@@ -132,10 +114,6 @@ const styles = StyleSheet.create({
   roleText: { ...typography.caption, color: colors.brand.primary, fontWeight: '700', fontSize: 10 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  statsRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg },
-  statCard: { flex: 1, backgroundColor: colors.bg.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border.subtle, padding: spacing.md, alignItems: 'center', gap: spacing.xs },
-  statValue: { ...typography.h2 },
-  statLabel: { ...typography.caption, color: colors.text.muted, textAlign: 'center' },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
   sectionTitle: { ...typography.h3, color: colors.text.primary },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border.active },

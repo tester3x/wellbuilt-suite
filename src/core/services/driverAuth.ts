@@ -280,13 +280,25 @@ export const saveDriverSession = async (
  * Get current driver session
  */
 export const getDriverSession = async (): Promise<DriverSession | null> => {
-  const driverId = await SecureStore.getItemAsync("driverId");
-  const displayName = await SecureStore.getItemAsync("driverName");
-  const passcodeHash = await SecureStore.getItemAsync("passcodeHash");
-  const isAdminStr = await SecureStore.getItemAsync("isAdmin");
-  const isViewerStr = await SecureStore.getItemAsync("isViewer");
-  const companyId = await SecureStore.getItemAsync("companyId");
-  const companyName = await SecureStore.getItemAsync("companyName");
+  // Parallelize all SecureStore reads with a 5-second timeout
+  // Prevents splash screen hang when SecureStore is slow on cold boot
+  const timeoutMs = 5000;
+  const readWithTimeout = (key: string): Promise<string | null> =>
+    Promise.race([
+      SecureStore.getItemAsync(key),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+
+  const [driverId, displayName, passcodeHash, isAdminStr, isViewerStr, companyId, companyName] =
+    await Promise.all([
+      readWithTimeout("driverId"),
+      readWithTimeout("driverName"),
+      readWithTimeout("passcodeHash"),
+      readWithTimeout("isAdmin"),
+      readWithTimeout("isViewer"),
+      readWithTimeout("companyId"),
+      readWithTimeout("companyName"),
+    ]);
 
   if (driverId && displayName && passcodeHash) {
     return {

@@ -17,7 +17,7 @@ export default function SettingsScreen() {
   const { user, logout } = useAuth();
   const { currentLanguage, setLanguage, supportedLanguages } = useLanguage();
   const { skinId, setSkin, availableSkins } = useSkin();
-  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(true);
 
   if (!user) return null;
   const roleLabel = t(`home.roles.${user.role}`);

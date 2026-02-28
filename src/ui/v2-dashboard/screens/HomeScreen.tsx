@@ -11,7 +11,6 @@ import { wellbuiltApps } from '@/core/data/apps';
 import { pinnedApps, appCatalog } from '@/core/data/externalApps';
 import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { CommandHeader } from '../components/CommandHeader';
-import { DashboardStatsPanel } from '../components/DashboardStatsPanel';
 import { AppListItem } from '../components/AppListItem';
 import { WidgetContainer } from '../components/WidgetContainer';
 import { ByoaPanel } from '../components/ByoaPanel';
@@ -35,12 +34,6 @@ export default function HomeScreen() {
   const companyApps = wellbuiltApps;
   const userEnabledApps = appCatalog.filter(a => enabledAppIds.includes(a.id));
 
-  const statsData = [
-    { icon: 'apps', label: t('home.stats.apps'), value: String(companyApps.length), color: colors.brand.primary },
-    { icon: 'check-circle', label: t('home.stats.active'), value: String(companyApps.filter(a => a.status === 'active').length), color: colors.status.online },
-    { icon: 'account-group', label: t('home.stats.platform'), value: 'v1.0', color: colors.brand.accent },
-  ];
-
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <CommandHeader
@@ -52,15 +45,8 @@ export default function HomeScreen() {
       />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <WidgetContainer title={t('home.stats.apps').toUpperCase()} subtitle={t('home.sections.appCount', { count: companyApps.length })}>
-          <DashboardStatsPanel stats={statsData} />
-        </WidgetContainer>
-
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}
-          rightElement={
-            <Text style={styles.appCount}>{companyApps.length} {t('home.stats.apps').toLowerCase()}</Text>
-          }
         >
           <View style={styles.appList}>
             {companyApps.map(app => (
@@ -97,6 +83,5 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.primary },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  appCount: { ...typography.caption, color: colors.text.muted },
   appList: { gap: spacing.sm },
 });
