@@ -46,7 +46,30 @@
           "googledrive",
           "googletranslate",
           "accuweather",
-          "windy"
+          "windy",
+          "calculator",
+          "camera",
+          "clock",
+          "mobilenotes",
+          "calshow",
+          "shareddocuments",
+          "voicememos",
+          "snssdk1233",
+          "amznmusic",
+          "audible",
+          "soundcloud",
+          "iheartradio",
+          "pcast",
+          "truckerpath",
+          "gasbuddy",
+          "gomotive",
+          "samsara",
+          "lovesconnect",
+          "pilotflyingj",
+          "google",
+          "wikipedia",
+          "dbapi-1",
+          "myradar"
         ]
       }
     },
@@ -96,7 +119,24 @@
                 "com.google.android.apps.maps",
                 "com.google.android.apps.translate",
                 "com.accuweather.android",
-                "co.windyty.android"
+                "co.windyty.android",
+                "com.amazon.mp3",
+                "com.audible.application",
+                "com.soundcloud.android",
+                "com.clearchannel.iheartradio.controller",
+                "com.google.android.apps.podcasts",
+                "com.truckerpath",
+                "com.gasbuddy.android",
+                "com.gomotive.elogeld",
+                "com.samsara.elogeld",
+                "com.lovetravelstops.android",
+                "com.pilotflyingj",
+                "com.google.android.googlequicksearchbox",
+                "org.wikipedia",
+                "com.google.android.apps.docs",
+                "com.dropbox.android",
+                "com.rubenmayayo.reddit",
+                "com.myradar.android"
               ],
               "intent": [
                 {
@@ -175,6 +215,19 @@
                   "action": "android.intent.action.VIEW",
                   "data": {
                     "scheme": "netflix"
+                  }
+                },
+                {
+                  "action": "android.media.action.STILL_CAPTURE"
+                },
+                {
+                  "action": "android.intent.action.SHOW_ALARMS"
+                },
+                {
+                  "action": "android.intent.action.VIEW",
+                  "data": {
+                    "scheme": "content",
+                    "host": "com.android.calendar"
                   }
                 }
               ]

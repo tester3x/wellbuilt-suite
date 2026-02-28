@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
@@ -9,10 +9,11 @@ interface ByoaPanelProps {
   pinnedApps: ExternalApp[];
   userApps: ExternalApp[];
   onOpenApp: (url: string, webUrl?: string) => void;
+  onRemoveApp?: (app: ExternalApp) => void;
   onAddPress: () => void;
 }
 
-export function ByoaPanel({ pinnedApps, userApps, onOpenApp, onAddPress }: ByoaPanelProps) {
+export function ByoaPanel({ pinnedApps, userApps, onOpenApp, onRemoveApp, onAddPress }: ByoaPanelProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(true);
   const allApps = [...pinnedApps, ...userApps];
@@ -35,13 +36,15 @@ export function ByoaPanel({ pinnedApps, userApps, onOpenApp, onAddPress }: ByoaP
       {expanded && (
         <View style={styles.grid}>
           {allApps.map(app => (
-            <Pressable key={app.id} onPress={() => onOpenApp(app.url, app.webUrl)}
-              style={({ pressed }) => [styles.appItem, pressed && styles.appItemPressed]}>
+            <TouchableOpacity key={app.id} onPress={() => onOpenApp(app.url, app.webUrl)}
+              onLongPress={onRemoveApp ? () => onRemoveApp(app) : undefined}
+              delayLongPress={400} activeOpacity={0.7}
+              style={styles.appItem}>
               <View style={[styles.appIcon, { backgroundColor: `${app.color}15` }]}>
                 <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={app.color} />
               </View>
               <Text style={styles.appName} numberOfLines={1}>{app.name}</Text>
-            </Pressable>
+            </TouchableOpacity>
           ))}
         </View>
       )}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,7 +20,7 @@ import { AddAppModal } from '@/ui/v1-grid/components/AddAppModal';
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
-  const { enabledAppIds } = useUserApps();
+  const { enabledAppIds, toggleApp, isCompanyRequired } = useUserApps();
   const { launchExternalApp, launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -68,6 +68,17 @@ export default function HomeScreen() {
           pinnedApps={pinnedApps}
           userApps={userEnabledApps}
           onOpenApp={(url, webUrl) => launchExternalApp({ url, webUrl })}
+          onRemoveApp={(app) => {
+            if (isCompanyRequired(app.id)) return;
+            Alert.alert(
+              t('addAppModal.removeTitle'),
+              t('addAppModal.removeMessage', { name: app.name }),
+              [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('addAppModal.remove'), style: 'destructive', onPress: () => toggleApp(app.id) },
+              ]
+            );
+          }}
           onAddPress={() => setShowAddModal(true)}
         />
 

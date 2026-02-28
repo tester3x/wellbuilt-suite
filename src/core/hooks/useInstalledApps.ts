@@ -45,10 +45,10 @@ export function useInstalledApps() {
 
       const installed = new Set<string>();
 
-      // Always-available system apps (phone, sms, email)
-      const systemSchemes = ['tel:', 'sms:', 'mailto:'];
+      // Always-available system intents (phone, sms, email, maps)
+      const systemSchemePattern = /^(tel|sms|mailto|geo):/;
       for (const app of appCatalog) {
-        if (systemSchemes.includes(app.url)) {
+        if (systemSchemePattern.test(app.url)) {
           installed.add(app.id);
         }
       }

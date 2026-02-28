@@ -11,7 +11,7 @@ import { View, Text, StyleSheet, Modal, Pressable, ScrollView, TextInput } from 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
-import { appCatalog, categoryKeys, type ExternalApp } from '@/core/data/externalApps';
+import { appCatalog, categoryKeys, isNativeScheme, type ExternalApp } from '@/core/data/externalApps';
 import { useUserApps } from '@/core/context/UserAppsContext';
 import { useInstalledApps } from '@/core/hooks';
 
@@ -34,15 +34,23 @@ export function AddAppModal({ visible, onClose }: AddAppModalProps) {
     }
   }, [visible, refresh]);
 
-  // Filter apps by search query
+  // Only show apps that are actually installed on this device.
+  // BYOA is for native apps only — no browser fallbacks.
+  // System intents (tel:, sms:, mailto:, geo:) are auto-detected as installed.
+  const availableCatalog = useMemo(() => {
+    if (checking) return appCatalog; // While scanning, show all
+    return appCatalog.filter(app => isInstalled(app.id));
+  }, [checking, isInstalled]);
+
+  // Filter by search query
   const filteredCatalog = useMemo(() => {
-    if (!search.trim()) return appCatalog;
+    if (!search.trim()) return availableCatalog;
     const q = search.toLowerCase().trim();
-    return appCatalog.filter(
+    return availableCatalog.filter(
       a => a.name.toLowerCase().includes(q) ||
            a.category.toLowerCase().includes(q)
     );
-  }, [search]);
+  }, [search, availableCatalog]);
 
   // Group filtered apps by category
   const grouped = useMemo(() => {
@@ -124,7 +132,7 @@ export function AddAppModal({ visible, onClose }: AddAppModalProps) {
             <View>
               <Text style={styles.title}>{t('addAppModal.title')}</Text>
               <Text style={styles.subtitle}>
-                {t('addAppModal.subtitle')} · {appCatalog.length} {t('addAppModal.available')}
+                {t('addAppModal.subtitle')} · {availableCatalog.length} {t('addAppModal.available')}
               </Text>
             </View>
             <Pressable onPress={onClose} style={styles.closeButton}>

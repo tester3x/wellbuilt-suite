@@ -104,46 +104,22 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
  * so they don't unexpectedly end up on a website.
  */
 export async function launchExternalApp(options: ExternalLaunchOptions): Promise<void> {
-  const { url, webUrl } = options;
+  const { url } = options;
   const t = i18n.t.bind(i18n);
-  const isNative = !url.startsWith('http://') && !url.startsWith('https://');
 
-  if (isNative) {
-    // Try opening the native app directly — don't pre-check with canOpenURL
-    try {
-      await Linking.openURL(url);
-      return;
-    } catch {
-      // Native scheme failed — fall through to web fallback
-    }
+  // System intents (tel:, sms:, mailto:, geo:) always work — just open them.
+  const isSystemIntent = /^(tel|sms|mailto|geo):/.test(url);
 
-    // Native failed — offer web fallback if available, otherwise show not installed
-    if (webUrl) {
-      Alert.alert(
-        t('common.appNotFound', { defaultValue: 'App Not Installed' }),
-        t('common.openInBrowser', { defaultValue: 'This app isn\'t installed. Open in browser instead?' }),
-        [
-          { text: t('common.cancel', { defaultValue: 'Cancel' }), style: 'cancel' },
-          { text: t('common.openBrowser', { defaultValue: 'Open Browser' }), onPress: () => Linking.openURL(webUrl).catch(() => {}) },
-        ]
-      );
-    } else {
-      Alert.alert(
-        t('common.appNotFound', { defaultValue: 'App Not Installed' }),
-        t('common.appNotInstalled', { defaultValue: 'This app doesn\'t appear to be installed on your device.' }),
-        [{ text: t('common.ok') }]
-      );
-    }
-  } else {
-    // HTTP/HTTPS URL — just open it directly
-    try {
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert(
-        t('common.appNotFound', { defaultValue: 'App Not Found' }),
-        t('common.appNotInstalled', { defaultValue: 'Could not open this link.' }),
-        [{ text: t('common.ok') }]
-      );
-    }
+  try {
+    await Linking.openURL(url);
+  } catch {
+    // System intents should never fail — if they do, silently ignore
+    if (isSystemIntent) return;
+
+    Alert.alert(
+      t('common.couldNotOpen', { defaultValue: 'Could Not Open' }),
+      t('common.appUnavailable', { defaultValue: 'Unable to open this app. Try opening it from your device\'s home screen.' }),
+      [{ text: t('common.ok') }]
+    );
   }
 }

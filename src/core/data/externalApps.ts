@@ -4,6 +4,12 @@
 // Layer 1: Large local catalog organized by category (driver picks what they want)
 // Layer 2: Installed detection via Linking.canOpenURL() (shows "Installed" badge)
 // Layer 3: Company-required apps from Firestore (admin-mandated, non-removable)
+//
+// Platform notes: Some system utilities have platform-specific URL schemes.
+// Use Platform.select() for cross-platform support. Apps that can't be opened
+// on the current platform are filtered out of the AddAppModal by useInstalledApps.
+
+import { Platform } from 'react-native';
 
 export type ExternalAppCategory =
   | 'navigation'
@@ -422,20 +428,17 @@ export const appCatalog: ExternalApp[] = [
   },
 
   // ── Tools ───────────────────────────────────────────────────
+  // Platform.select() picks the right deep link per OS.
+  // Android uses intent:// URIs where standard system intents exist.
+  // Apps without a reliable cross-platform link are filtered by useInstalledApps.
   {
     id: 'calculator',
     name: 'Calculator',
     icon: 'calculator',
     color: '#A78BFA',
-    url: 'calculator://',
-    category: 'tools',
-  },
-  {
-    id: 'flashlight',
-    name: 'Flashlight',
-    icon: 'flashlight',
-    color: '#FBBF24',
-    url: 'flashlight://',
+    url: Platform.select({ ios: 'calculator://', default: 'calculator://' })!,
+    // Android has no universal calculator package — varies by OEM.
+    // Will be filtered out on Android if scheme doesn't resolve.
     category: 'tools',
   },
   {
@@ -443,7 +446,11 @@ export const appCatalog: ExternalApp[] = [
     name: 'Camera',
     icon: 'camera',
     color: '#FB923C',
-    url: 'camera://',
+    url: Platform.select({
+      ios: 'camera://',
+      android: 'intent://#Intent;action=android.media.action.STILL_CAPTURE;end',
+      default: 'camera://',
+    })!,
     category: 'tools',
   },
   {
@@ -451,15 +458,11 @@ export const appCatalog: ExternalApp[] = [
     name: 'Clock',
     icon: 'clock-outline',
     color: '#60A5FA',
-    url: 'clock://',
-    category: 'tools',
-  },
-  {
-    id: 'compass',
-    name: 'Compass',
-    icon: 'compass',
-    color: '#F87171',
-    url: 'compass://',
+    url: Platform.select({
+      ios: 'clock://',
+      android: 'intent://#Intent;action=android.intent.action.SHOW_ALARMS;end',
+      default: 'clock://',
+    })!,
     category: 'tools',
   },
   {
@@ -467,7 +470,7 @@ export const appCatalog: ExternalApp[] = [
     name: 'Notes',
     icon: 'note-text',
     color: '#FFD700',
-    url: 'mobilenotes://',
+    url: Platform.select({ ios: 'mobilenotes://', default: 'mobilenotes://' })!,
     webUrl: 'https://keep.google.com',
     category: 'tools',
   },
@@ -476,7 +479,11 @@ export const appCatalog: ExternalApp[] = [
     name: 'Calendar',
     icon: 'calendar',
     color: '#4285F4',
-    url: 'calshow://',
+    url: Platform.select({
+      ios: 'calshow://',
+      android: 'content://com.android.calendar/time/',
+      default: 'calshow://',
+    })!,
     webUrl: 'https://calendar.google.com',
     category: 'tools',
   },
@@ -494,7 +501,11 @@ export const appCatalog: ExternalApp[] = [
     name: 'Files',
     icon: 'folder',
     color: '#5F6368',
-    url: 'shareddocuments://',
+    url: Platform.select({
+      ios: 'shareddocuments://',
+      android: 'intent://#Intent;action=android.intent.action.VIEW;type=*/*;end',
+      default: 'shareddocuments://',
+    })!,
     category: 'tools',
   },
   {
@@ -502,7 +513,9 @@ export const appCatalog: ExternalApp[] = [
     name: 'Recorder',
     icon: 'microphone-outline',
     color: '#EA4335',
-    url: 'voicememos://',
+    url: Platform.select({ ios: 'voicememos://', default: 'voicememos://' })!,
+    // Android has no universal recorder — varies by OEM.
+    // Will be filtered out on Android if scheme doesn't resolve.
     category: 'tools',
   },
 

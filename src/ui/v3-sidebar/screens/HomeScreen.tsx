@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TouchableOpacity, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +16,7 @@ import { AddAppModal } from '@/ui/v1-grid/components/AddAppModal';
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
-  const { enabledAppIds } = useUserApps();
+  const { enabledAppIds, toggleApp, isCompanyRequired } = useUserApps();
   const { launchExternalApp, launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -79,13 +79,25 @@ export default function HomeScreen() {
 
             <View style={styles.byoaGrid}>
               {allByoaApps.map(app => (
-                <Pressable key={app.id} onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })}
-                  style={({ pressed }) => [styles.byoaItem, pressed && styles.byoaItemPressed]}>
+                <TouchableOpacity key={app.id} onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })}
+                  onLongPress={() => {
+                    if (isCompanyRequired(app.id)) return;
+                    Alert.alert(
+                      t('addAppModal.removeTitle'),
+                      t('addAppModal.removeMessage', { name: app.name }),
+                      [
+                        { text: t('common.cancel'), style: 'cancel' },
+                        { text: t('addAppModal.remove'), style: 'destructive', onPress: () => toggleApp(app.id) },
+                      ]
+                    );
+                  }}
+                  delayLongPress={400} activeOpacity={0.7}
+                  style={styles.byoaItem}>
                   <View style={[styles.byoaIcon, { backgroundColor: `${app.color}15` }]}>
                     <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={20} color={app.color} />
                   </View>
                   <Text style={styles.byoaName} numberOfLines={1}>{app.name}</Text>
-                </Pressable>
+                </TouchableOpacity>
               ))}
             </View>
 

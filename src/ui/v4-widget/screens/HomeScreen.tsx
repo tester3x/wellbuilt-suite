@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Image, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,7 +20,7 @@ import { AddAppModal } from '@/ui/v1-grid/components/AddAppModal';
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
-  const { enabledAppIds } = useUserApps();
+  const { enabledAppIds, toggleApp, isCompanyRequired } = useUserApps();
   const { launchWBApp, launchExternalApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -99,7 +99,18 @@ export default function HomeScreen() {
             <TileGrid>
               {allByoaApps.map(app => (
                 <ByoaTile key={app.id} app={app}
-                  onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })} />
+                  onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })}
+                  onLongPress={() => {
+                    if (isCompanyRequired(app.id)) return;
+                    Alert.alert(
+                      t('addAppModal.removeTitle'),
+                      t('addAppModal.removeMessage', { name: app.name }),
+                      [
+                        { text: t('common.cancel'), style: 'cancel' },
+                        { text: t('addAppModal.remove'), style: 'destructive', onPress: () => toggleApp(app.id) },
+                      ]
+                    );
+                  }} />
               ))}
             </TileGrid>
           </View>

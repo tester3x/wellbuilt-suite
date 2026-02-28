@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { ExternalApp } from '@/core/data/externalApps';
@@ -7,16 +7,18 @@ import { ExternalApp } from '@/core/data/externalApps';
 interface ByoaTileProps {
   app: ExternalApp;
   onPress: () => void;
+  onLongPress?: () => void;
 }
 
-export function ByoaTile({ app, onPress }: ByoaTileProps) {
+export function ByoaTile({ app, onPress, onLongPress }: ByoaTileProps) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.container, pressed && styles.pressed]}>
+    <TouchableOpacity onPress={onPress} onLongPress={onLongPress}
+      delayLongPress={400} activeOpacity={0.7} style={styles.container}>
       <View style={[styles.iconWrap, { backgroundColor: `${app.color}15` }]}>
         <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={app.color} />
       </View>
       <Text style={styles.name} numberOfLines={1}>{app.name}</Text>
-    </Pressable>
+    </TouchableOpacity>
   );
 }
 
