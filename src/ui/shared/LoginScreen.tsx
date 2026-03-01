@@ -25,7 +25,7 @@ export default function LoginScreen() {
 
   return (
     <LinearGradient colors={colors.gradient.splash as unknown as [string, string, string]} style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[styles.content, { paddingTop: insets.top }]}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.content, { paddingTop: insets.top }]}>
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
 
           {/* Logo */}
@@ -101,7 +101,7 @@ export default function LoginScreen() {
                   <TextInput style={styles.input} value={displayName}
                     onChangeText={setDisplayName} placeholder={t('login.displayNamePlaceholder', 'Display name (e.g., MBurger)')}
                     placeholderTextColor={colors.text.muted} autoCapitalize="words"
-                    autoFocus returnKeyType="next"
+                    returnKeyType="next"
                     onSubmitEditing={() => legalNameRef.current?.focus()} />
                 </View>
                 <Text style={styles.hintText}>This is your login name — other drivers will see this</Text>

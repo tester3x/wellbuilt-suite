@@ -2,8 +2,8 @@
 // Full driver settings: profile (Firebase-synced) + vehicle (local/Firebase) + app prefs.
 // Same profile path as WB T: drivers/approved/{hash}/profile/
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,6 +41,10 @@ export default function SettingsScreen() {
   const [cdl, setCdl] = useState('');
   const [truckNumber, setTruckNumber] = useState('');
   const [trailerNumber, setTrailerNumber] = useState('');
+  const phoneRef = useRef<TextInput>(null);
+  const cdlRef = useRef<TextInput>(null);
+  const truckRef = useRef<TextInput>(null);
+  const trailerRef = useRef<TextInput>(null);
 
   // Dirty tracking
   const [profileDirty, setProfileDirty] = useState(false);
@@ -215,7 +219,8 @@ export default function SettingsScreen() {
         )}
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {/* ── Driver Profile (Firebase-synced) ── */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>Driver Profile</Text>
@@ -236,28 +241,39 @@ export default function SettingsScreen() {
               placeholder="Your display name"
               placeholderTextColor={colors.text.muted}
               autoCapitalize="words"
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => phoneRef.current?.focus()}
             />
           </View>
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Phone</Text>
             <TextInput
+              ref={phoneRef}
               style={styles.fieldInput}
               value={phone}
               onChangeText={(text) => setPhone(formatPhone(text))}
               placeholder="(xxx) xxx-xxxx"
               placeholderTextColor={colors.text.muted}
               keyboardType="phone-pad"
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => cdlRef.current?.focus()}
             />
           </View>
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>CDL #</Text>
             <TextInput
+              ref={cdlRef}
               style={styles.fieldInput}
               value={cdl}
               onChangeText={setCdl}
               placeholder="Commercial driver's license"
               placeholderTextColor={colors.text.muted}
               autoCapitalize="characters"
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => truckRef.current?.focus()}
             />
           </View>
           {user?.companyName ? (
@@ -295,21 +311,27 @@ export default function SettingsScreen() {
             <View style={[styles.field, { flex: 1 }]}>
               <Text style={styles.fieldLabel}>Truck #</Text>
               <TextInput
+                ref={truckRef}
                 style={styles.fieldInput}
                 value={truckNumber}
                 onChangeText={setTruckNumber}
                 placeholder="e.g., 42"
                 placeholderTextColor={colors.text.muted}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => trailerRef.current?.focus()}
               />
             </View>
             <View style={[styles.field, { flex: 1 }]}>
               <Text style={styles.fieldLabel}>Trailer #</Text>
               <TextInput
+                ref={trailerRef}
                 style={styles.fieldInput}
                 value={trailerNumber}
                 onChangeText={setTrailerNumber}
                 placeholder="e.g., T-15"
                 placeholderTextColor={colors.text.muted}
+                returnKeyType="done"
               />
             </View>
           </View>
@@ -370,6 +392,7 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
