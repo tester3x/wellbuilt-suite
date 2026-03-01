@@ -141,10 +141,11 @@ const firebasePatch = async (path: string, data: any): Promise<void> => {
  * Hash a passcode using SHA-256
  * Returns lowercase hex string
  */
-export const hashPasscode = async (passcode: string): Promise<string> => {
+export const hashPasscode = async (passcode: string, name?: string): Promise<string> => {
+  const input = name ? name.toLowerCase().trim() + passcode : passcode;
   const hash = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
-    passcode
+    input
   );
   return hash.toLowerCase();
 };
@@ -175,10 +176,10 @@ export const verifyLogin = async (
   console.log("[DriverAuth-Suite] Verifying login for:", displayName);
 
   try {
-    const hash = await hashPasscode(passcode);
+    const hash = await hashPasscode(passcode, displayName);
     console.log("[DriverAuth-Suite] Hash:", hash.slice(0, 8) + "...");
 
-    // Look up by passcode hash
+    // Look up by name+passcode hash
     const driverData = await firebaseGet(`${DRIVERS_APPROVED}/${hash}`);
 
     if (!driverData) {
@@ -399,15 +400,16 @@ export const clearDriverSession = async (): Promise<void> => {
  * Check if a passcode is available (not already in use)
  */
 export const isPasscodeAvailable = async (
-  passcode: string
+  passcode: string,
+  name?: string
 ): Promise<{ available: boolean; reason?: string }> => {
   try {
-    const hash = await hashPasscode(passcode);
+    const hash = await hashPasscode(passcode, name);
 
-    // Check if passcode is already approved
+    // Check if name+passcode combo already approved
     const existingDriver = await firebaseGet(`${DRIVERS_APPROVED}/${hash}`);
     if (existingDriver) {
-      return { available: false, reason: "This passcode is already in use" };
+      return { available: false, reason: "This name and passcode combination is already registered" };
     }
 
     // Check pending registrations
@@ -416,7 +418,7 @@ export const isPasscodeAvailable = async (
       for (const key of Object.keys(pendingDrivers)) {
         const pending = pendingDrivers[key];
         if (pending.passcodeHash === hash) {
-          return { available: false, reason: "This passcode has a pending registration" };
+          return { available: false, reason: "A registration with this name and passcode is already pending" };
         }
       }
     }
@@ -436,11 +438,12 @@ export const submitRegistration = async (params: {
   passcode: string;
   displayName: string;
   companyName?: string;
+  legalName?: string;
 }): Promise<{ success: boolean; error?: string }> => {
   console.log("[DriverAuth-Suite] Submitting registration for:", params.displayName, "company:", params.companyName);
 
   try {
-    const hash = await hashPasscode(params.passcode);
+    const hash = await hashPasscode(params.passcode, params.displayName);
 
     const registrationData: Record<string, string> = {
       displayName: params.displayName,
@@ -449,6 +452,9 @@ export const submitRegistration = async (params: {
     };
     if (params.companyName) {
       registrationData.companyName = params.companyName;
+    }
+    if (params.legalName) {
+      registrationData.legalName = params.legalName;
     }
 
     await firebasePost(DRIVERS_PENDING, registrationData);

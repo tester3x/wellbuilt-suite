@@ -10,12 +10,13 @@ import { useLogin } from '@/core/hooks/useLogin';
 export default function LoginScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const legalNameRef = useRef<TextInput>(null);
   const companyRef = useRef<TextInput>(null);
   const passcodeRef = useRef<TextInput>(null);
   const accentColor = colors.brand.primary;
 
   const {
-    mode, displayName, setDisplayName, passcode, setPasscode,
+    mode, displayName, setDisplayName, legalName, setLegalName, passcode, setPasscode,
     companyName, setCompanyName,
     showPasscode, setShowPasscode, error, passcodeError, pendingName, canSubmit,
     handleLogin, handleRegister, handleCompleteRegistration,
@@ -101,8 +102,22 @@ export default function LoginScreen() {
                     onChangeText={setDisplayName} placeholder={t('login.displayNamePlaceholder', 'Display name (e.g., MBurger)')}
                     placeholderTextColor={colors.text.muted} autoCapitalize="words"
                     autoFocus returnKeyType="next"
+                    onSubmitEditing={() => legalNameRef.current?.focus()} />
+                </View>
+                <Text style={styles.hintText}>This is your login name — other drivers will see this</Text>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Full Legal Name</Text>
+                <View style={styles.inputWrap}>
+                  <MaterialCommunityIcons name="card-account-details-outline" size={18} color={colors.text.muted} />
+                  <TextInput ref={legalNameRef} style={styles.input} value={legalName}
+                    onChangeText={setLegalName} placeholder="First and last name (e.g., Mike Burger)"
+                    placeholderTextColor={colors.text.muted} autoCapitalize="words"
+                    autoCorrect={false} returnKeyType="next"
                     onSubmitEditing={() => companyRef.current?.focus()} />
                 </View>
+                <Text style={styles.hintText}>Used on printed tickets, invoices, and payroll</Text>
               </View>
 
               <View style={styles.inputGroup}>

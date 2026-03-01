@@ -51,6 +51,8 @@ export interface UseLoginReturn {
   mode: LoginMode;
   displayName: string;
   setDisplayName: (name: string) => void;
+  legalName: string;
+  setLegalName: (name: string) => void;
   passcode: string;
   setPasscode: (code: string) => void;
   companyName: string;
@@ -76,6 +78,7 @@ export function useLogin(): UseLoginReturn {
   const [mode, setMode] = useState<LoginMode>('checking');
   const [passcode, setPasscode] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [legalName, setLegalName] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [error, setError] = useState('');
   const [pendingName, setPendingName] = useState('');
@@ -218,11 +221,16 @@ export function useLogin(): UseLoginReturn {
       return;
     }
 
+    if (!legalName.trim() || legalName.trim().length < 2) {
+      setError('Please enter your full legal name');
+      return;
+    }
+
     setMode('registering');
     setError('');
 
     try {
-      const available = await isPasscodeAvailable(passcode.trim());
+      const available = await isPasscodeAvailable(passcode.trim(), displayName.trim());
       if (!available.available) {
         setMode('register');
         setError(available.reason || 'This passcode is not available');
@@ -233,6 +241,7 @@ export function useLogin(): UseLoginReturn {
         passcode: passcode.trim(),
         displayName: displayName.trim(),
         companyName: companyName.trim() || undefined,
+        legalName: legalName.trim(),
       });
 
       if (result.success) {
@@ -271,6 +280,7 @@ export function useLogin(): UseLoginReturn {
     await clearPendingRegistration();
     setPasscode('');
     setDisplayName('');
+    setLegalName('');
     setCompanyName('');
     setPendingName('');
     setMode('login');
@@ -299,13 +309,15 @@ export function useLogin(): UseLoginReturn {
   }, []);
 
   const canSubmit = mode === 'register'
-    ? !!(passcode.trim() && displayName.trim() && companyName.trim() && !passcodeError)
+    ? !!(passcode.trim() && displayName.trim() && legalName.trim() && companyName.trim() && !passcodeError)
     : !!(passcode.trim() && displayName.trim() && !passcodeError);
 
   return {
     mode,
     displayName,
     setDisplayName,
+    legalName,
+    setLegalName,
     passcode,
     setPasscode,
     companyName,
