@@ -55,7 +55,7 @@ export default function LoginScreen() {
                     onChangeText={setDisplayName} placeholder={t('login.namePlaceholder', 'Your name')}
                     placeholderTextColor={colors.text.muted} autoCapitalize="words"
                     autoCorrect={false} returnKeyType="next" autoFocus
-                    onSubmitEditing={() => passcodeRef.current?.focus()} />
+                    blurOnSubmit={false} onSubmitEditing={() => passcodeRef.current?.focus()} />
                 </View>
               </View>
 
@@ -102,7 +102,7 @@ export default function LoginScreen() {
                     onChangeText={setDisplayName} placeholder={t('login.displayNamePlaceholder', 'Display name (e.g., MBurger)')}
                     placeholderTextColor={colors.text.muted} autoCapitalize="words"
                     returnKeyType="next"
-                    onSubmitEditing={() => legalNameRef.current?.focus()} />
+                    blurOnSubmit={false} onSubmitEditing={() => legalNameRef.current?.focus()} />
                 </View>
                 <Text style={styles.hintText}>This is your login name — other drivers will see this</Text>
               </View>
@@ -115,7 +115,7 @@ export default function LoginScreen() {
                     onChangeText={setLegalName} placeholder="First and last name (e.g., Mike Burger)"
                     placeholderTextColor={colors.text.muted} autoCapitalize="words"
                     autoCorrect={false} returnKeyType="next"
-                    onSubmitEditing={() => companyRef.current?.focus()} />
+                    blurOnSubmit={false} onSubmitEditing={() => companyRef.current?.focus()} />
                 </View>
                 <Text style={styles.hintText}>Used on printed tickets, invoices, and payroll</Text>
               </View>
@@ -128,7 +128,7 @@ export default function LoginScreen() {
                     onChangeText={setCompanyName} placeholder={t('login.companyPlaceholder', 'Your company name')}
                     placeholderTextColor={colors.text.muted} autoCapitalize="words"
                     autoCorrect={false} returnKeyType="next"
-                    onSubmitEditing={() => passcodeRef.current?.focus()} />
+                    blurOnSubmit={false} onSubmitEditing={() => passcodeRef.current?.focus()} />
                 </View>
                 <Text style={styles.hintText}>{t('login.companyHint', 'Enter the company name your employer gave you')}</Text>
               </View>
