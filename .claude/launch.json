@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "wb-suite-dev",
-      "runtimeExecutable": "npx",
+      "runtimeExecutable": "C:/Program Files/nodejs/npx.cmd",
       "runtimeArgs": ["expo", "start", "--web"],
       "port": 8081
     }

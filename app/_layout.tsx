@@ -7,7 +7,7 @@ import '@/core/localization/i18n';
 import { LanguageProvider } from '@/core/localization';
 import { SkinProvider } from '@/core/context/SkinContext';
 import { AuthProvider } from '@/core/context/AuthContext';
-import { UserAppsProvider } from '@/core/context/UserAppsContext';
+
 import { FirstLaunchProvider } from '@/core/context/FirstLaunchContext';
 import { OfflineBanner } from '@/core/components/OfflineBanner';
 import { colors } from '@/core/theme';
@@ -28,8 +28,7 @@ export default function RootLayout() {
     <LanguageProvider>
       <SkinProvider skins={allSkins} defaultSkinId={defaultSkinId}>
         <AuthProvider>
-          <UserAppsProvider>
-            <FirstLaunchProvider>
+          <FirstLaunchProvider>
             <View style={styles.container}>
               <StatusBar style="light" />
               <OfflineBanner />
@@ -42,7 +41,6 @@ export default function RootLayout() {
               />
             </View>
           </FirstLaunchProvider>
-          </UserAppsProvider>
         </AuthProvider>
       </SkinProvider>
     </LanguageProvider>

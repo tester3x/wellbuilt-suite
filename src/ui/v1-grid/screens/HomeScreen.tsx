@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -6,26 +6,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
-import { useUserApps } from '@/core/context/UserAppsContext';
 import { wellbuiltApps } from '@/core/data/apps';
-import { pinnedApps, appCatalog } from '@/core/data/externalApps';
 import { useGreeting, useAppLauncher, useFirstLaunch, useCompanyConfig } from '@/core/hooks';
 import { TIER_DESCRIPTIONS } from '@/core/services/companyConfig';
 import { WellBuiltLogo } from '@/ui/shared/WellBuiltLogo';
 import { AppCard } from '../components/AppCard';
-import { QuickLinkCard, AddAppCard } from '../components/QuickLinkCard';
-import { AddAppModal } from '../components/AddAppModal';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
-  const { enabledAppIds, companyRequiredIds, toggleApp, isCompanyRequired } = useUserApps();
-  const { launchExternalApp, launchWBApp } = useAppLauncher();
+  const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const { isWBAppEnabled, config: companyConfig, tierLabel } = useCompanyConfig(user?.companyId);
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
-  const [showAddModal, setShowAddModal] = useState(false);
 
   React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
   if (!user) return null;
@@ -34,11 +28,6 @@ export default function HomeScreen() {
   const companyApps = wellbuiltApps;
   const showTierBanner = companyConfig && companyConfig.tier !== 'suite';
   const enabledCount = companyApps.filter(a => isWBAppEnabled(a.id)).length;
-  const userEnabledApps = appCatalog.filter(a => enabledAppIds.includes(a.id));
-  // Company-required apps: auto-pinned, not in user-enabled (avoid duplicates)
-  const companyAppsInRow = appCatalog.filter(
-    a => companyRequiredIds.includes(a.id) && !enabledAppIds.includes(a.id)
-  );
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -73,8 +62,6 @@ export default function HomeScreen() {
             ) : null}
           </View>
         </View>
-
-        {/* StatsBar removed — user feedback: not useful info for drivers */}
 
         {showTierBanner && (
           <View style={styles.tierBanner}>
@@ -123,48 +110,12 @@ export default function HomeScreen() {
           })}
         </View>
 
-        <View style={styles.sectionHeader}>
-          <View>
-            <Text style={styles.sectionTitle}>{t('home.sections.byoa')}</Text>
-            <Text style={styles.byoaSubtitle}>{t('home.sections.byoaSubtitle')}</Text>
-          </View>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickLinksRow}>
-          {pinnedApps.map(app => (
-            <QuickLinkCard key={app.id} name={app.name} icon={app.icon} color={app.color}
-              onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })} />
-          ))}
-          {companyAppsInRow.map(app => (
-            <QuickLinkCard key={app.id} name={app.name} icon={app.icon} color={app.color}
-              onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })} />
-          ))}
-          {userEnabledApps.map(app => (
-            <QuickLinkCard key={app.id} name={app.name} icon={app.icon} color={app.color}
-              onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })}
-              onLongPress={() => {
-                if (isCompanyRequired(app.id)) return; // Can't remove company-required
-                Alert.alert(
-                  t('addAppModal.removeTitle'),
-                  t('addAppModal.removeMessage', { name: app.name }),
-                  [
-                    { text: t('common.cancel'), style: 'cancel' },
-                    { text: t('addAppModal.remove'), style: 'destructive', onPress: () => toggleApp(app.id) },
-                  ]
-                );
-              }} />
-          ))}
-          <AddAppCard onPress={() => setShowAddModal(true)} />
-        </ScrollView>
-
         <View style={styles.footer}>
           <View style={styles.footerLine} />
           <Text style={styles.footerText}>{t('home.footer.version')}</Text>
           <Text style={styles.footerSubtext}>{t('home.footer.tagline')}</Text>
         </View>
       </ScrollView>
-
-      <AddAppModal visible={showAddModal} onClose={() => setShowAddModal(false)} />
     </View>
   );
 }
@@ -186,9 +137,7 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.xl, marginBottom: spacing.md },
   sectionTitle: { ...typography.h3, color: colors.text.primary },
   sectionCount: { ...typography.caption, color: colors.text.muted },
-  byoaSubtitle: { ...typography.caption, color: colors.text.muted, marginTop: 1 },
   appGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  quickLinksRow: { flexDirection: 'row', gap: spacing.md, paddingVertical: spacing.xs },
   footer: { alignItems: 'center', marginTop: spacing.xl, paddingTop: spacing.lg },
   footerLine: { width: 40, height: 2, backgroundColor: colors.border.subtle, borderRadius: 1, marginBottom: spacing.md },
   footerText: { ...typography.caption, color: colors.text.muted },

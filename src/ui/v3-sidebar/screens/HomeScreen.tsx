@@ -1,27 +1,21 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TouchableOpacity, Alert } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
-import { useUserApps } from '@/core/context/UserAppsContext';
 import { wellbuiltApps } from '@/core/data/apps';
-import { pinnedApps, appCatalog } from '@/core/data/externalApps';
 import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
-import { AddAppModal } from '@/ui/v1-grid/components/AddAppModal';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated } = useAuth();
-  const { enabledAppIds, toggleApp, isCompanyRequired } = useUserApps();
-  const { launchExternalApp, launchWBApp } = useAppLauncher();
+  const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
-  const [showAddModal, setShowAddModal] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
@@ -29,8 +23,6 @@ export default function HomeScreen() {
 
   const roleLabel = t(`home.roles.${user.role}`);
   const companyApps = wellbuiltApps;
-  const userEnabledApps = appCatalog.filter(a => enabledAppIds.includes(a.id));
-  const allByoaApps = [...pinnedApps, ...userEnabledApps];
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -69,38 +61,6 @@ export default function HomeScreen() {
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>{t('home.sections.byoa')}</Text>
-              <Pressable onPress={() => setShowAddModal(true)} style={styles.addBtn}>
-                <MaterialCommunityIcons name="plus" size={16} color={colors.brand.primary} />
-                <Text style={styles.addBtnText}>{t('addAppModal.title')}</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.byoaGrid}>
-              {allByoaApps.map(app => (
-                <TouchableOpacity key={app.id} onPress={() => launchExternalApp({ url: app.url, webUrl: app.webUrl })}
-                  onLongPress={() => {
-                    if (isCompanyRequired(app.id)) return;
-                    Alert.alert(
-                      t('addAppModal.removeTitle'),
-                      t('addAppModal.removeMessage', { name: app.name }),
-                      [
-                        { text: t('common.cancel'), style: 'cancel' },
-                        { text: t('addAppModal.remove'), style: 'destructive', onPress: () => toggleApp(app.id) },
-                      ]
-                    );
-                  }}
-                  delayLongPress={400} activeOpacity={0.7}
-                  style={styles.byoaItem}>
-                  <View style={[styles.byoaIcon, { backgroundColor: `${app.color}15` }]}>
-                    <MaterialCommunityIcons name={app.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={20} color={app.color} />
-                  </View>
-                  <Text style={styles.byoaName} numberOfLines={1}>{app.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
             <View style={styles.footer}>
               <Text style={styles.footerText}>{t('home.footer.version')}</Text>
               <Text style={styles.footerSubtext}>{t('home.footer.tagline')}</Text>
@@ -108,8 +68,6 @@ export default function HomeScreen() {
           </ScrollView>
         </View>
       </View>
-
-      <AddAppModal visible={showAddModal} onClose={() => setShowAddModal(false)} />
     </View>
   );
 }
@@ -126,15 +84,6 @@ const styles = StyleSheet.create({
   roleText: { ...typography.caption, color: colors.brand.primary, fontWeight: '700', fontSize: 10 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
-  sectionTitle: { ...typography.h3, color: colors.text.primary },
-  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border.active },
-  addBtnText: { ...typography.caption, color: colors.brand.primary, fontWeight: '600' },
-  byoaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.lg },
-  byoaItem: { width: '22%', alignItems: 'center', padding: spacing.sm },
-  byoaItemPressed: { opacity: 0.7 },
-  byoaIcon: { width: 44, height: 44, borderRadius: radius.md, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.xs },
-  byoaName: { ...typography.caption, color: colors.text.muted, fontSize: 10, textAlign: 'center' },
   footer: { alignItems: 'center', marginTop: spacing.xl, paddingTop: spacing.lg },
   footerText: { ...typography.caption, color: colors.text.muted },
   footerSubtext: { ...typography.caption, color: colors.text.muted, opacity: 0.5, marginTop: 2 },

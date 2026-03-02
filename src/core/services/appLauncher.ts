@@ -18,12 +18,6 @@ export interface WBAppLaunchOptions {
   };
 }
 
-export interface ExternalLaunchOptions {
-  /** Primary URL/scheme to open */
-  url: string;
-  /** Fallback web URL if scheme fails */
-  webUrl?: string;
-}
 
 /**
  * Check if an app can be launched via its deep link scheme.
@@ -94,32 +88,4 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
     t('appDetail.launch.notInstalled', { name }),
     [{ text: t('common.ok') }]
   );
-}
-
-/**
- * Launch an external/BYOA app via URL scheme with web fallback.
- * Tries opening the native scheme directly (canOpenURL is unreliable
- * on Android 11+ even with manifest queries declared). Falls back
- * to web URL only if the native open throws — but asks the user first
- * so they don't unexpectedly end up on a website.
- */
-export async function launchExternalApp(options: ExternalLaunchOptions): Promise<void> {
-  const { url } = options;
-  const t = i18n.t.bind(i18n);
-
-  // System intents (tel:, sms:, mailto:, geo:) always work — just open them.
-  const isSystemIntent = /^(tel|sms|mailto|geo):/.test(url);
-
-  try {
-    await Linking.openURL(url);
-  } catch {
-    // System intents should never fail — if they do, silently ignore
-    if (isSystemIntent) return;
-
-    Alert.alert(
-      t('common.couldNotOpen', { defaultValue: 'Could Not Open' }),
-      t('common.appUnavailable', { defaultValue: 'Unable to open this app. Try opening it from your device\'s home screen.' }),
-      [{ text: t('common.ok') }]
-    );
-  }
 }

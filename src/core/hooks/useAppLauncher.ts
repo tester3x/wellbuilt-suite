@@ -2,9 +2,7 @@ import { useCallback } from 'react';
 import {
   canLaunchApp,
   launchWBApp,
-  launchExternalApp,
   WBAppLaunchOptions,
-  ExternalLaunchOptions,
 } from '../services/appLauncher';
 import { useAuth } from '../context/AuthContext';
 
@@ -24,13 +22,8 @@ export function useAppLauncher() {
     return launchWBApp({ ...options, sso });
   }, [user]);
 
-  const launchExternal = useCallback((options: ExternalLaunchOptions) => {
-    return launchExternalApp(options);
-  }, []);
-
   return {
     canLaunchApp: checkCanLaunch,
     launchWBApp: launchWB,
-    launchExternalApp: launchExternal,
   };
 }
