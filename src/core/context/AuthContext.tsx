@@ -19,6 +19,7 @@ import {
 export interface AuthUser {
   driverId: string;
   displayName: string;
+  legalName?: string;
   passcodeHash: string;
   isAdmin: boolean;
   isViewer: boolean;
@@ -39,7 +40,7 @@ interface AuthContextType {
   /** Full logout — clears SecureStore session */
   logout: () => Promise<void>;
   /** Register a new driver (goes to pending state) */
-  register: (displayName: string, passcode: string) => Promise<{ success: boolean; error?: string }>;
+  register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
   checkRegistration: () => Promise<'pending' | 'approved' | 'rejected' | 'none'>;
   /** Complete registration after admin approval */
@@ -54,6 +55,7 @@ function sessionToUser(session: DriverSession): AuthUser {
   return {
     driverId: session.driverId,
     displayName: session.displayName,
+    legalName: session.legalName,
     passcodeHash: session.passcodeHash,
     isAdmin: session.isAdmin,
     isViewer: session.isViewer,
@@ -117,11 +119,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.isAdmin || false,
         result.isViewer || false,
         result.companyId,
-        result.companyName
+        result.companyName,
+        result.legalName
       );
       setUser({
         driverId: result.driverId,
         displayName: result.displayName,
+        legalName: result.legalName,
         passcodeHash: result.passcodeHash,
         isAdmin: result.isAdmin || false,
         isViewer: result.isViewer || false,
@@ -139,8 +143,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
-  const register = useCallback(async (displayName: string, passcode: string) => {
-    const result = await submitRegistration({ displayName, passcode });
+  const register = useCallback(async (displayName: string, passcode: string, companyName?: string, legalName?: string) => {
+    const result = await submitRegistration({ displayName, passcode, companyName, legalName });
     return result;
   }, []);
 

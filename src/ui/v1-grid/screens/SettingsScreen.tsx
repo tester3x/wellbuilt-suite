@@ -36,7 +36,7 @@ export default function SettingsScreen() {
   const [saving, setSaving] = useState(false);
 
   // Editable fields
-  const [displayName, setDisplayName] = useState('');
+  const [legalName, setLegalName] = useState('');
   const [phone, setPhone] = useState('');
   const [cdl, setCdl] = useState('');
   const [truckNumber, setTruckNumber] = useState('');
@@ -67,12 +67,12 @@ export default function SettingsScreen() {
 
       if (p) {
         setProfile(p);
-        setDisplayName(p.displayName);
+        setLegalName(p.legalName || p.displayName || '');
         setPhone(p.phone || '');
         setCdl(p.cdl || '');
       } else {
-        // No profile yet — use auth display name
-        setDisplayName(user?.displayName || '');
+        // No profile yet — use auth legalName or fall back to displayName
+        setLegalName(user?.legalName || user?.displayName || '');
       }
 
       setVehicle(v);
@@ -88,15 +88,15 @@ export default function SettingsScreen() {
   useEffect(() => {
     if (!profile && !loading) {
       // New profile — always dirty if anything entered
-      setProfileDirty(displayName.length > 0);
+      setProfileDirty(legalName.length > 0);
     } else if (profile) {
       setProfileDirty(
-        displayName !== profile.displayName ||
+        legalName !== (profile.legalName || profile.displayName || '') ||
         phone !== (profile.phone || '') ||
         cdl !== (profile.cdl || '')
       );
     }
-  }, [displayName, phone, cdl, profile, loading]);
+  }, [legalName, phone, cdl, profile, loading]);
 
   useEffect(() => {
     setVehicleDirty(
@@ -117,7 +117,7 @@ export default function SettingsScreen() {
       if (profileDirty) {
         promises.push(
           saveDriverProfile(hash, {
-            displayName: displayName.trim(),
+            legalName: legalName.trim(),
             phone: phone.trim() || undefined,
             cdl: cdl.trim() || undefined,
           })
@@ -138,7 +138,7 @@ export default function SettingsScreen() {
       // Update local state to match saved values
       setProfile(prev => prev ? {
         ...prev,
-        displayName: displayName.trim(),
+        legalName: legalName.trim(),
         phone: phone.trim() || undefined,
         cdl: cdl.trim() || undefined,
       } : null);
@@ -150,7 +150,7 @@ export default function SettingsScreen() {
     } finally {
       setSaving(false);
     }
-  }, [hash, saving, profileDirty, vehicleDirty, displayName, phone, cdl, truckNumber, trailerNumber]);
+  }, [hash, saving, profileDirty, vehicleDirty, legalName, phone, cdl, truckNumber, trailerNumber]);
 
   const handleLogout = useCallback(() => {
     Alert.alert('Log Out', 'Are you sure you want to log out?', [
@@ -233,12 +233,19 @@ export default function SettingsScreen() {
 
         <View style={styles.fieldGroup}>
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Name</Text>
+            <Text style={styles.fieldLabel}>Login Name</Text>
+            <View style={[styles.fieldInput, styles.fieldReadOnly]}>
+              <Text style={styles.readOnlyText}>{user?.displayName || ''}</Text>
+              <MaterialCommunityIcons name="lock" size={14} color={colors.text.muted} />
+            </View>
+          </View>
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Full Name</Text>
             <TextInput
               style={styles.fieldInput}
-              value={displayName}
-              onChangeText={setDisplayName}
-              placeholder="Your display name"
+              value={legalName}
+              onChangeText={setLegalName}
+              placeholder="Your full legal name"
               placeholderTextColor={colors.text.muted}
               autoCapitalize="words"
               returnKeyType="next"

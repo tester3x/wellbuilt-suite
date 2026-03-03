@@ -22,6 +22,7 @@ const VEHICLE_CACHE_KEY = 'wellbuilt-vehicle-info';
 
 export interface DriverProfile {
   displayName: string;
+  legalName?: string;
   phone?: string;
   cdl?: string;
   signature?: string; // base64 PNG
@@ -108,6 +109,7 @@ async function refreshProfile(hash: string): Promise<DriverProfile | null> {
 
       const profile: DriverProfile = {
         displayName: topData.displayName || topData.name || '',
+        legalName: topData.legalName || undefined,
         language: 'en',
         companyId: topData.companyId,
         companyName: topData.companyName,
@@ -118,6 +120,7 @@ async function refreshProfile(hash: string): Promise<DriverProfile | null> {
 
     const profile: DriverProfile = {
       displayName: data.displayName || '',
+      legalName: data.legalName || undefined,
       phone: data.phone || undefined,
       cdl: data.cdl || undefined,
       signature: data.signature || undefined,

@@ -30,7 +30,7 @@ export default function HomeScreen() {
         <Sidebar
           apps={companyApps}
           companyName={user.companyName || 'WellBuilt'}
-          userName={user.displayName}
+          userName={user.legalName || user.displayName}
           roleLabel={roleLabel}
           onAppPress={(appId) => {
             const app = companyApps.find(a => a.id === appId);

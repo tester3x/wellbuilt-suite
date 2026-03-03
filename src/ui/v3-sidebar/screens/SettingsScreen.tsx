@@ -29,7 +29,7 @@ export default function SettingsScreen() {
         <Sidebar
           apps={companyApps}
           companyName="WellBuilt"
-          userName={user.displayName}
+          userName={user.legalName || user.displayName}
           roleLabel={roleLabel}
           onAppPress={(appId) => router.push(`/app-detail?id=${appId}`)}
           onSettings={() => {}}

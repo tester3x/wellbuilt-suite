@@ -44,6 +44,7 @@ export interface DriverInfo {
 export interface DriverSession {
   driverId: string;
   displayName: string;
+  legalName?: string;
   passcodeHash: string;
   isAdmin: boolean;
   isViewer: boolean;
@@ -166,6 +167,7 @@ export const verifyLogin = async (
   valid: boolean;
   driverId?: string;
   displayName?: string;
+  legalName?: string;
   passcodeHash?: string;
   isAdmin?: boolean;
   isViewer?: boolean;
@@ -204,6 +206,7 @@ export const verifyLogin = async (
         valid: true,
         driverId: hash,
         displayName: driverData.displayName,
+        legalName: driverData.legalName || undefined,
         passcodeHash: hash,
         isAdmin: driverData.isAdmin === true,
         isViewer: driverData.isViewer === true,
@@ -225,6 +228,7 @@ export const verifyLogin = async (
           valid: true,
           driverId: hash,
           displayName: entry.displayName,
+          legalName: entry.legalName || undefined,
           passcodeHash: hash,
           isAdmin: entry.isAdmin === true,
           isViewer: entry.isViewer === true,
@@ -254,7 +258,8 @@ export const saveDriverSession = async (
   isAdmin: boolean = false,
   isViewer: boolean = false,
   companyId?: string,
-  companyName?: string
+  companyName?: string,
+  legalName?: string
 ): Promise<void> => {
   await SecureStore.setItemAsync("driverId", driverId);
   await SecureStore.setItemAsync("driverName", displayName);
@@ -271,6 +276,11 @@ export const saveDriverSession = async (
     await SecureStore.setItemAsync("companyName", companyName);
   } else {
     await SecureStore.deleteItemAsync("companyName");
+  }
+  if (legalName) {
+    await SecureStore.setItemAsync("legalName", legalName);
+  } else {
+    await SecureStore.deleteItemAsync("legalName");
   }
 
   // Clear any pending registration data
@@ -290,7 +300,7 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ]);
 
-  const [driverId, displayName, passcodeHash, isAdminStr, isViewerStr, companyId, companyName] =
+  const [driverId, displayName, passcodeHash, isAdminStr, isViewerStr, companyId, companyName, legalName] =
     await Promise.all([
       readWithTimeout("driverId"),
       readWithTimeout("driverName"),
@@ -299,12 +309,14 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       readWithTimeout("isViewer"),
       readWithTimeout("companyId"),
       readWithTimeout("companyName"),
+      readWithTimeout("legalName"),
     ]);
 
   if (driverId && displayName && passcodeHash) {
     return {
       driverId,
       displayName,
+      legalName: legalName || undefined,
       passcodeHash,
       isAdmin: isAdminStr === "true",
       isViewer: isViewerStr === "true",
@@ -391,6 +403,7 @@ export const clearDriverSession = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("driverVerifiedAt");
   await SecureStore.deleteItemAsync("companyId");
   await SecureStore.deleteItemAsync("companyName");
+  await SecureStore.deleteItemAsync("legalName");
   await clearPendingRegistration();
 };
 
@@ -449,6 +462,7 @@ export const submitRegistration = async (params: {
       displayName: params.displayName,
       passcodeHash: hash,
       requestedAt: new Date().toISOString(),
+      source: 'wbs',
     };
     if (params.companyName) {
       registrationData.companyName = params.companyName;
@@ -552,12 +566,13 @@ export const completeRegistration = async (): Promise<{
     }
 
     const displayName = driverData.displayName || pending.displayName;
+    const legalName = driverData.legalName || undefined;
     const isAdmin = driverData.isAdmin === true;
     const isViewer = driverData.isViewer === true;
     const companyId = driverData.companyId || undefined;
     const companyName = driverData.companyName || undefined;
 
-    await saveDriverSession(pending.passcodeHash, displayName, pending.passcodeHash, isAdmin, isViewer, companyId, companyName);
+    await saveDriverSession(pending.passcodeHash, displayName, pending.passcodeHash, isAdmin, isViewer, companyId, companyName, legalName);
     return {
       success: true,
       driverId: pending.passcodeHash,

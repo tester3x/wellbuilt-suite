@@ -6,16 +6,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'expo-router';
 import {
-  verifyLogin,
-  saveDriverSession,
   isDriverVerified,
-  submitRegistration,
   isPasscodeAvailable,
   getPendingRegistration,
   checkRegistrationStatus,
-  completeRegistration,
   clearPendingRegistration,
 } from '../services/driverAuth';
+import { useAuth } from '../context/AuthContext';
 
 export type LoginMode =
   | 'checking'
@@ -75,6 +72,7 @@ export interface UseLoginReturn {
 
 export function useLogin(): UseLoginReturn {
   const router = useRouter();
+  const auth = useAuth();
   const [mode, setMode] = useState<LoginMode>('checking');
   const [passcode, setPasscode] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -85,6 +83,13 @@ export function useLogin(): UseLoginReturn {
   const [showPasscode, setShowPasscode] = useState(false);
   const [passcodeError, setPasscodeError] = useState('');
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Navigate to home when authenticated (handles login, registration, and returning users)
+  useEffect(() => {
+    if (auth.isAuthenticated) {
+      router.replace('/home');
+    }
+  }, [auth.isAuthenticated]);
 
   // Check initial state on mount
   useEffect(() => {
@@ -113,12 +118,11 @@ export function useLogin(): UseLoginReturn {
           const status = await checkRegistrationStatus();
           if (status === 'approved') {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-            const result = await completeRegistration();
-            if (result.success) {
-              router.replace('/home');
-            } else {
+            const result = await auth.completeReg();
+            if (!result.success) {
               setMode('approved');
             }
+            // On success, isAuthenticated effect handles navigation
           } else if (status === 'rejected') {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             setMode('rejected');
@@ -139,11 +143,8 @@ export function useLogin(): UseLoginReturn {
 
   const checkInitialState = async () => {
     try {
-      const verified = await isDriverVerified();
-      if (verified) {
-        router.replace('/home');
-        return;
-      }
+      // If already authenticated, the isAuthenticated effect handles navigation
+      if (auth.isAuthenticated) return;
 
       const pending = await getPendingRegistration();
       if (pending) {
@@ -180,19 +181,10 @@ export function useLogin(): UseLoginReturn {
     setError('');
 
     try {
-      const result = await verifyLogin(displayName.trim(), passcode.trim());
+      const result = await auth.login(displayName.trim(), passcode.trim());
 
-      if (result.valid && result.driverId && result.displayName && result.passcodeHash) {
-        await saveDriverSession(
-          result.driverId,
-          result.displayName,
-          result.passcodeHash,
-          result.isAdmin || false,
-          result.isViewer || false,
-          result.companyId,
-          result.companyName,
-        );
-        router.replace('/home');
+      if (result.success) {
+        // isAuthenticated effect handles navigation
       } else {
         setMode('login');
         setError(result.error || 'Invalid name or passcode');
@@ -202,7 +194,7 @@ export function useLogin(): UseLoginReturn {
       setMode('error');
       setError('Connection error. Please check your internet.');
     }
-  }, [displayName, passcode, router]);
+  }, [displayName, passcode, auth]);
 
   const handleRegister = useCallback(async () => {
     const validation = validatePasscode(passcode);
@@ -237,12 +229,12 @@ export function useLogin(): UseLoginReturn {
         return;
       }
 
-      const result = await submitRegistration({
-        passcode: passcode.trim(),
-        displayName: displayName.trim(),
-        companyName: companyName.trim() || undefined,
-        legalName: legalName.trim(),
-      });
+      const result = await auth.register(
+        displayName.trim(),
+        passcode.trim(),
+        companyName.trim() || undefined,
+        legalName.trim(),
+      );
 
       if (result.success) {
         setPendingName(displayName.trim());
@@ -256,25 +248,24 @@ export function useLogin(): UseLoginReturn {
       setMode('register');
       setError('Connection error. Please try again.');
     }
-  }, [displayName, passcode]);
+  }, [displayName, passcode, companyName, legalName, auth]);
 
   const handleCompleteRegistration = useCallback(async () => {
     setMode('verifying');
 
     try {
-      const result = await completeRegistration();
-      if (result.success) {
-        router.replace('/home');
-      } else {
+      const result = await auth.completeReg();
+      if (!result.success) {
         setMode('error');
         setError(result.error || 'Could not complete registration');
       }
+      // On success, isAuthenticated effect handles navigation
     } catch (err) {
       console.error('[useLogin] Complete registration error:', err);
       setMode('error');
       setError('Connection error. Please try again.');
     }
-  }, [router]);
+  }, [auth]);
 
   const handleCancelRegistration = useCallback(async () => {
     await clearPendingRegistration();
