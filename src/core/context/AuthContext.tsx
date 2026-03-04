@@ -26,6 +26,7 @@ export interface AuthUser {
   role: 'driver' | 'admin' | 'viewer';
   companyId?: string;
   companyName?: string;
+  assignedRoutes?: string[];
 }
 
 interface AuthContextType {
@@ -62,6 +63,7 @@ function sessionToUser(session: DriverSession): AuthUser {
     role: session.isAdmin ? 'admin' : session.isViewer ? 'viewer' : 'driver',
     companyId: session.companyId,
     companyName: session.companyName,
+    assignedRoutes: session.assignedRoutes,
   };
 }
 
@@ -120,7 +122,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.isViewer || false,
         result.companyId,
         result.companyName,
-        result.legalName
+        result.legalName,
+        result.assignedRoutes
       );
       setUser({
         driverId: result.driverId,
@@ -132,6 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         role: result.isAdmin ? 'admin' : result.isViewer ? 'viewer' : 'driver',
         companyId: result.companyId,
         companyName: result.companyName,
+        assignedRoutes: result.assignedRoutes,
       });
       return { success: true };
     }

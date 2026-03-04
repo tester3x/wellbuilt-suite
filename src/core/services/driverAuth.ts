@@ -50,6 +50,7 @@ export interface DriverSession {
   isViewer: boolean;
   companyId?: string;
   companyName?: string;
+  assignedRoutes?: string[];
 }
 
 // --- Firebase helpers ---
@@ -173,6 +174,7 @@ export const verifyLogin = async (
   isViewer?: boolean;
   companyId?: string;
   companyName?: string;
+  assignedRoutes?: string[];
   error?: string;
 }> => {
   console.log("[DriverAuth-Suite] Verifying login for:", displayName);
@@ -212,6 +214,7 @@ export const verifyLogin = async (
         isViewer: driverData.isViewer === true,
         companyId: driverData.companyId || undefined,
         companyName: driverData.companyName || undefined,
+        assignedRoutes: Array.isArray(driverData.assignedRoutes) ? driverData.assignedRoutes : undefined,
       };
     }
 
@@ -234,6 +237,7 @@ export const verifyLogin = async (
           isViewer: entry.isViewer === true,
           companyId: entry.companyId || undefined,
           companyName: entry.companyName || undefined,
+          assignedRoutes: Array.isArray(entry.assignedRoutes) ? entry.assignedRoutes : undefined,
         };
       }
     }
@@ -259,7 +263,8 @@ export const saveDriverSession = async (
   isViewer: boolean = false,
   companyId?: string,
   companyName?: string,
-  legalName?: string
+  legalName?: string,
+  assignedRoutes?: string[]
 ): Promise<void> => {
   await SecureStore.setItemAsync("driverId", driverId);
   await SecureStore.setItemAsync("driverName", displayName);
@@ -282,6 +287,11 @@ export const saveDriverSession = async (
   } else {
     await SecureStore.deleteItemAsync("legalName");
   }
+  if (assignedRoutes && assignedRoutes.length > 0) {
+    await SecureStore.setItemAsync("assignedRoutes", JSON.stringify(assignedRoutes));
+  } else {
+    await SecureStore.deleteItemAsync("assignedRoutes");
+  }
 
   // Clear any pending registration data
   await clearPendingRegistration();
@@ -300,7 +310,7 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ]);
 
-  const [driverId, displayName, passcodeHash, isAdminStr, isViewerStr, companyId, companyName, legalName] =
+  const [driverId, displayName, passcodeHash, isAdminStr, isViewerStr, companyId, companyName, legalName, assignedRoutesStr] =
     await Promise.all([
       readWithTimeout("driverId"),
       readWithTimeout("driverName"),
@@ -310,9 +320,15 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       readWithTimeout("companyId"),
       readWithTimeout("companyName"),
       readWithTimeout("legalName"),
+      readWithTimeout("assignedRoutes"),
     ]);
 
   if (driverId && displayName && passcodeHash) {
+    let assignedRoutes: string[] | undefined;
+    try {
+      assignedRoutes = assignedRoutesStr ? JSON.parse(assignedRoutesStr) : undefined;
+    } catch { assignedRoutes = undefined; }
+
     return {
       driverId,
       displayName,
@@ -322,6 +338,7 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       isViewer: isViewerStr === "true",
       companyId: companyId || undefined,
       companyName: companyName || undefined,
+      assignedRoutes,
     };
   }
   return null;
@@ -404,6 +421,7 @@ export const clearDriverSession = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("companyId");
   await SecureStore.deleteItemAsync("companyName");
   await SecureStore.deleteItemAsync("legalName");
+  await SecureStore.deleteItemAsync("assignedRoutes");
   await clearPendingRegistration();
 };
 

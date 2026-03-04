@@ -25,7 +25,16 @@ export default function HomeScreen() {
   if (!user) return null;
 
   const roleLabel = t(`home.roles.${user.role}`);
-  const companyApps = wellbuiltApps;
+  // Filter out WB M for unrouted-only drivers (completely hidden, not greyed)
+  const companyApps = wellbuiltApps.filter(app => {
+    if (app.id === 'wellbuilt-mobile' && user.companyId) {
+      const routes = user.assignedRoutes;
+      if (routes === undefined) return true; // legacy driver — show
+      if (routes.length === 0) return false;
+      return routes.some(r => !r.startsWith('Unrouted'));
+    }
+    return true;
+  });
   const showTierBanner = companyConfig && companyConfig.tier !== 'suite';
   const enabledCount = companyApps.filter(a => isWBAppEnabled(a.id)).length;
 
