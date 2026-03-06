@@ -9,12 +9,13 @@ import {
   revalidateDriverSession,
   clearDriverSession,
   verifyLogin,
+  type DriverSession,
   saveDriverSession,
   submitRegistration,
   checkRegistrationStatus,
   completeRegistration,
-  type DriverSession,
 } from '../services/driverAuth';
+import { checkShiftOnResume } from '../services/shiftTracking';
 
 export interface AuthUser {
   driverId: string;
@@ -83,6 +84,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Trust the local session immediately — no waiting for Firebase
           setUser(sessionToUser(session));
           setLoading(false);
+
+          // Ensure today's shift is tracked + close stale shifts (fire-and-forget)
+          checkShiftOnResume(session.driverId, session.displayName, session.companyId).catch(() => {});
 
           // Revalidate in background (non-blocking)
           revalidateDriverSession().then(async (stillValid) => {

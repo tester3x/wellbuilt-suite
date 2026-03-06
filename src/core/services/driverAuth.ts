@@ -22,6 +22,7 @@
 
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
+import { recordShiftEvent } from "./shiftTracking";
 
 // Firebase configuration (same project as WB M: wellbuilt-sync)
 const FIREBASE_DATABASE_URL = "https://wellbuilt-sync-default-rtdb.firebaseio.com";
@@ -204,6 +205,9 @@ export const verifyLogin = async (
 
       console.log("[DriverAuth-Suite] Login verified for:", driverData.displayName);
 
+      // Record login GPS for DOT drive time (fire-and-forget)
+      recordShiftEvent('login', hash, driverData.displayName, driverData.companyId || undefined);
+
       return {
         valid: true,
         driverId: hash,
@@ -226,6 +230,9 @@ export const verifyLogin = async (
         entry.active !== false
       ) {
         console.log("[DriverAuth-Suite] Login verified (legacy) for:", entry.displayName);
+
+        // Record login GPS for DOT drive time (fire-and-forget)
+        recordShiftEvent('login', hash, entry.displayName, entry.companyId || undefined);
 
         return {
           valid: true,
@@ -412,6 +419,13 @@ export const revalidateDriverSession = async (): Promise<boolean> => {
  * Clear driver session (logout)
  */
 export const clearDriverSession = async (): Promise<void> => {
+  // Record logout GPS BEFORE clearing session
+  const driverId = await SecureStore.getItemAsync("driverId");
+  const driverName = await SecureStore.getItemAsync("driverName");
+  if (driverId && driverName) {
+    recordShiftEvent('logout', driverId, driverName);
+  }
+
   await SecureStore.deleteItemAsync("driverId");
   await SecureStore.deleteItemAsync("driverName");
   await SecureStore.deleteItemAsync("passcodeHash");
