@@ -4,6 +4,7 @@
 // (same system as WB M — drivers/approved/{passcodeHash}).
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import * as SecureStore from 'expo-secure-store';
 import {
   getDriverSession,
   revalidateDriverSession,
@@ -15,7 +16,7 @@ import {
   checkRegistrationStatus,
   completeRegistration,
 } from '../services/driverAuth';
-import { checkShiftOnResume } from '../services/shiftTracking';
+import { recordShiftEvent, checkShiftOnResume } from '../services/shiftTracking';
 
 export interface AuthUser {
   driverId: string;
@@ -37,10 +38,14 @@ interface AuthContextType {
   loading: boolean;
   /** Convenience boolean */
   isAuthenticated: boolean;
+  /** Whether the driver's shift is currently active (clock running) */
+  shiftActive: boolean;
   /** Login with name + passcode. Returns error string or null on success. */
   login: (displayName: string, passcode: string) => Promise<{ success: boolean; error?: string }>;
-  /** Full logout — clears SecureStore session */
+  /** Full logout — clears SecureStore session. If shift is active, ends it first. */
   logout: () => Promise<void>;
+  /** End the driver's shift (GPS clock punch) without logging out */
+  endShift: () => Promise<void>;
   /** Register a new driver (goes to pending state) */
   register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
@@ -71,6 +76,7 @@ function sessionToUser(session: DriverSession): AuthUser {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [shiftActive, setShiftActive] = useState(false);
 
   // On mount: check SecureStore for existing session
   // OPTIMISTIC AUTH: If local session exists, trust it immediately and revalidate
@@ -84,6 +90,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Trust the local session immediately — no waiting for Firebase
           setUser(sessionToUser(session));
           setLoading(false);
+
+          // Check if shift was already ended this session
+          const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
+          setShiftActive(shiftEnded !== 'true');
 
           // Ensure today's shift is tracked + close stale shifts (fire-and-forget)
           checkShiftOnResume(session.driverId, session.displayName, session.companyId).catch(() => {});
@@ -129,6 +139,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.legalName,
         result.assignedRoutes
       );
+      // New login = new shift. Clear the "shift ended" flag.
+      await SecureStore.deleteItemAsync('shiftEnded');
+      setShiftActive(true);
       setUser({
         driverId: result.driverId,
         displayName: result.displayName,
@@ -146,10 +159,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: false, error: result.error || 'Invalid name or passcode' };
   }, []);
 
+  const endShift = useCallback(async () => {
+    if (!user) return;
+    // Record shift end GPS (fire-and-forget)
+    recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
+    await SecureStore.setItemAsync('shiftEnded', 'true');
+    setShiftActive(false);
+    console.log('[AuthContext] Shift ended for:', user.displayName);
+  }, [user]);
+
   const logout = useCallback(async () => {
+    // If shift is still active, end it as safety net before logging out
+    if (shiftActive && user) {
+      recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
+    }
+    await SecureStore.deleteItemAsync('shiftEnded');
+    setShiftActive(false);
     await clearDriverSession();
     setUser(null);
-  }, []);
+  }, [shiftActive, user]);
 
   const register = useCallback(async (displayName: string, passcode: string, companyName?: string, legalName?: string) => {
     const result = await submitRegistration({ displayName, passcode, companyName, legalName });
@@ -183,8 +211,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       loading,
       isAuthenticated: !!user,
+      shiftActive,
       login,
       logout,
+      endShift,
       register,
       checkRegistration,
       completeReg,

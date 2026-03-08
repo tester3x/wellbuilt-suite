@@ -11,10 +11,11 @@ import { useGreeting, useAppLauncher, useFirstLaunch, useCompanyConfig } from '@
 import { TIER_DESCRIPTIONS } from '@/core/services/companyConfig';
 import { WellBuiltLogo } from '@/ui/shared/WellBuiltLogo';
 import { AppCard } from '../components/AppCard';
+import { ShiftButton } from '@/ui/shared/ShiftButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, endShift } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const { isWBAppEnabled, config: companyConfig, tierLabel } = useCompanyConfig(user?.companyId);
@@ -88,6 +89,8 @@ export default function HomeScreen() {
             </View>
           </View>
         )}
+
+        <ShiftButton active={shiftActive} onEndShift={endShift} />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>

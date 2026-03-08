@@ -419,13 +419,6 @@ export const revalidateDriverSession = async (): Promise<boolean> => {
  * Clear driver session (logout)
  */
 export const clearDriverSession = async (): Promise<void> => {
-  // Record logout GPS BEFORE clearing session
-  const driverId = await SecureStore.getItemAsync("driverId");
-  const driverName = await SecureStore.getItemAsync("driverName");
-  if (driverId && driverName) {
-    recordShiftEvent('logout', driverId, driverName);
-  }
-
   await SecureStore.deleteItemAsync("driverId");
   await SecureStore.deleteItemAsync("driverName");
   await SecureStore.deleteItemAsync("passcodeHash");

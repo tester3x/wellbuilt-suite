@@ -8,10 +8,11 @@ import { useAuth } from '@/core/context/AuthContext';
 import { wellbuiltApps } from '@/core/data/apps';
 import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
+import { ShiftButton } from '@/ui/shared/ShiftButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, endShift } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -70,6 +71,8 @@ export default function HomeScreen() {
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <ShiftButton active={shiftActive} onEndShift={endShift} />
+
             <View style={styles.footer}>
               <Text style={styles.footerText}>{t('home.footer.version')}</Text>
               <Text style={styles.footerSubtext}>{t('home.footer.tagline')}</Text>

@@ -12,10 +12,11 @@ import { TileGrid } from '../components/TileGrid';
 import { AppTile } from '../components/AppTile';
 import { StatTile } from '../components/StatTile';
 import { TileContainer } from '../components/TileContainer';
+import { ShiftButton } from '@/ui/shared/ShiftButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, endShift } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -60,6 +61,8 @@ export default function HomeScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ShiftButton active={shiftActive} onEndShift={endShift} />
+
         <TileContainer title={t('home.stats.apps').toUpperCase()}>
           <TileGrid>
             <StatTile icon="apps" label={t('home.stats.apps')} value={String(companyApps.length)} color={colors.brand.primary} />

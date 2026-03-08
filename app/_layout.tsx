@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, StyleSheet } from 'react-native';
+import { Platform, View, StyleSheet } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
+import * as NavigationBar from 'expo-navigation-bar';
 import '@/core/localization/i18n';
 import { LanguageProvider } from '@/core/localization';
 import { SkinProvider } from '@/core/context/SkinContext';
@@ -20,6 +21,13 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   useEffect(() => {
+    // Full-screen immersive mode — hide Android navigation bar
+    if (Platform.OS === 'android') {
+      NavigationBar.setVisibilityAsync('hidden');
+      NavigationBar.setBehaviorAsync('overlay-swipe');
+      NavigationBar.setBackgroundColorAsync('#00000000');
+    }
+
     startConnectivityMonitor();
     return () => stopConnectivityMonitor();
   }, []);

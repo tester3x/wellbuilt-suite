@@ -11,10 +11,11 @@ import { CommandHeader } from '../components/CommandHeader';
 import { AppListItem } from '../components/AppListItem';
 import { WidgetContainer } from '../components/WidgetContainer';
 import { SystemStatusBar } from '../components/SystemStatusBar';
+import { ShiftButton } from '@/ui/shared/ShiftButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, endShift } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -46,6 +47,8 @@ export default function HomeScreen() {
       />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ShiftButton active={shiftActive} onEndShift={endShift} />
+
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}
         >
