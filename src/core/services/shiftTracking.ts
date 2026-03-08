@@ -50,7 +50,10 @@ async function captureGPS(): Promise<{ timestamp: string; lat: number; lng: numb
 function dateString(d: Date, offsetDays: number = 0): string {
   const copy = new Date(d);
   copy.setDate(copy.getDate() + offsetDays);
-  return copy.toISOString().slice(0, 10);
+  const year = copy.getFullYear();
+  const month = String(copy.getMonth() + 1).padStart(2, '0');
+  const day = String(copy.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 /** Build a Firestore REST document path. */
@@ -179,7 +182,7 @@ export async function recordShiftEvent(
     }
 
     const now = new Date();
-    const date = now.toISOString().slice(0, 10);
+    const date = dateString(now); // YYYY-MM-DD in local time
     const path = docPath(driverId, date);
 
     const event: ShiftEvent = {
