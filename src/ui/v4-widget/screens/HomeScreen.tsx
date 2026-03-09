@@ -16,7 +16,7 @@ import { ShiftButton } from '@/ui/shared/ShiftButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, endShift } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, returningToYard, returnDepartTime, startReturn, confirmArrival } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -61,7 +61,7 @@ export default function HomeScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <ShiftButton active={shiftActive} onEndShift={endShift} />
+        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={confirmArrival} />
 
         <TileContainer title={t('home.stats.apps').toUpperCase()}>
           <TileGrid>

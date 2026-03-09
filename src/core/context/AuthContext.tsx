@@ -40,12 +40,18 @@ interface AuthContextType {
   isAuthenticated: boolean;
   /** Whether the driver's shift is currently active (clock running) */
   shiftActive: boolean;
+  /** Whether the driver is in "returning to yard" state (driving back after last job) */
+  returningToYard: boolean;
+  /** ISO timestamp when return drive started (for elapsed timer) */
+  returnDepartTime: string | null;
   /** Login with name + passcode. Returns error string or null on success. */
   login: (displayName: string, passcode: string) => Promise<{ success: boolean; error?: string }>;
   /** Full logout — clears SecureStore session. If shift is active, ends it first. */
   logout: () => Promise<void>;
-  /** End the driver's shift (GPS clock punch) without logging out */
-  endShift: () => Promise<void>;
+  /** Start the return-to-yard drive (captures GPS, writes depart_return event) */
+  startReturn: () => Promise<void>;
+  /** Confirm arrival at yard (captures GPS, writes logout event, ends shift) */
+  confirmArrival: () => Promise<void>;
   /** Register a new driver (goes to pending state) */
   register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
@@ -77,6 +83,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [shiftActive, setShiftActive] = useState(false);
+  const [returningToYard, setReturningToYard] = useState(false);
+  const [returnDepartTime, setReturnDepartTime] = useState<string | null>(null);
 
   // On mount: check SecureStore for existing session
   // OPTIMISTIC AUTH: If local session exists, trust it immediately and revalidate
@@ -94,6 +102,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Check if shift was already ended this session
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
           setShiftActive(shiftEnded !== 'true');
+
+          // Restore returning-to-yard state if app was killed mid-return
+          const savedReturnTime = await SecureStore.getItemAsync('returnDepartTime');
+          if (savedReturnTime && shiftEnded !== 'true') {
+            setReturningToYard(true);
+            setReturnDepartTime(savedReturnTime);
+          }
 
           // Ensure today's shift is tracked + close stale shifts (fire-and-forget)
           checkShiftOnResume(session.driverId, session.displayName, session.companyId).catch(() => {});
@@ -139,9 +154,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.legalName,
         result.assignedRoutes
       );
-      // New login = new shift. Clear the "shift ended" flag.
+      // New login = new shift. Clear stale flags.
       await SecureStore.deleteItemAsync('shiftEnded');
+      await SecureStore.deleteItemAsync('returnDepartTime');
       setShiftActive(true);
+      setReturningToYard(false);
+      setReturnDepartTime(null);
       setUser({
         driverId: result.driverId,
         displayName: result.displayName,
@@ -159,13 +177,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: false, error: result.error || 'Invalid name or passcode' };
   }, []);
 
-  const endShift = useCallback(async () => {
+  const startReturn = useCallback(async () => {
     if (!user) return;
-    // Record shift end GPS (fire-and-forget)
+    const now = new Date().toISOString();
+    // Record depart_return GPS event
+    recordShiftEvent('depart_return', user.driverId, user.displayName, user.companyId).catch(() => {});
+    await SecureStore.setItemAsync('returnDepartTime', now);
+    setReturningToYard(true);
+    setReturnDepartTime(now);
+    console.log('[AuthContext] Return to yard started for:', user.displayName);
+  }, [user]);
+
+  const confirmArrival = useCallback(async () => {
+    if (!user) return;
+    // Record logout GPS event (arrival at yard = shift end)
     recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
     await SecureStore.setItemAsync('shiftEnded', 'true');
+    await SecureStore.deleteItemAsync('returnDepartTime');
     setShiftActive(false);
-    console.log('[AuthContext] Shift ended for:', user.displayName);
+    setReturningToYard(false);
+    setReturnDepartTime(null);
+    console.log('[AuthContext] Arrived at yard, shift ended for:', user.displayName);
   }, [user]);
 
   const logout = useCallback(async () => {
@@ -174,7 +206,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftEnded');
+    await SecureStore.deleteItemAsync('returnDepartTime');
     setShiftActive(false);
+    setReturningToYard(false);
+    setReturnDepartTime(null);
     await clearDriverSession();
     setUser(null);
   }, [shiftActive, user]);
@@ -212,9 +247,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       isAuthenticated: !!user,
       shiftActive,
+      returningToYard,
+      returnDepartTime,
       login,
       logout,
-      endShift,
+      startReturn,
+      confirmArrival,
       register,
       checkRegistration,
       completeReg,

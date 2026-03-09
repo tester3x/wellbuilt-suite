@@ -14,7 +14,7 @@ const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
 
 export interface ShiftEvent {
-  type: 'login' | 'logout';
+  type: 'login' | 'logout' | 'depart_return';
   timestamp: string;   // ISO 8601
   lat: number;
   lng: number;
@@ -164,7 +164,7 @@ async function autoCloseStaleShift(
  * On login: also checks for stale open shifts from previous days and auto-closes them.
  */
 export async function recordShiftEvent(
-  type: 'login' | 'logout',
+  type: 'login' | 'logout' | 'depart_return',
   driverId: string,
   displayName: string,
   companyId?: string,
@@ -193,22 +193,23 @@ export async function recordShiftEvent(
       source,
     };
 
+    const fields: Record<string, any> = {
+      driverId: { stringValue: driverId },
+      displayName: { stringValue: displayName },
+      date: { stringValue: date },
+      updatedAt: { timestampValue: now.toISOString() },
+    };
+    const fieldPaths = ['driverId', 'displayName', 'date', 'updatedAt'];
+    if (companyId) {
+      fields.companyId = { stringValue: companyId };
+      fieldPaths.push('companyId');
+    }
+
     const body = {
       writes: [
         {
-          update: {
-            name: path,
-            fields: {
-              driverId: { stringValue: driverId },
-              displayName: { stringValue: displayName },
-              companyId: companyId ? { stringValue: companyId } : { nullValue: null },
-              date: { stringValue: date },
-              updatedAt: { timestampValue: now.toISOString() },
-            },
-          },
-          updateMask: {
-            fieldPaths: ['driverId', 'displayName', 'companyId', 'date', 'updatedAt'],
-          },
+          update: { name: path, fields },
+          updateMask: { fieldPaths },
         },
         {
           transform: {
@@ -274,22 +275,23 @@ export async function checkShiftOnResume(
       source,
     };
 
+    const fields: Record<string, any> = {
+      driverId: { stringValue: driverId },
+      displayName: { stringValue: displayName },
+      date: { stringValue: today },
+      updatedAt: { timestampValue: new Date().toISOString() },
+    };
+    const fieldPaths = ['driverId', 'displayName', 'date', 'updatedAt'];
+    if (companyId) {
+      fields.companyId = { stringValue: companyId };
+      fieldPaths.push('companyId');
+    }
+
     const body = {
       writes: [
         {
-          update: {
-            name: path,
-            fields: {
-              driverId: { stringValue: driverId },
-              displayName: { stringValue: displayName },
-              companyId: companyId ? { stringValue: companyId } : { nullValue: null },
-              date: { stringValue: today },
-              updatedAt: { timestampValue: new Date().toISOString() },
-            },
-          },
-          updateMask: {
-            fieldPaths: ['driverId', 'displayName', 'companyId', 'date', 'updatedAt'],
-          },
+          update: { name: path, fields },
+          updateMask: { fieldPaths },
         },
         {
           transform: {

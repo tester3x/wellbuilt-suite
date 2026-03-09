@@ -15,7 +15,7 @@ import { ShiftButton } from '@/ui/shared/ShiftButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, endShift } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, returningToYard, returnDepartTime, startReturn, confirmArrival } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const { isWBAppEnabled, config: companyConfig, tierLabel } = useCompanyConfig(user?.companyId);
@@ -90,7 +90,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        <ShiftButton active={shiftActive} onEndShift={endShift} />
+        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={confirmArrival} />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>
