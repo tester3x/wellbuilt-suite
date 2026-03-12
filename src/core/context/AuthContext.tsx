@@ -5,6 +5,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import { Linking } from 'react-native';
 import {
   getDriverSession,
   revalidateDriverSession,
@@ -77,6 +78,27 @@ function sessionToUser(session: DriverSession): AuthUser {
     companyName: session.companyName,
     assignedRoutes: session.assignedRoutes,
   };
+}
+
+/**
+ * Fire logout deep links to all WB ecosystem apps.
+ * Each app has a logout handler that clears its session.
+ * Fire-and-forget — don't block on failures.
+ */
+const CASCADE_LOGOUT_SCHEMES = ['wellbuilt-tickets', 'wellbuiltmobile', 'jsaapp'];
+
+async function cascadeLogoutToApps(): Promise<void> {
+  for (const scheme of CASCADE_LOGOUT_SCHEMES) {
+    try {
+      const url = `${scheme}://logout`;
+      await Linking.openURL(url);
+      // Small delay between launches to let each app process
+      await new Promise(r => setTimeout(r, 300));
+    } catch (err) {
+      // App not installed or can't be opened — that's fine, skip it
+      console.log(`[AuthContext] Cascade logout skipped ${scheme}:`, err);
+    }
+  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -198,6 +220,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setReturningToYard(false);
     setReturnDepartTime(null);
     console.log('[AuthContext] Arrived at yard, shift ended for:', user.displayName);
+    // Cascade logout to all WB ecosystem apps (fire-and-forget)
+    cascadeLogoutToApps().catch(() => {});
   }, [user]);
 
   const logout = useCallback(async () => {
@@ -205,6 +229,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (shiftActive && user) {
       recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
     }
+    // Cascade logout to all WB ecosystem apps (fire-and-forget)
+    cascadeLogoutToApps().catch(() => {});
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
     setShiftActive(false);
