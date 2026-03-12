@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Platform, View, StyleSheet } from 'react-native';
+import { AppState, Platform, View, StyleSheet } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import * as NavigationBar from 'expo-navigation-bar';
 import '@/core/localization/i18n';
@@ -22,14 +22,21 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   useEffect(() => {
     // Full-screen immersive mode — hide Android navigation bar
-    if (Platform.OS === 'android') {
-      NavigationBar.setVisibilityAsync('hidden');
-      NavigationBar.setBehaviorAsync('overlay-swipe');
-      NavigationBar.setBackgroundColorAsync('#00000000');
-    }
+    const hideNavBar = () => {
+      if (Platform.OS === 'android') {
+        NavigationBar.setVisibilityAsync('hidden');
+        NavigationBar.setBehaviorAsync('overlay-swipe');
+        NavigationBar.setBackgroundColorAsync('#00000000');
+      }
+    };
+    hideNavBar();
+    // Re-hide nav bar when app returns to foreground (deep links can re-show it)
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') hideNavBar();
+    });
 
     startConnectivityMonitor();
-    return () => stopConnectivityMonitor();
+    return () => { stopConnectivityMonitor(); appStateSub.remove(); };
   }, []);
 
   return (
