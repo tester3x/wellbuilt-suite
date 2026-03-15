@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -38,6 +38,11 @@ export default function HomeScreen() {
   });
   const showTierBanner = companyConfig && companyConfig.tier !== 'suite';
   const enabledCount = companyApps.filter(a => isWBAppEnabled(a.id)).length;
+
+  const handleArrived = useCallback(async () => {
+    await confirmArrival();
+    router.push('/day-summary');
+  }, [confirmArrival]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -90,7 +95,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={confirmArrival} />
+        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>

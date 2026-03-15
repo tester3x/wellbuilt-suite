@@ -32,9 +32,10 @@ async function captureGPS(): Promise<{ timestamp: string; lat: number; lng: numb
       console.warn('[shiftTracking] GPS permission denied');
       return null;
     }
-    const loc = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
+    const loc = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('GPS timeout')), 10000)),
+    ]);
     return {
       timestamp: new Date(loc.timestamp).toISOString(),
       lat: loc.coords.latitude,

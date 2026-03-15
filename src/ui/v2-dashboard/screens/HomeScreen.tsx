@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,6 +36,11 @@ export default function HomeScreen() {
     return true;
   });
 
+  const handleArrived = useCallback(async () => {
+    await confirmArrival();
+    router.push('/day-summary');
+  }, [confirmArrival]);
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <CommandHeader
@@ -47,7 +52,7 @@ export default function HomeScreen() {
       />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={confirmArrival} />
+        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
 
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}

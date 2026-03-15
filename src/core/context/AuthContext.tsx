@@ -5,7 +5,6 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import { Linking } from 'react-native';
 import {
   getDriverSession,
   revalidateDriverSession,
@@ -16,6 +15,7 @@ import {
   submitRegistration,
   checkRegistrationStatus,
   completeRegistration,
+  firebasePatch,
 } from '../services/driverAuth';
 import { recordShiftEvent, checkShiftOnResume } from '../services/shiftTracking';
 
@@ -59,6 +59,8 @@ interface AuthContextType {
   checkRegistration: () => Promise<'pending' | 'approved' | 'rejected' | 'none'>;
   /** Complete registration after admin approval */
   completeReg: () => Promise<{ success: boolean; error?: string }>;
+  /** Logout with RTDB cascade signal — writes logoutAt so other apps self-logout on foreground */
+  logoutWithCascade: () => Promise<void>;
   /** Refresh user session from SecureStore (e.g., after SSO deep link saves session) */
   refreshSession: () => Promise<void>;
 }
@@ -81,23 +83,17 @@ function sessionToUser(session: DriverSession): AuthUser {
 }
 
 /**
- * Fire logout deep links to all WB ecosystem apps.
- * Each app has a logout handler that clears its session.
- * Fire-and-forget — don't block on failures.
+ * Write logoutAt signal to RTDB so other WB apps self-logout on next foreground.
+ * Replaces the old deep link cascade which launched apps and polluted Android task stack.
  */
-const CASCADE_LOGOUT_SCHEMES = ['wellbuilt-tickets', 'wellbuiltmobile', 'jsaapp'];
-
-async function cascadeLogoutToApps(): Promise<void> {
-  for (const scheme of CASCADE_LOGOUT_SCHEMES) {
-    try {
-      const url = `${scheme}://logout`;
-      await Linking.openURL(url);
-      // Small delay between launches to let each app process
-      await new Promise(r => setTimeout(r, 300));
-    } catch (err) {
-      // App not installed or can't be opened — that's fine, skip it
-      console.log(`[AuthContext] Cascade logout skipped ${scheme}:`, err);
-    }
+async function writeLogoutSignal(passcodeHash: string): Promise<void> {
+  try {
+    await firebasePatch(`drivers/approved/${passcodeHash}`, {
+      logoutAt: new Date().toISOString(),
+    });
+    console.log('[AuthContext] logoutAt signal written to RTDB');
+  } catch (err) {
+    console.warn('[AuthContext] Failed to write logoutAt:', err);
   }
 }
 
@@ -220,8 +216,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setReturningToYard(false);
     setReturnDepartTime(null);
     console.log('[AuthContext] Arrived at yard, shift ended for:', user.displayName);
-    // Cascade logout to all WB ecosystem apps (fire-and-forget)
-    cascadeLogoutToApps().catch(() => {});
+    // No cascade here — day summary screen handles logout via logoutWithCascade
+  }, [user]);
+
+  const logoutWithCascade = useCallback(async () => {
+    if (user) {
+      // Write RTDB signal so other apps self-logout on next foreground
+      await writeLogoutSignal(user.passcodeHash);
+    }
+    await SecureStore.deleteItemAsync('shiftEnded');
+    await SecureStore.deleteItemAsync('returnDepartTime');
+    setShiftActive(false);
+    setReturningToYard(false);
+    setReturnDepartTime(null);
+    await clearDriverSession();
+    setUser(null);
   }, [user]);
 
   const logout = useCallback(async () => {
@@ -229,8 +238,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (shiftActive && user) {
       recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
     }
-    // Cascade logout to all WB ecosystem apps (fire-and-forget)
-    cascadeLogoutToApps().catch(() => {});
+    // Write RTDB signal so other apps self-logout on next foreground
+    if (user) {
+      writeLogoutSignal(user.passcodeHash).catch(() => {});
+    }
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
     setShiftActive(false);
@@ -277,6 +288,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       returnDepartTime,
       login,
       logout,
+      logoutWithCascade,
       startReturn,
       confirmArrival,
       register,

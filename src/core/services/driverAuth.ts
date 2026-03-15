@@ -125,7 +125,7 @@ const firebasePost = async (path: string, data: any): Promise<string> => {
   return result.name; // Firebase returns {"name": "generated-key"}
 };
 
-const firebasePatch = async (path: string, data: any): Promise<void> => {
+export const firebasePatch = async (path: string, data: any): Promise<void> => {
   const url = buildFirebaseUrl(path);
   const response = await fetchWithTimeout(url, {
     method: "PATCH",
@@ -208,6 +208,9 @@ export const verifyLogin = async (
       // Record login GPS for DOT drive time (fire-and-forget)
       recordShiftEvent('login', hash, driverData.displayName, driverData.companyId || undefined);
 
+      // Clear any stale logoutAt signal from previous session
+      firebasePatch(`${DRIVERS_APPROVED}/${hash}`, { logoutAt: null }).catch(() => {});
+
       return {
         valid: true,
         driverId: hash,
@@ -233,6 +236,9 @@ export const verifyLogin = async (
 
         // Record login GPS for DOT drive time (fire-and-forget)
         recordShiftEvent('login', hash, entry.displayName, entry.companyId || undefined);
+
+        // Clear any stale logoutAt signal from previous session
+        firebasePatch(`${DRIVERS_APPROVED}/${hash}`, { logoutAt: null }).catch(() => {});
 
         return {
           valid: true,

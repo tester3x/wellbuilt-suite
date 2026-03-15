@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,6 +33,11 @@ export default function HomeScreen() {
     }
     return true;
   });
+
+  const handleArrived = useCallback(async () => {
+    await confirmArrival();
+    router.push('/day-summary');
+  }, [confirmArrival]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -71,7 +76,7 @@ export default function HomeScreen() {
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={confirmArrival} />
+            <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
 
             <View style={styles.footer}>
               <Text style={styles.footerText}>{t('home.footer.version')}</Text>

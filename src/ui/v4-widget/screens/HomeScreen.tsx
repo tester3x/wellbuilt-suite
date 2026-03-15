@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -37,6 +37,11 @@ export default function HomeScreen() {
     return true;
   });
 
+  const handleArrived = useCallback(async () => {
+    await confirmArrival();
+    router.push('/day-summary');
+  }, [confirmArrival]);
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -61,7 +66,7 @@ export default function HomeScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={confirmArrival} />
+        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
 
         <TileContainer title={t('home.stats.apps').toUpperCase()}>
           <TileGrid>
