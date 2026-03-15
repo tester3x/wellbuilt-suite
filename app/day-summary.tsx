@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '@/core/context/AuthContext';
 import { colors } from '@/core/theme';
+import { firebasePatch } from '@/core/services/driverAuth';
 import {
   fetchTodayInvoices,
   fetchTodayShift,
@@ -88,7 +89,13 @@ export default function DaySummaryScreen() {
     })();
   }, [user]);
 
-  const handleClose = () => {
+  const handleClose = async () => {
+    // Shift is over — signal other apps to logout even though WB S stays logged in
+    if (user) {
+      firebasePatch(`drivers/approved/${user.passcodeHash}`, {
+        logoutAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
     router.replace('/home');
   };
 
