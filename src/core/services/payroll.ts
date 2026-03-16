@@ -34,7 +34,7 @@ export interface RateEntry {
 
 export interface PayConfig {
   employeeSplit?: number;
-  rateSheet?: RateEntry[];
+  rateSheets?: Record<string, RateEntry[]>; // per-operator rate sheets (matches Dashboard)
   frostZones?: Record<string, { startDate: string; endDate: string; maxBbls?: number }>;
 }
 
@@ -283,11 +283,21 @@ export async function fetchPayConfig(companyId: string): Promise<PayConfig | nul
     const fields = doc.fields || {};
 
     const payConfig = parseFirestoreValue(fields.payConfig) || {};
-    const rateSheet = parseFirestoreValue(fields.rateSheet) || [];
+    const rateSheets = parseFirestoreValue(fields.rateSheets) || {};
+
+    // rateSheets is per-operator: { "SLAWSON EXPLORATION COMPANY, INC.": [{jobType, method, rate, ...}] }
+    const parsedSheets: Record<string, RateEntry[]> = {};
+    if (typeof rateSheets === 'object' && !Array.isArray(rateSheets)) {
+      for (const [operator, entries] of Object.entries(rateSheets)) {
+        if (Array.isArray(entries)) {
+          parsedSheets[operator] = entries;
+        }
+      }
+    }
 
     return {
       employeeSplit: payConfig.employeeSplit ?? payConfig.defaultSplit ?? 0.25,
-      rateSheet: Array.isArray(rateSheet) ? rateSheet : [],
+      rateSheets: Object.keys(parsedSheets).length > 0 ? parsedSheets : undefined,
       frostZones: payConfig.frostZones || undefined,
     };
   } catch (err) {
@@ -325,8 +335,13 @@ const JOB_TYPE_ALIASES: Record<string, string[]> = {
   'Service Work': ['Service', 'Maintenance'],
 };
 
-function lookupRate(rateSheet: RateEntry[], operator: string, jobType: string): RateEntry | null {
-  if (!rateSheet.length) return null;
+function lookupRate(rateSheets: Record<string, RateEntry[]>, operator: string, jobType: string): RateEntry | null {
+  // Find the operator's rate sheet (case-insensitive)
+  const operatorKey = Object.keys(rateSheets).find(k =>
+    k.toLowerCase() === operator.toLowerCase()
+  );
+  const rateSheet = operatorKey ? rateSheets[operatorKey] : null;
+  if (!rateSheet || !rateSheet.length) return null;
 
   const direct = rateSheet.find(r =>
     r.jobType.toLowerCase() === jobType.toLowerCase()
@@ -397,11 +412,11 @@ export function buildTimesheetSummary(
   periodEnd: Date,
 ): TimesheetSummary {
   const split = payConfig?.employeeSplit ?? 0.25;
-  const rateSheet = payConfig?.rateSheet || [];
+  const rateSheets = payConfig?.rateSheets || {};
   const frostZones = payConfig?.frostZones;
 
   const rows: TimesheetRow[] = invoices.map(inv => {
-    const rateEntry = lookupRate(rateSheet, inv.operator, inv.jobType);
+    const rateEntry = lookupRate(rateSheets, inv.operator, inv.jobType);
     let rate = 0;
     let rateMethod = 'per_bbl';
 

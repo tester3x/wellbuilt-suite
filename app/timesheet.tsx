@@ -173,7 +173,7 @@ export default function TimesheetScreen() {
         user.companyId ? fetchPayConfig(user.companyId) : Promise.resolve(null),
       ]);
 
-      setNoRateSheet(!payConfig?.rateSheet?.length);
+      setNoRateSheet(!payConfig?.rateSheets || Object.keys(payConfig.rateSheets).length === 0);
 
       const result = buildTimesheetSummary(invoices, payConfig, label, start, end);
       setSummary(result);
