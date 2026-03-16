@@ -402,6 +402,67 @@ function getEffectiveRate(
   return entry.rate;
 }
 
+// ── Well → County lookup (NDIC data in Firestore) ──────────────────────────
+
+/**
+ * Build a map of wellName (lowercase) → county from Firestore wells collection.
+ * Matches Dashboard's buildWellCountyMap() logic.
+ */
+export async function buildWellCountyMap(operators: string[]): Promise<Map<string, string>> {
+  const countyMap = new Map<string, string>();
+  if (!operators.length) return countyMap;
+
+  for (const op of operators) {
+    try {
+      const body = {
+        structuredQuery: {
+          from: [{ collectionId: 'wells' }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: 'operator' },
+              op: 'EQUAL',
+              value: { stringValue: op },
+            },
+          },
+          select: {
+            fields: [
+              { fieldPath: 'well_name' },
+              { fieldPath: 'county' },
+            ],
+          },
+        },
+      };
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      const resp = await fetch(firestoreQueryUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (!resp.ok) continue;
+
+      const results = await resp.json();
+      for (const result of results) {
+        if (!result.document) continue;
+        const f = result.document.fields || {};
+        const wellName = parseFirestoreValue(f.well_name) || '';
+        const county = parseFirestoreValue(f.county) || '';
+        if (wellName && county) {
+          countyMap.set(wellName.toLowerCase(), county);
+        }
+      }
+    } catch {
+      // Skip operator on error
+    }
+  }
+
+  return countyMap;
+}
+
 // ── Build timesheet summary ──────────────────────────────────────────────────
 
 export function buildTimesheetSummary(
@@ -410,6 +471,7 @@ export function buildTimesheetSummary(
   periodLabel: string,
   periodStart: Date,
   periodEnd: Date,
+  wellCountyMap?: Map<string, string>,
 ): TimesheetSummary {
   const split = payConfig?.employeeSplit ?? 0.25;
   const rateSheets = payConfig?.rateSheets || {};
@@ -422,10 +484,14 @@ export function buildTimesheetSummary(
 
     if (rateEntry) {
       rateMethod = rateEntry.method;
+      // Look up county from NDIC well data if not on invoice
+      const county = inv.county
+        || wellCountyMap?.get(inv.wellName?.toLowerCase() || '')
+        || '';
       rate = getEffectiveRate(
         rateEntry,
         inv.date || inv.createdAt,
-        inv.county || '',
+        county,
         frostZones,
         inv.totalBBL,
       );

@@ -26,6 +26,7 @@ import {
   fetchDriverInvoices,
   fetchPayConfig,
   buildTimesheetSummary,
+  buildWellCountyMap,
 } from '@/core/services/payroll';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -175,7 +176,11 @@ export default function TimesheetScreen() {
 
       setNoRateSheet(!payConfig?.rateSheets || Object.keys(payConfig.rateSheets).length === 0);
 
-      const result = buildTimesheetSummary(invoices, payConfig, label, start, end);
+      // Build well→county map from NDIC data for frost rate calculation
+      const operators = [...new Set(invoices.map(i => i.operator).filter(Boolean))];
+      const countyMap = operators.length > 0 ? await buildWellCountyMap(operators) : new Map();
+
+      const result = buildTimesheetSummary(invoices, payConfig, label, start, end, countyMap);
       setSummary(result);
     } catch (err) {
       console.warn('[Timesheet] Failed to load:', err);
