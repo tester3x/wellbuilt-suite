@@ -12,6 +12,7 @@ import { TIER_DESCRIPTIONS } from '@/core/services/companyConfig';
 import { WellBuiltLogo } from '@/ui/shared/WellBuiltLogo';
 import { AppCard } from '../components/AppCard';
 import { ShiftButton } from '@/ui/shared/ShiftButton';
+import { TimesheetButton } from '@/ui/shared/TimesheetButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -96,6 +97,7 @@ export default function HomeScreen() {
         )}
 
         <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
+        <TimesheetButton />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>

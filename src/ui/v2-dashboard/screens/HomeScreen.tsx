@@ -12,6 +12,7 @@ import { AppListItem } from '../components/AppListItem';
 import { WidgetContainer } from '../components/WidgetContainer';
 import { SystemStatusBar } from '../components/SystemStatusBar';
 import { ShiftButton } from '@/ui/shared/ShiftButton';
+import { TimesheetButton } from '@/ui/shared/TimesheetButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -53,6 +54,7 @@ export default function HomeScreen() {
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
+        <TimesheetButton />
 
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}

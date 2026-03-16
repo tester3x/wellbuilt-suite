@@ -13,6 +13,7 @@ import { AppTile } from '../components/AppTile';
 import { StatTile } from '../components/StatTile';
 import { TileContainer } from '../components/TileContainer';
 import { ShiftButton } from '@/ui/shared/ShiftButton';
+import { TimesheetButton } from '@/ui/shared/TimesheetButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -67,6 +68,7 @@ export default function HomeScreen() {
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
+        <TimesheetButton />
 
         <TileContainer title={t('home.stats.apps').toUpperCase()}>
           <TileGrid>

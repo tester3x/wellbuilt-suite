@@ -9,6 +9,7 @@ import { wellbuiltApps } from '@/core/data/apps';
 import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
 import { ShiftButton } from '@/ui/shared/ShiftButton';
+import { TimesheetButton } from '@/ui/shared/TimesheetButton';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -77,6 +78,7 @@ export default function HomeScreen() {
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
+            <TimesheetButton />
 
             <View style={styles.footer}>
               <Text style={styles.footerText}>{t('home.footer.version')}</Text>
