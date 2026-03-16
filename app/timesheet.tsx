@@ -1,6 +1,6 @@
-// app/timesheet.tsx — Driver timesheet / live pay view
-// Shows invoices building in real-time for current pay period.
-// Driver sees their pay accumulating as they work.
+// app/timesheet.tsx — Driver timesheet / payroll view
+// Basic payroll summary matching Dashboard Payroll data.
+// Invoice numbers are tappable references (future: deep link to WB T invoice detail).
 
 import React, { useEffect, useState, useCallback } from 'react';
 import {
@@ -12,6 +12,7 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -82,50 +83,51 @@ function StatCard({ label, value, color, icon }: {
   );
 }
 
-// ── Invoice Row ──────────────────────────────────────────────────────────────
+// ── Payroll Row (basic) ─────────────────────────────────────────────────────
 
-function InvoiceRow({ row, expanded, onToggle }: {
+function PayrollRow({ row, expanded, onToggle }: {
   row: TimesheetRow;
   expanded: boolean;
   onToggle: () => void;
 }) {
   const sColor = statusColor(row.status);
+  const rateLabel = row.rateMethod === 'per_bbl'
+    ? `${formatCurrency(row.rate)}/bbl`
+    : `${formatCurrency(row.rate)}/hr`;
 
   return (
-    <Pressable onPress={onToggle} style={s.invoiceRow}>
-      <View style={s.invoiceRowHeader}>
-        <View style={s.invoiceRowLeft}>
+    <Pressable onPress={onToggle} style={s.payrollRow}>
+      <View style={s.rowHeader}>
+        <View style={s.rowLeft}>
           <View style={[s.statusDot, { backgroundColor: sColor }]} />
           <View style={{ flex: 1 }}>
-            <Text style={s.wellName} numberOfLines={1}>{row.wellName}</Text>
-            <Text style={s.operatorName} numberOfLines={1}>{row.operator}</Text>
+            <Text style={s.rowDate}>{row.date}</Text>
+            <Text style={s.rowInvoice}>#{row.invoiceNumber}</Text>
           </View>
         </View>
-        <View style={s.invoiceRowRight}>
-          <Text style={s.payAmount}>{formatCurrency(row.employeePay)}</Text>
+        <View style={s.rowRight}>
+          <Text style={s.rowPay}>{formatCurrency(row.employeePay)}</Text>
           <MaterialCommunityIcons
             name={expanded ? 'chevron-up' : 'chevron-down'}
-            size={18}
+            size={16}
             color={colors.text.muted}
           />
         </View>
       </View>
 
       {expanded && (
-        <View style={s.invoiceDetail}>
+        <View style={s.rowDetail}>
           <View style={s.detailGrid}>
-            <DetailItem label="Invoice" value={`#${row.invoiceNumber}`} />
-            <DetailItem label="Date" value={row.date} />
-            <DetailItem label="Job" value={row.jobType} />
             <DetailItem label="Status" value={statusLabel(row.status)} valueColor={sColor} />
-            <DetailItem label="BBLs" value={String(Math.round(row.bbls))} />
-            <DetailItem label="Hours" value={row.hours.toFixed(1)} />
-            <DetailItem label="Rate" value={row.rateMethod === 'per_bbl' ? `${formatCurrency(row.rate)}/bbl` : `${formatCurrency(row.rate)}/hr`} />
-            <DetailItem label="Gross" value={formatCurrency(row.gross)} />
-            {row.hauledTo ? <DetailItem label="Drop-off" value={row.hauledTo} wide /> : null}
+            <DetailItem label="Product" value={row.jobType} />
+            <DetailItem label="Operator" value={row.operator} />
+            <DetailItem label="Rate" value={rateLabel} />
+            {row.bbls > 0 && <DetailItem label="BBLs" value={String(Math.round(row.bbls))} />}
+            {row.hours > 0 && <DetailItem label="Hours" value={row.hours.toFixed(1)} />}
+            <DetailItem label="Gross Billed" value={formatCurrency(row.gross)} />
           </View>
           <View style={s.detailPayRow}>
-            <Text style={s.detailPayLabel}>Your Pay</Text>
+            <Text style={s.detailPayLabel}>Your Take</Text>
             <Text style={s.detailPayValue}>{formatCurrency(row.employeePay)}</Text>
           </View>
         </View>
@@ -134,14 +136,13 @@ function InvoiceRow({ row, expanded, onToggle }: {
   );
 }
 
-function DetailItem({ label, value, valueColor, wide }: {
+function DetailItem({ label, value, valueColor }: {
   label: string;
   value: string;
   valueColor?: string;
-  wide?: boolean;
 }) {
   return (
-    <View style={[s.detailItem, wide && s.detailItemWide]}>
+    <View style={s.detailItem}>
       <Text style={s.detailLabel}>{label}</Text>
       <Text style={[s.detailValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
     </View>
@@ -195,6 +196,10 @@ export default function TimesheetScreen() {
 
   if (!user) return null;
 
+  // Count closed vs in-progress
+  const closedCount = summary?.rows.filter(r => r.status !== 'open').length || 0;
+  const openCount = summary?.rows.filter(r => r.status === 'open').length || 0;
+
   return (
     <SafeAreaView style={s.container}>
       {/* Header */}
@@ -203,7 +208,7 @@ export default function TimesheetScreen() {
           <MaterialCommunityIcons name="arrow-left" size={22} color={colors.text.primary} />
         </Pressable>
         <View style={s.headerCenter}>
-          <Text style={s.headerTitle}>Timesheet</Text>
+          <Text style={s.headerTitle}>Payroll</Text>
           {summary && (
             <Text style={s.headerSubtitle}>
               {summary.periodStart} – {summary.periodEnd}
@@ -255,16 +260,21 @@ export default function TimesheetScreen() {
         {loading ? (
           <View style={s.loadingContainer}>
             <ActivityIndicator size="large" color={colors.brand.primary} />
-            <Text style={s.loadingText}>Loading timesheet...</Text>
+            <Text style={s.loadingText}>Loading payroll...</Text>
           </View>
         ) : summary ? (
           <>
-            {/* Pay Summary Banner */}
+            {/* Net Pay Banner */}
             <View style={s.payBanner}>
               <Text style={s.payBannerLabel}>{summary.periodLabel} Pay</Text>
               <Text style={s.payBannerAmount}>{formatCurrency(summary.totalPay)}</Text>
               {noRateSheet && (
                 <Text style={s.noRateWarning}>Rate sheet not configured</Text>
+              )}
+              {openCount > 0 && (
+                <Text style={s.buildingNote}>
+                  {openCount} job{openCount > 1 ? 's' : ''} still in progress
+                </Text>
               )}
             </View>
 
@@ -296,7 +306,7 @@ export default function TimesheetScreen() {
               />
             </View>
 
-            {/* Invoice List */}
+            {/* Job List */}
             <View style={s.sectionHeader}>
               <Text style={s.sectionTitle}>Jobs</Text>
               <Text style={s.sectionCount}>{summary.totalLoads} total</Text>
@@ -310,7 +320,7 @@ export default function TimesheetScreen() {
               </View>
             ) : (
               summary.rows.map(row => (
-                <InvoiceRow
+                <PayrollRow
                   key={row.invoiceId}
                   row={row}
                   expanded={expandedRow === row.invoiceId}
@@ -323,7 +333,7 @@ export default function TimesheetScreen() {
           </>
         ) : (
           <View style={s.emptyState}>
-            <Text style={s.emptyText}>Unable to load timesheet</Text>
+            <Text style={s.emptyText}>Unable to load payroll</Text>
           </View>
         )}
       </ScrollView>
@@ -450,6 +460,11 @@ const s = StyleSheet.create({
     color: colors.status.warning,
     marginTop: 6,
   },
+  buildingNote: {
+    fontSize: 11,
+    color: colors.brand.primary,
+    marginTop: 4,
+  },
   statsGrid: {
     flexDirection: 'row',
     gap: 8,
@@ -493,7 +508,7 @@ const s = StyleSheet.create({
     fontSize: 12,
     color: colors.text.muted,
   },
-  invoiceRow: {
+  payrollRow: {
     backgroundColor: colors.bg.card,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -501,13 +516,13 @@ const s = StyleSheet.create({
     marginBottom: 8,
     overflow: 'hidden',
   },
-  invoiceRowHeader: {
+  rowHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: spacing.md,
   },
-  invoiceRowLeft: {
+  rowLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
@@ -518,27 +533,27 @@ const s = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-  wellName: {
+  rowDate: {
     fontSize: 14,
     fontWeight: '600',
     color: colors.text.primary,
   },
-  operatorName: {
+  rowInvoice: {
     fontSize: 12,
     color: colors.text.muted,
     marginTop: 1,
   },
-  invoiceRowRight: {
+  rowRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  payAmount: {
+  rowPay: {
     fontSize: 16,
     fontWeight: '700',
     color: colors.status.online,
   },
-  invoiceDetail: {
+  rowDetail: {
     borderTopWidth: 1,
     borderTopColor: colors.border.subtle,
     padding: spacing.md,
@@ -551,9 +566,6 @@ const s = StyleSheet.create({
   },
   detailItem: {
     width: '45%',
-  },
-  detailItemWide: {
-    width: '95%',
   },
   detailLabel: {
     fontSize: 10,

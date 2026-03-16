@@ -1,6 +1,6 @@
 // src/core/services/payroll.ts
 // Fetches invoice data for driver timesheet view via Firestore REST API.
-// Shows real-time pay building as driver works throughout the day/week.
+// Mirrors Dashboard payroll logic: fetches all company invoices, filters by driver client-side.
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -10,6 +10,7 @@ const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
 export interface TimesheetInvoice {
   id: string;
   invoiceNumber: string;
+  driver: string;
   operator: string;
   wellName: string;
   hauledTo: string;
@@ -20,6 +21,7 @@ export interface TimesheetInvoice {
   date: string; // MM/DD/YYYY or ISO
   createdAt: string;
   county?: string;
+  companyId?: string;
 }
 
 export interface RateEntry {
@@ -41,8 +43,6 @@ export interface TimesheetRow {
   invoiceNumber: string;
   date: string;
   operator: string;
-  wellName: string;
-  hauledTo: string;
   jobType: string;
   bbls: number;
   hours: number;
@@ -100,12 +100,21 @@ function parseFirestoreValue(val: any): any {
 
 // ── Period calculations ──────────────────────────────────────────────────────
 
-function getStartOfWeek(date: Date): Date {
+/** Get Monday of the week (matches Dashboard payroll) */
+function getMonday(date: Date): Date {
   const d = new Date(date);
-  const day = d.getDay(); // 0=Sun
-  d.setDate(d.getDate() - day);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+function getSunday(monday: Date): Date {
+  const sun = new Date(monday);
+  sun.setDate(sun.getDate() + 6);
+  sun.setHours(23, 59, 59, 999);
+  return sun;
 }
 
 export function getPeriodDates(period: PeriodType): { start: Date; end: Date; label: string } {
@@ -119,28 +128,22 @@ export function getPeriodDates(period: PeriodType): { start: Date; end: Date; la
       return { start: today, end, label: 'Today' };
     }
     case 'this-week': {
-      const start = getStartOfWeek(today);
-      const end = new Date(start);
-      end.setDate(end.getDate() + 6);
-      end.setHours(23, 59, 59, 999);
+      const start = getMonday(today);
+      const end = getSunday(start);
       return { start, end, label: 'This Week' };
     }
     case 'last-week': {
-      const thisWeekStart = getStartOfWeek(today);
-      const start = new Date(thisWeekStart);
+      const thisMonday = getMonday(today);
+      const start = new Date(thisMonday);
       start.setDate(start.getDate() - 7);
-      const end = new Date(thisWeekStart);
-      end.setDate(end.getDate() - 1);
-      end.setHours(23, 59, 59, 999);
+      const end = getSunday(start);
       return { start, end, label: 'Last Week' };
     }
     case 'biweekly': {
-      const thisWeekStart = getStartOfWeek(today);
-      const start = new Date(thisWeekStart);
+      const thisMonday = getMonday(today);
+      const start = new Date(thisMonday);
       start.setDate(start.getDate() - 7);
-      const end = new Date(thisWeekStart);
-      end.setDate(end.getDate() + 6);
-      end.setHours(23, 59, 59, 999);
+      const end = getSunday(thisMonday);
       return { start, end, label: 'Last 2 Weeks' };
     }
   }
@@ -153,8 +156,9 @@ function formatShortDate(date: Date): string {
 // ── Data fetching ────────────────────────────────────────────────────────────
 
 /**
- * Fetch invoices for a specific driver within a date range.
- * Includes ALL statuses (open + closed) so driver sees pay building in real-time.
+ * Fetch invoices for a date range, filtered by companyId.
+ * Driver filtering done CLIENT-SIDE to avoid needing composite indexes.
+ * Matches Dashboard payroll approach exactly.
  */
 export async function fetchDriverInvoices(
   displayName: string,
@@ -165,47 +169,30 @@ export async function fetchDriverInvoices(
   const startISO = start.toISOString();
   const endISO = end.toISOString();
 
-  const filters: any[] = [
-    {
-      fieldFilter: {
-        field: { fieldPath: 'createdAt' },
-        op: 'GREATER_THAN_OR_EQUAL',
-        value: { timestampValue: startISO },
-      },
-    },
-    {
-      fieldFilter: {
-        field: { fieldPath: 'createdAt' },
-        op: 'LESS_THAN_OR_EQUAL',
-        value: { timestampValue: endISO },
-      },
-    },
-    {
-      fieldFilter: {
-        field: { fieldPath: 'driver' },
-        op: 'EQUAL',
-        value: { stringValue: displayName },
-      },
-    },
-  ];
-
-  if (companyId) {
-    filters.push({
-      fieldFilter: {
-        field: { fieldPath: 'companyId' },
-        op: 'EQUAL',
-        value: { stringValue: companyId },
-      },
-    });
-  }
-
+  // Only filter by createdAt range in the query — driver filtering done client-side.
+  // This avoids the composite index requirement that was causing empty results.
   const body = {
     structuredQuery: {
       from: [{ collectionId: 'invoices' }],
       where: {
         compositeFilter: {
           op: 'AND',
-          filters,
+          filters: [
+            {
+              fieldFilter: {
+                field: { fieldPath: 'createdAt' },
+                op: 'GREATER_THAN_OR_EQUAL',
+                value: { timestampValue: startISO },
+              },
+            },
+            {
+              fieldFilter: {
+                field: { fieldPath: 'createdAt' },
+                op: 'LESS_THAN_OR_EQUAL',
+                value: { timestampValue: endISO },
+              },
+            },
+          ],
         },
       },
       orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'ASCENDING' }],
@@ -237,22 +224,37 @@ export async function fetchDriverInvoices(
       const nameParts = result.document.name.split('/');
       const docId = nameParts[nameParts.length - 1];
 
+      const driver = parseFirestoreValue(f.driver) || '';
+      const invoiceCompanyId = parseFirestoreValue(f.companyId) || '';
+      const status = parseFirestoreValue(f.status) || 'open';
+
+      // Client-side filters:
+      // 1. Match driver name (case-insensitive)
+      if (driver.toLowerCase() !== displayName.toLowerCase()) continue;
+      // 2. Match company if specified
+      if (companyId && invoiceCompanyId && invoiceCompanyId !== companyId) continue;
+      // 3. Skip open/in-progress (match Dashboard: only closed+ count for pay)
+      // But keep them visible so driver sees pay building in real-time
+      // We'll mark them differently in the UI instead
+
       const createdAt = parseFirestoreValue(f.createdAt) || '';
       const dateStr = parseFirestoreValue(f.date) || '';
 
       invoices.push({
         id: docId,
         invoiceNumber: parseFirestoreValue(f.invoiceNumber) || docId.slice(0, 8),
+        driver,
         operator: parseFirestoreValue(f.operator) || '',
         wellName: parseFirestoreValue(f.wellName) || '',
         hauledTo: parseFirestoreValue(f.hauledTo) || '',
-        jobType: parseFirestoreValue(f.jobType) || 'Production Water',
+        jobType: parseFirestoreValue(f.commodityType) || parseFirestoreValue(f.jobType) || 'Production Water',
         totalBBL: parseFirestoreValue(f.totalBBL) || 0,
         totalHours: parseFirestoreValue(f.totalHours) || 0,
-        status: parseFirestoreValue(f.status) || 'open',
+        status,
         date: dateStr,
         createdAt,
         county: parseFirestoreValue(f.county) || '',
+        companyId: invoiceCompanyId,
       });
     }
 
@@ -284,7 +286,7 @@ export async function fetchPayConfig(companyId: string): Promise<PayConfig | nul
     const rateSheet = parseFirestoreValue(fields.rateSheet) || [];
 
     return {
-      employeeSplit: payConfig.employeeSplit ?? 0.25,
+      employeeSplit: payConfig.employeeSplit ?? payConfig.defaultSplit ?? 0.25,
       rateSheet: Array.isArray(rateSheet) ? rateSheet : [],
       frostZones: payConfig.frostZones || undefined,
     };
@@ -302,7 +304,6 @@ function toISODate(dateStr: string): string {
   if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.slice(0, 10);
   const m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-  // Try ISO timestamp
   try {
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
@@ -327,13 +328,11 @@ const JOB_TYPE_ALIASES: Record<string, string[]> = {
 function lookupRate(rateSheet: RateEntry[], operator: string, jobType: string): RateEntry | null {
   if (!rateSheet.length) return null;
 
-  // Direct match
   const direct = rateSheet.find(r =>
     r.jobType.toLowerCase() === jobType.toLowerCase()
   );
   if (direct) return direct;
 
-  // Alias match
   for (const [canonical, aliases] of Object.entries(JOB_TYPE_ALIASES)) {
     if (aliases.some(a => a.toLowerCase() === jobType.toLowerCase()) ||
         canonical.toLowerCase() === jobType.toLowerCase()) {
@@ -345,7 +344,6 @@ function lookupRate(rateSheet: RateEntry[], operator: string, jobType: string): 
     }
   }
 
-  // Default — first entry as fallback
   return rateSheet[0] || null;
 }
 
@@ -422,9 +420,9 @@ export function buildTimesheetSummary(
       ? rate * inv.totalBBL
       : rate * inv.totalHours;
 
-    const employeePay = gross * split;
+    const employeePay = Math.round(gross * split * 100) / 100;
 
-    // Format the date for display
+    // Format date for display
     let displayDate = '';
     if (inv.date) {
       displayDate = inv.date;
@@ -442,14 +440,12 @@ export function buildTimesheetSummary(
       invoiceNumber: inv.invoiceNumber,
       date: displayDate,
       operator: inv.operator,
-      wellName: inv.wellName,
-      hauledTo: inv.hauledTo,
       jobType: inv.jobType,
       bbls: inv.totalBBL,
       hours: inv.totalHours,
       rate,
       rateMethod,
-      gross,
+      gross: Math.round(gross * 100) / 100,
       employeePay,
       status: inv.status,
     };
@@ -459,9 +455,9 @@ export function buildTimesheetSummary(
     rows,
     totalLoads: rows.length,
     totalBBLs: rows.reduce((s, r) => s + r.bbls, 0),
-    totalHours: Math.round(rows.reduce((s, r) => s + r.hours, 0) * 10) / 10,
-    totalGross: rows.reduce((s, r) => s + r.gross, 0),
-    totalPay: rows.reduce((s, r) => s + r.employeePay, 0),
+    totalHours: Math.round(rows.reduce((s, r) => s + r.hours, 0) * 100) / 100,
+    totalGross: Math.round(rows.reduce((s, r) => s + r.gross, 0) * 100) / 100,
+    totalPay: Math.round(rows.reduce((s, r) => s + r.employeePay, 0) * 100) / 100,
     periodLabel,
     periodStart: formatShortDate(periodStart),
     periodEnd: formatShortDate(periodEnd),
