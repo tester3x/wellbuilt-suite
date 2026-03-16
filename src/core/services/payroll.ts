@@ -463,6 +463,189 @@ export async function buildWellCountyMap(operators: string[]): Promise<Map<strin
   return countyMap;
 }
 
+// ── Fetch invoice detail + tickets (for paper-style detail view) ─────────────
+
+export interface InvoiceDetail {
+  docId: string;
+  invoiceNumber: string;
+  operator: string;
+  wellName: string;
+  hauledTo: string;
+  status: string;
+  totalBBL: number;
+  totalHours: number;
+  commodityType: string;
+  date: string;
+  driver: string;
+  tickets: string[];
+  ticketCount: number;
+  truckNumber: string;
+  trailer: string;
+  startTime: string | null;
+  stopTime: string | null;
+  notes: string;
+  state: string;
+  timeline: { type: string; timestamp: string; locationName: string | null; lat: number | null; lng: number | null; leg: number }[];
+}
+
+export interface TicketDetail {
+  docId: string;
+  ticketNumber: string;
+  location: string;
+  hauledTo: string;
+  type: string;
+  qty: string;
+  date: string;
+  timeGauged: string;
+  company: string;
+  top: string;
+  bottom: string;
+  notes: string;
+  apiNo: string;
+  gpsLat: string;
+  gpsLng: string;
+  legalDesc: string;
+  county: string;
+  startTime: string;
+  stopTime: string;
+  hours: string;
+  disposalApiNo: string;
+}
+
+/**
+ * Fetch full invoice document by ID via Firestore REST API.
+ */
+export async function fetchInvoiceDetail(invoiceId: string): Promise<InvoiceDetail | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const resp = await fetch(firestoreDocUrl(`invoices/${invoiceId}`), {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!resp.ok) return null;
+
+    const doc = await resp.json();
+    const f = doc.fields || {};
+
+    const timeline = parseFirestoreValue(f.timeline) || [];
+
+    return {
+      docId: invoiceId,
+      invoiceNumber: parseFirestoreValue(f.invoiceNumber) || '',
+      operator: parseFirestoreValue(f.operator) || '',
+      wellName: parseFirestoreValue(f.wellName) || '',
+      hauledTo: parseFirestoreValue(f.hauledTo) || '',
+      status: parseFirestoreValue(f.status) || 'open',
+      totalBBL: parseFirestoreValue(f.totalBBL) || 0,
+      totalHours: parseFirestoreValue(f.totalHours) || 0,
+      commodityType: parseFirestoreValue(f.commodityType) || '',
+      date: parseFirestoreValue(f.date) || '',
+      driver: parseFirestoreValue(f.driver) || '',
+      tickets: parseFirestoreValue(f.tickets) || [],
+      ticketCount: (parseFirestoreValue(f.tickets) || []).length,
+      truckNumber: parseFirestoreValue(f.truckNumber) || '',
+      trailer: parseFirestoreValue(f.trailer) || '',
+      startTime: parseFirestoreValue(f.startTime) || null,
+      stopTime: parseFirestoreValue(f.stopTime) || null,
+      notes: parseFirestoreValue(f.notes) || '',
+      state: parseFirestoreValue(f.state) || '',
+      timeline: Array.isArray(timeline) ? timeline : [],
+    };
+  } catch (err) {
+    console.warn('[payroll] Failed to fetch invoice detail:', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch water ticket details by ticket numbers via Firestore REST API.
+ * Firestore REST 'in' filter limited to 30 values per query — chunk accordingly.
+ */
+export async function fetchTicketDetails(ticketNumbers: string[]): Promise<TicketDetail[]> {
+  if (!ticketNumbers.length) return [];
+
+  const details: TicketDetail[] = [];
+
+  // Chunk into groups of 10 (Firestore REST 'IN' limit)
+  const chunks: string[][] = [];
+  for (let i = 0; i < ticketNumbers.length; i += 10) {
+    chunks.push(ticketNumbers.slice(i, i + 10));
+  }
+
+  for (const chunk of chunks) {
+    try {
+      const body = {
+        structuredQuery: {
+          from: [{ collectionId: 'tickets' }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: 'ticketNumber' },
+              op: 'IN',
+              value: {
+                arrayValue: {
+                  values: chunk.map(n => ({ stringValue: String(n) })),
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      const resp = await fetch(firestoreQueryUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (!resp.ok) continue;
+
+      const results = await resp.json();
+      for (const result of results) {
+        if (!result.document) continue;
+        const f = result.document.fields || {};
+        const nameParts = result.document.name.split('/');
+        const docId = nameParts[nameParts.length - 1];
+
+        details.push({
+          docId,
+          ticketNumber: String(parseFirestoreValue(f.ticketNumber) || ''),
+          location: parseFirestoreValue(f.location) || '',
+          hauledTo: parseFirestoreValue(f.hauledTo) || '',
+          type: parseFirestoreValue(f.type) || '',
+          qty: parseFirestoreValue(f.qty) || '',
+          date: parseFirestoreValue(f.date) || '',
+          timeGauged: parseFirestoreValue(f.timeGauged) || '',
+          company: parseFirestoreValue(f.company) || '',
+          top: parseFirestoreValue(f.top) || '',
+          bottom: parseFirestoreValue(f.bottom) || '',
+          notes: parseFirestoreValue(f.notes) || '',
+          apiNo: parseFirestoreValue(f.apiNo) || '',
+          gpsLat: parseFirestoreValue(f.gpsLat) || '',
+          gpsLng: parseFirestoreValue(f.gpsLng) || '',
+          legalDesc: parseFirestoreValue(f.legalDesc) || '',
+          county: parseFirestoreValue(f.county) || '',
+          startTime: parseFirestoreValue(f.startTime) || '',
+          stopTime: parseFirestoreValue(f.stopTime) || '',
+          hours: parseFirestoreValue(f.hours) || '',
+          disposalApiNo: parseFirestoreValue(f.disposalApiNo) || '',
+        });
+      }
+    } catch {
+      // Skip chunk on error
+    }
+  }
+
+  // Sort by ticket number
+  details.sort((a, b) => parseInt(a.ticketNumber) - parseInt(b.ticketNumber));
+  return details;
+}
+
 // ── Build timesheet summary ──────────────────────────────────────────────────
 
 export function buildTimesheetSummary(
