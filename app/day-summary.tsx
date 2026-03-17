@@ -18,6 +18,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '@/core/context/AuthContext';
 import { colors } from '@/core/theme';
 import { firebasePatch } from '@/core/services/driverAuth';
+import { cascadeLogoutToSSOApps } from '@/core/services/appLauncher';
 import {
   fetchTodayInvoices,
   fetchTodayShift,
@@ -95,6 +96,8 @@ export default function DaySummaryScreen() {
       firebasePatch(`drivers/approved/${user.passcodeHash}`, {
         logoutAt: new Date().toISOString(),
       }).catch(() => {});
+      // Send instant deep link logout to apps that were SSO'd from WB S this session
+      cascadeLogoutToSSOApps().catch(() => {});
     }
     router.replace('/home');
   };

@@ -18,6 +18,7 @@ import {
   firebasePatch,
 } from '../services/driverAuth';
 import { recordShiftEvent, checkShiftOnResume } from '../services/shiftTracking';
+import { cascadeLogoutToSSOApps, clearSSOLaunchedApps } from '../services/appLauncher';
 
 export interface AuthUser {
   driverId: string;
@@ -172,9 +173,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.legalName,
         result.assignedRoutes
       );
-      // New login = new shift. Clear stale flags.
+      // New login = new shift. Clear stale flags + SSO tracking from previous session.
       await SecureStore.deleteItemAsync('shiftEnded');
       await SecureStore.deleteItemAsync('returnDepartTime');
+      await clearSSOLaunchedApps();
       setShiftActive(true);
       setReturningToYard(false);
       setReturnDepartTime(null);
@@ -221,8 +223,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logoutWithCascade = useCallback(async () => {
     if (user) {
-      // Write RTDB signal so other apps self-logout on next foreground
+      // Write RTDB signal so other apps self-logout on next foreground (backup)
       await writeLogoutSignal(user.passcodeHash);
+      // Send instant deep link logout to apps that were SSO'd from WB S this session
+      cascadeLogoutToSSOApps().catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
@@ -238,9 +242,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (shiftActive && user) {
       recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
     }
-    // Write RTDB signal so other apps self-logout on next foreground
+    // Write RTDB signal so other apps self-logout on next foreground (backup)
     if (user) {
       writeLogoutSignal(user.passcodeHash).catch(() => {});
+      // Send instant deep link logout to apps that were SSO'd from WB S this session
+      cascadeLogoutToSSOApps().catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
