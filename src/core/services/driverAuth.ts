@@ -205,9 +205,6 @@ export const verifyLogin = async (
 
       console.log("[DriverAuth-Suite] Login verified for:", driverData.displayName);
 
-      // Record login GPS for DOT drive time (fire-and-forget)
-      recordShiftEvent('login', hash, driverData.displayName, driverData.companyId || undefined);
-
       // Clear any stale logoutAt signal from previous session
       firebasePatch(`${DRIVERS_APPROVED}/${hash}`, { logoutAt: null }).catch(() => {});
 
@@ -233,9 +230,6 @@ export const verifyLogin = async (
         entry.active !== false
       ) {
         console.log("[DriverAuth-Suite] Login verified (legacy) for:", entry.displayName);
-
-        // Record login GPS for DOT drive time (fire-and-forget)
-        recordShiftEvent('login', hash, entry.displayName, entry.companyId || undefined);
 
         // Clear any stale logoutAt signal from previous session
         firebasePatch(`${DRIVERS_APPROVED}/${hash}`, { logoutAt: null }).catch(() => {});

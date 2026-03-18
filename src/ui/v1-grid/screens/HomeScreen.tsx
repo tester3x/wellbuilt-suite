@@ -15,7 +15,7 @@ import { ActionCardRow } from '@/ui/shared/ActionCardRow';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, returningToYard, returnDepartTime, startReturn, confirmArrival } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const { isWBAppEnabled, config: companyConfig, tierLabel } = useCompanyConfig(user?.companyId);
@@ -95,7 +95,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
+        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>

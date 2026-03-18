@@ -13,6 +13,7 @@ interface ActionCardRowProps {
   active: boolean;
   returning: boolean;
   returnStartTime: string | null;
+  onStartShift: () => Promise<void>;
   onStartReturn: () => Promise<void>;
   onArrived: () => Promise<void>;
 }
@@ -48,7 +49,7 @@ function PulsingDot({ color }: { color: string }) {
   );
 }
 
-export function ActionCardRow({ active, returning, returnStartTime, onStartReturn, onArrived }: ActionCardRowProps) {
+export function ActionCardRow({ active, returning, returnStartTime, onStartShift, onStartReturn, onArrived }: ActionCardRowProps) {
   const { launchWBApp } = useAppLauncher();
   const [elapsed, setElapsed] = useState('0:00');
 
@@ -71,15 +72,20 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartRetur
         { text: 'Cancel', style: 'cancel' },
         { text: 'Return to Yard', onPress: onStartReturn, style: 'destructive' },
       ]);
+    } else {
+      Alert.alert('Start Shift', 'Start your shift? GPS will be recorded.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Start Shift', onPress: onStartShift },
+      ]);
     }
   };
 
   // ── Shift card state ──
-  let shiftIcon: keyof typeof MaterialCommunityIcons.glyphMap = 'clock-check-outline';
-  let shiftLabel = 'Shift Ended';
-  let shiftSub = 'GPS recorded';
-  let shiftColor: string = colors.text.muted;
-  let shiftBorder = 'rgba(100, 116, 139, 0.2)';
+  let shiftIcon: keyof typeof MaterialCommunityIcons.glyphMap = 'play-circle-outline';
+  let shiftLabel = 'Start Shift';
+  let shiftSub = 'Tap to clock in';
+  let shiftColor: string = colors.brand.accent;
+  let shiftBorder = `${colors.brand.accent}30`;
   let showDot = false;
 
   if (returning) {
@@ -103,7 +109,6 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartRetur
       <Pressable
         onPress={handleShiftPress}
         style={[s.card, { borderColor: shiftBorder }]}
-        disabled={!active && !returning}
       >
         <MaterialCommunityIcons name={shiftIcon} size={28} color={shiftColor} />
         <Text style={[s.label, { color: shiftColor }]}>{shiftLabel}</Text>

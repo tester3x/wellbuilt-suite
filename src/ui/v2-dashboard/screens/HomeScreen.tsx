@@ -15,7 +15,7 @@ import { ActionCardRow } from '@/ui/shared/ActionCardRow';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, returningToYard, returnDepartTime, startReturn, confirmArrival } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
@@ -52,7 +52,7 @@ export default function HomeScreen() {
       />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
+        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
 
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}

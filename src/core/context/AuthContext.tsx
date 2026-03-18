@@ -48,6 +48,8 @@ interface AuthContextType {
   returnDepartTime: string | null;
   /** Login with name + passcode. Returns error string or null on success. */
   login: (displayName: string, passcode: string) => Promise<{ success: boolean; error?: string }>;
+  /** Start shift manually — records GPS login event, activates shift */
+  startShift: () => Promise<void>;
   /** Full logout — clears SecureStore session. If shift is active, ends it first. */
   logout: () => Promise<void>;
   /** Start the return-to-yard drive (captures GPS, writes depart_return event) */
@@ -118,9 +120,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(sessionToUser(session));
           setLoading(false);
 
-          // Check if shift was already ended this session
+          // Check if shift was explicitly started (and not ended)
+          const shiftStarted = await SecureStore.getItemAsync('shiftStarted');
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
-          setShiftActive(shiftEnded !== 'true');
+          setShiftActive(shiftStarted === 'true' && shiftEnded !== 'true');
 
           // Restore returning-to-yard state if app was killed mid-return
           const savedReturnTime = await SecureStore.getItemAsync('returnDepartTime');
@@ -173,11 +176,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.legalName,
         result.assignedRoutes
       );
-      // New login = new shift. Clear stale flags + SSO tracking from previous session.
+      // New login = clean slate. Clear stale flags + SSO tracking from previous session.
       await SecureStore.deleteItemAsync('shiftEnded');
+      await SecureStore.deleteItemAsync('shiftStarted');
       await SecureStore.deleteItemAsync('returnDepartTime');
       await clearSSOLaunchedApps();
-      setShiftActive(true);
+      setShiftActive(false);
       setReturningToYard(false);
       setReturnDepartTime(null);
       setUser({
@@ -197,6 +201,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: false, error: result.error || 'Invalid name or passcode' };
   }, []);
 
+  const startShift = useCallback(async () => {
+    if (!user) return;
+    // Record login GPS event for DOT drive time
+    recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(() => {});
+    await SecureStore.setItemAsync('shiftStarted', 'true');
+    await SecureStore.deleteItemAsync('shiftEnded');
+    setShiftActive(true);
+    console.log('[AuthContext] Shift started for:', user.displayName);
+  }, [user]);
+
   const startReturn = useCallback(async () => {
     if (!user) return;
     const now = new Date().toISOString();
@@ -213,6 +227,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Record logout GPS event (arrival at yard = shift end)
     recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
     await SecureStore.setItemAsync('shiftEnded', 'true');
+    await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('returnDepartTime');
     setShiftActive(false);
     setReturningToYard(false);
@@ -228,6 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Send instant deep link logout to apps that were SSO'd from WB S this session
       cascadeLogoutToSSOApps().catch(() => {});
     }
+    await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
     setShiftActive(false);
@@ -248,6 +264,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Send instant deep link logout to apps that were SSO'd from WB S this session
       cascadeLogoutToSSOApps().catch(() => {});
     }
+    await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
     setShiftActive(false);
@@ -293,6 +310,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       returningToYard,
       returnDepartTime,
       login,
+      startShift,
       logout,
       logoutWithCascade,
       startReturn,
