@@ -8,8 +8,7 @@ import { useAuth } from '@/core/context/AuthContext';
 import { wellbuiltApps } from '@/core/data/apps';
 import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
-import { ShiftButton } from '@/ui/shared/ShiftButton';
-import { TimesheetButton } from '@/ui/shared/TimesheetButton';
+import { ActionCardRow } from '@/ui/shared/ActionCardRow';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -77,8 +76,7 @@ export default function HomeScreen() {
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
-            <TimesheetButton />
+            <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
 
             <View style={styles.footer}>
               <Text style={styles.footerText}>{t('home.footer.version')}</Text>

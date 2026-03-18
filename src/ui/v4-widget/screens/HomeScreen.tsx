@@ -12,8 +12,7 @@ import { TileGrid } from '../components/TileGrid';
 import { AppTile } from '../components/AppTile';
 import { StatTile } from '../components/StatTile';
 import { TileContainer } from '../components/TileContainer';
-import { ShiftButton } from '@/ui/shared/ShiftButton';
-import { TimesheetButton } from '@/ui/shared/TimesheetButton';
+import { ActionCardRow } from '@/ui/shared/ActionCardRow';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -67,8 +66,7 @@ export default function HomeScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <ShiftButton active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
-        <TimesheetButton />
+        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} onStartReturn={startReturn} onArrived={handleArrived} />
 
         <TileContainer title={t('home.stats.apps').toUpperCase()}>
           <TileGrid>
