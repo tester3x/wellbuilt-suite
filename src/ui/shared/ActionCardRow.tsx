@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, Pressable, Alert, Animated } from 'react-native
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { colors, spacing, radius, typography } from '@/core/theme';
+import { useAppLauncher } from '@/core/hooks/useAppLauncher';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -48,6 +49,7 @@ function PulsingDot({ color }: { color: string }) {
 }
 
 export function ActionCardRow({ active, returning, returnStartTime, onStartReturn, onArrived }: ActionCardRowProps) {
+  const { launchWBApp } = useAppLauncher();
   const [elapsed, setElapsed] = useState('0:00');
 
   useEffect(() => {
@@ -123,12 +125,16 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartRetur
 
       {/* eWallet Card */}
       <Pressable
-        onPress={() => Alert.alert('WB eWallet', 'Coming soon — your digital truck wallet for CDL, medical card, insurance, and DOT documents.')}
+        onPress={() => launchWBApp({
+          name: 'WB eWallet',
+          scheme: 'wbewallet',
+          androidPackage: 'com.wellbuilt.ewallet',
+        })}
         style={[s.card, s.cardWallet]}
       >
-        <MaterialCommunityIcons name="wallet-outline" size={28} color={colors.brand.accent} style={{ opacity: 0.5 }} />
-        <Text style={[s.label, { color: colors.brand.accent, opacity: 0.5 }]}>eWallet</Text>
-        <Text style={[s.sub, { color: colors.text.muted, opacity: 0.5 }]}>Coming Soon</Text>
+        <MaterialCommunityIcons name="wallet-outline" size={28} color={colors.brand.accent} />
+        <Text style={[s.label, { color: colors.brand.accent }]}>eWallet</Text>
+        <Text style={[s.sub, { color: colors.text.muted }]}>Documents</Text>
       </Pressable>
     </View>
   );
