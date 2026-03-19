@@ -200,11 +200,13 @@ export async function fetchTodayInvoices(
           filters,
         },
       },
-      orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'ASCENDING' }],
+      // No orderBy — avoids needing a composite index.
+      // Results are sorted client-side in calculateDaySummary().
     },
   };
 
   try {
+    console.log('[daySummary] Querying invoices for driver:', displayName, 'companyId:', companyId || '(none)', 'date:', startOfDay.slice(0, 10));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     const resp = await fetch(firestoreQueryUrl(), {
@@ -216,11 +218,13 @@ export async function fetchTodayInvoices(
     clearTimeout(timer);
 
     if (!resp.ok) {
-      console.warn('[daySummary] Firestore query failed:', resp.status);
+      const errText = await resp.text().catch(() => '');
+      console.warn('[daySummary] Firestore query failed:', resp.status, errText);
       return [];
     }
 
     const results = await resp.json();
+    console.log('[daySummary] Query returned', results.length, 'results');
     const invoices: DaySummaryInvoice[] = [];
 
     for (const result of results) {
