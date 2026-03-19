@@ -68,6 +68,8 @@ export interface WBAppLaunchOptions {
     hash: string;
     name: string;
     companyId?: string;
+    truck?: string;
+    trailer?: string;
   };
 }
 
@@ -114,6 +116,8 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
   if (sso) {
     const paramObj: Record<string, string> = { hash: sso.hash, name: sso.name };
     if (sso.companyId) paramObj.companyId = sso.companyId;
+    if (sso.truck) paramObj.truck = sso.truck;
+    if (sso.trailer) paramObj.trailer = sso.trailer;
     const params = new URLSearchParams(paramObj);
     url = `${scheme}://login?${params.toString()}`;
   }
