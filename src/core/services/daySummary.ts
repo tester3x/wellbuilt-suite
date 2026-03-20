@@ -219,7 +219,11 @@ export async function fetchTodayInvoices(
 
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
-      console.warn('[daySummary] Firestore query failed:', resp.status, errText);
+      console.warn('[daySummary] Firestore query failed:', resp.status, errText.substring(0, 300));
+      // Common cause: missing composite index. Log clearly so it's not silently swallowed.
+      if (resp.status === 400 && errText.includes('index')) {
+        console.error('[daySummary] ⚠️ MISSING FIRESTORE INDEX — deploy firestore.indexes.json');
+      }
       return [];
     }
 
