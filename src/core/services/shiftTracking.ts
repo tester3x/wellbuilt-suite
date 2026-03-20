@@ -12,6 +12,18 @@ import * as Location from 'expo-location';
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
+const FETCH_TIMEOUT_MS = 10000;
+
+/** fetch() with AbortController timeout — prevents indefinite hangs on slow/dead networks. */
+async function fetchSafe(url: string, options?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export interface ShiftEvent {
   type: 'login' | 'logout' | 'depart_return';
@@ -94,7 +106,7 @@ async function autoCloseStaleShift(
     const getUrl = `https://firestore.googleapis.com/v1/${path}?key=${FIREBASE_API_KEY}`;
 
     try {
-      const resp = await fetch(getUrl);
+      const resp = await fetchSafe(getUrl);
       if (resp.status === 404) continue;
       if (!resp.ok) continue;
 
@@ -142,7 +154,7 @@ async function autoCloseStaleShift(
           ],
         };
 
-        await fetch(commitUrl, {
+        await fetchSafe(commitUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -224,7 +236,7 @@ export async function recordShiftEvent(
       ],
     };
 
-    const resp = await fetch(commitUrl, {
+    const resp = await fetchSafe(commitUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -262,7 +274,7 @@ export async function checkShiftOnResume(
     const path = docPath(driverId, today);
     const getUrl = `https://firestore.googleapis.com/v1/${path}?key=${FIREBASE_API_KEY}`;
 
-    const resp = await fetch(getUrl);
+    const resp = await fetchSafe(getUrl);
     if (resp.ok) return;
 
     const gps = await captureGPS();
@@ -306,7 +318,7 @@ export async function checkShiftOnResume(
       ],
     };
 
-    await fetch(commitUrl, {
+    await fetchSafe(commitUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
