@@ -238,10 +238,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logoutWithCascade = useCallback(async () => {
     if (user) {
-      // Write RTDB signal so other apps self-logout on next foreground (backup)
+      // Write RTDB signal — SSO'd apps self-logout on next foreground
       await writeLogoutSignal(user.passcodeHash);
-      // Send instant deep link logout to apps that were SSO'd from WB S this session
-      cascadeLogoutToSSOApps().catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
@@ -262,7 +260,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) {
       writeLogoutSignal(user.passcodeHash).catch(() => {});
       // Send instant deep link logout to apps that were SSO'd from WB S this session
-      cascadeLogoutToSSOApps().catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');

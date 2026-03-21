@@ -12,6 +12,7 @@ import {
   Pressable,
   ActivityIndicator,
   Alert,
+  BackHandler,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -72,6 +73,15 @@ export default function DaySummaryScreen() {
   const [summary, setSummary] = useState<DaySummary | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Android back button: go to WB S home, not back to WB T
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      router.replace('/home');
+      return true; // Prevent default back behavior
+    });
+    return () => backHandler.remove();
+  }, [router]);
+
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -90,15 +100,9 @@ export default function DaySummaryScreen() {
     })();
   }, [user]);
 
-  const handleClose = async () => {
-    // Shift is over — signal other apps to logout even though WB S stays logged in
-    if (user) {
-      firebasePatch(`drivers/approved/${user.passcodeHash}`, {
-        logoutAt: new Date().toISOString(),
-      }).catch(() => {});
-      // Send instant deep link logout to apps that were SSO'd from WB S this session
-      cascadeLogoutToSSOApps().catch(() => {});
-    }
+  const handleClose = () => {
+    // Close = dismiss summary, stay logged in. No cascade logout.
+    // Logout cascade only happens on explicit "Log Out" button.
     router.replace('/home');
   };
 
