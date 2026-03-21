@@ -21,8 +21,8 @@ export function useAppLauncher() {
       ? { hash: user.passcodeHash, name: user.displayName, companyId: user.companyId }
       : undefined;
 
-    // For eWallet, include truck/trailer numbers so vehicle docs auto-load
-    if (sso && options.scheme === 'wbewallet') {
+    // Include truck/trailer numbers in SSO deep link for all apps
+    if (sso) {
       const vehicle = await loadVehicleInfo(user!.passcodeHash);
       if (vehicle.truckNumber) (sso as any).truck = vehicle.truckNumber;
       if (vehicle.trailerNumber) (sso as any).trailer = vehicle.trailerNumber;
