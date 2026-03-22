@@ -31,6 +31,7 @@ export interface AuthUser {
   companyId?: string;
   companyName?: string;
   assignedRoutes?: string[];
+  defaultPackageId?: string;
 }
 
 interface AuthContextType {
@@ -48,8 +49,10 @@ interface AuthContextType {
   returnDepartTime: string | null;
   /** Login with name + passcode. Returns error string or null on success. */
   login: (displayName: string, passcode: string) => Promise<{ success: boolean; error?: string }>;
-  /** Start shift manually — records GPS login event, activates shift */
-  startShift: () => Promise<void>;
+  /** Start shift manually — records GPS login event, activates shift. Optional packageId overrides default. */
+  startShift: (packageId?: string) => Promise<void>;
+  /** The active package for this shift (set at shift start) */
+  activePackageId: string | null;
   /** Full logout — clears SecureStore session. If shift is active, ends it first. */
   logout: () => Promise<void>;
   /** Start the return-to-yard drive (captures GPS, writes depart_return event) */
@@ -82,6 +85,7 @@ function sessionToUser(session: DriverSession): AuthUser {
     companyId: session.companyId,
     companyName: session.companyName,
     assignedRoutes: session.assignedRoutes,
+    defaultPackageId: session.defaultPackageId,
   };
 }
 
@@ -106,6 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [shiftActive, setShiftActive] = useState(false);
   const [returningToYard, setReturningToYard] = useState(false);
   const [returnDepartTime, setReturnDepartTime] = useState<string | null>(null);
+  const [activePackageId, setActivePackageId] = useState<string | null>(null);
 
   // On mount: check SecureStore for existing session
   // OPTIMISTIC AUTH: If local session exists, trust it immediately and revalidate
@@ -124,6 +129,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const shiftStarted = await SecureStore.getItemAsync('shiftStarted');
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
           setShiftActive(shiftStarted === 'true' && shiftEnded !== 'true');
+
+          // Restore active package from shift start
+          const savedPkgId = await SecureStore.getItemAsync('activePackageId');
+          if (savedPkgId) setActivePackageId(savedPkgId);
 
           // Restore returning-to-yard state if app was killed mid-return
           const savedReturnTime = await SecureStore.getItemAsync('returnDepartTime');
@@ -174,16 +183,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.companyId,
         result.companyName,
         result.legalName,
-        result.assignedRoutes
+        result.assignedRoutes,
+        result.defaultPackageId
       );
       // New login = clean slate. Clear stale flags + SSO tracking from previous session.
       await SecureStore.deleteItemAsync('shiftEnded');
       await SecureStore.deleteItemAsync('shiftStarted');
       await SecureStore.deleteItemAsync('returnDepartTime');
+      await SecureStore.deleteItemAsync('activePackageId');
       await clearSSOLaunchedApps();
       setShiftActive(false);
       setReturningToYard(false);
       setReturnDepartTime(null);
+      setActivePackageId(null);
       setUser({
         driverId: result.driverId,
         displayName: result.displayName,
@@ -195,20 +207,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         companyId: result.companyId,
         companyName: result.companyName,
         assignedRoutes: result.assignedRoutes,
+        defaultPackageId: result.defaultPackageId,
       });
       return { success: true };
     }
     return { success: false, error: result.error || 'Invalid name or passcode' };
   }, []);
 
-  const startShift = useCallback(async () => {
+  const startShift = useCallback(async (packageId?: string) => {
     if (!user) return;
     // Record login GPS event for DOT drive time
     recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(() => {});
     await SecureStore.setItemAsync('shiftStarted', 'true');
     await SecureStore.deleteItemAsync('shiftEnded');
+    // Save the selected package for this shift
+    const pkg = packageId || user.defaultPackageId || null;
+    if (pkg) {
+      await SecureStore.setItemAsync('activePackageId', pkg);
+      setActivePackageId(pkg);
+    }
     setShiftActive(true);
-    console.log('[AuthContext] Shift started for:', user.displayName);
+    console.log('[AuthContext] Shift started for:', user.displayName, 'package:', pkg || 'none');
   }, [user]);
 
   const startReturn = useCallback(async () => {
@@ -244,9 +263,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
+    await SecureStore.deleteItemAsync('activePackageId');
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
+    setActivePackageId(null);
     await clearDriverSession();
     setUser(null);
   }, [user]);
@@ -264,9 +285,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
+    await SecureStore.deleteItemAsync('activePackageId');
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
+    setActivePackageId(null);
     await clearDriverSession();
     setUser(null);
   }, [shiftActive, user]);
@@ -304,6 +327,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       isAuthenticated: !!user,
       shiftActive,
+      activePackageId,
       returningToYard,
       returnDepartTime,
       login,

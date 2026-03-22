@@ -169,3 +169,52 @@ export async function clearCompanyConfigCache(): Promise<void> {
     if (configKeys.length > 0) await AsyncStorage.multiRemove(configKeys);
   } catch {}
 }
+
+// ── Job Packages ─────────────────────────────────────────────
+
+export interface ShiftPackageOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * Fetch the company's active job packages (id + name).
+ * Uses Firestore REST API. Returns fallback if fetch fails.
+ */
+export async function fetchCompanyPackages(companyId: string): Promise<ShiftPackageOption[]> {
+  if (!companyId) return [{ id: 'water-hauling', name: 'Water Hauling' }];
+
+  try {
+    // 1. Get company doc to find activePackages[]
+    const companyUrl = `${FIRESTORE_BASE}/companies/${companyId}`;
+    const companyRes = await fetchTimeout(companyUrl);
+    if (!companyRes.ok) return [{ id: 'water-hauling', name: 'Water Hauling' }];
+    const companyDoc = await companyRes.json();
+    const packageIds = parseStrArray(companyDoc.fields?.activePackages) || ['water-hauling'];
+
+    // 2. Fetch each package doc for its name
+    const packages: ShiftPackageOption[] = [];
+    for (const pkgId of packageIds) {
+      try {
+        const pkgUrl = `${FIRESTORE_BASE}/job_packages/${pkgId}`;
+        const pkgRes = await fetchTimeout(pkgUrl);
+        if (pkgRes.ok) {
+          const pkgDoc = await pkgRes.json();
+          packages.push({
+            id: pkgId,
+            name: parseStr(pkgDoc.fields?.name) || pkgId,
+          });
+        } else {
+          packages.push({ id: pkgId, name: pkgId });
+        }
+      } catch {
+        packages.push({ id: pkgId, name: pkgId });
+      }
+    }
+
+    return packages.length > 0 ? packages : [{ id: 'water-hauling', name: 'Water Hauling' }];
+  } catch (err) {
+    console.warn('[companyConfig] Failed to fetch packages:', err);
+    return [{ id: 'water-hauling', name: 'Water Hauling' }];
+  }
+}

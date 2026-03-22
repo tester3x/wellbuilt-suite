@@ -52,6 +52,7 @@ export interface DriverSession {
   companyId?: string;
   companyName?: string;
   assignedRoutes?: string[];
+  defaultPackageId?: string;
 }
 
 // --- Firebase helpers ---
@@ -176,6 +177,7 @@ export const verifyLogin = async (
   companyId?: string;
   companyName?: string;
   assignedRoutes?: string[];
+  defaultPackageId?: string;
   error?: string;
 }> => {
   console.log("[DriverAuth-Suite] Verifying login for:", displayName);
@@ -219,6 +221,7 @@ export const verifyLogin = async (
         companyId: driverData.companyId || undefined,
         companyName: driverData.companyName || undefined,
         assignedRoutes: Array.isArray(driverData.assignedRoutes) ? driverData.assignedRoutes : undefined,
+        defaultPackageId: driverData.defaultPackageId || undefined,
       };
     }
 
@@ -271,7 +274,8 @@ export const saveDriverSession = async (
   companyId?: string,
   companyName?: string,
   legalName?: string,
-  assignedRoutes?: string[]
+  assignedRoutes?: string[],
+  defaultPackageId?: string
 ): Promise<void> => {
   await SecureStore.setItemAsync("driverId", driverId);
   await SecureStore.setItemAsync("driverName", displayName);
@@ -299,6 +303,11 @@ export const saveDriverSession = async (
   } else {
     await SecureStore.deleteItemAsync("assignedRoutes");
   }
+  if (defaultPackageId) {
+    await SecureStore.setItemAsync("defaultPackageId", defaultPackageId);
+  } else {
+    await SecureStore.deleteItemAsync("defaultPackageId");
+  }
 
   // Clear any pending registration data
   await clearPendingRegistration();
@@ -317,7 +326,7 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ]);
 
-  const [driverId, displayName, passcodeHash, isAdminStr, isViewerStr, companyId, companyName, legalName, assignedRoutesStr] =
+  const [driverId, displayName, passcodeHash, isAdminStr, isViewerStr, companyId, companyName, legalName, assignedRoutesStr, defaultPackageId] =
     await Promise.all([
       readWithTimeout("driverId"),
       readWithTimeout("driverName"),
@@ -328,6 +337,7 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       readWithTimeout("companyName"),
       readWithTimeout("legalName"),
       readWithTimeout("assignedRoutes"),
+      readWithTimeout("defaultPackageId"),
     ]);
 
   if (driverId && displayName && passcodeHash) {
@@ -346,6 +356,7 @@ export const getDriverSession = async (): Promise<DriverSession | null> => {
       companyId: companyId || undefined,
       companyName: companyName || undefined,
       assignedRoutes,
+      defaultPackageId: defaultPackageId || undefined,
     };
   }
   return null;

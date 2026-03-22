@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { loadVehicleInfo } from '../services/driverProfile';
 
 export function useAppLauncher() {
-  const { user } = useAuth();
+  const { user, activePackageId } = useAuth();
 
   const checkCanLaunch = useCallback((scheme?: string) => {
     return canLaunchApp(scheme);
@@ -21,15 +21,16 @@ export function useAppLauncher() {
       ? { hash: user.passcodeHash, name: user.displayName, companyId: user.companyId }
       : undefined;
 
-    // Include truck/trailer numbers in SSO deep link for all apps
+    // Include truck/trailer numbers + active package in SSO deep link for all apps
     if (sso) {
       const vehicle = await loadVehicleInfo(user!.passcodeHash);
       if (vehicle.truckNumber) (sso as any).truck = vehicle.truckNumber;
       if (vehicle.trailerNumber) (sso as any).trailer = vehicle.trailerNumber;
+      if (activePackageId) (sso as any).packageId = activePackageId;
     }
 
     return launchWBApp({ ...options, sso });
-  }, [user]);
+  }, [user, activePackageId]);
 
   return {
     canLaunchApp: checkCanLaunch,

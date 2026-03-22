@@ -70,6 +70,7 @@ export interface WBAppLaunchOptions {
     companyId?: string;
     truck?: string;
     trailer?: string;
+    packageId?: string;
   };
 }
 
@@ -118,6 +119,7 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
     if (sso.companyId) paramObj.companyId = sso.companyId;
     if (sso.truck) paramObj.truck = sso.truck;
     if (sso.trailer) paramObj.trailer = sso.trailer;
+    if (sso.packageId) paramObj.packageId = sso.packageId;
     const params = new URLSearchParams(paramObj);
     url = `${scheme}://login?${params.toString()}`;
   }
