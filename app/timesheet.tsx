@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/core/context/AuthContext';
 import { colors, spacing, radius } from '@/core/theme';
 import {
@@ -55,16 +56,7 @@ function statusColor(status: string): string {
   }
 }
 
-function statusLabel(status: string): string {
-  switch (status) {
-    case 'closed': return 'Closed';
-    case 'submitted': return 'Submitted';
-    case 'approved': return 'Approved';
-    case 'paid': return 'Paid';
-    case 'open': return 'In Progress';
-    default: return status;
-  }
-}
+// statusLabel is now handled via t('timesheet.status.*') in components
 
 function paperStatusColor(status: string): string {
   switch (status) {
@@ -153,6 +145,7 @@ function InvoiceDetailModal({
   loadingTickets: boolean;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   if (!invoice) return null;
 
   const sColor = paperStatusColor(invoice.status);
@@ -174,7 +167,7 @@ function InvoiceDetailModal({
           <Pressable onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <MaterialCommunityIcons name="chevron-left" size={26} color={colors.brand.primary} />
           </Pressable>
-          <Text style={p.modalTitle}>Invoice Detail</Text>
+          <Text style={p.modalTitle}>{t('timesheet.invoiceDetail')}</Text>
           <View style={{ width: 26 }} />
         </View>
 
@@ -184,7 +177,7 @@ function InvoiceDetailModal({
 
             {/* ─── Invoice Header ─── */}
             <View style={p.sectionHeader}>
-              <Text style={p.invoiceTitle}>INVOICE</Text>
+              <Text style={p.invoiceTitle}>{t('timesheet.invoice')}</Text>
               <View style={[p.statusPill, { backgroundColor: sColor + '22', borderColor: sColor }]}>
                 <Text style={[p.statusPillText, { color: sColor }]}>{invoice.status.toUpperCase()}</Text>
               </View>
@@ -197,7 +190,7 @@ function InvoiceDetailModal({
             <View style={p.divider} />
 
             {/* ─── Job Details ─── */}
-            <Text style={p.sectionTitle}>JOB DETAILS</Text>
+            <Text style={p.sectionTitle}>{t('timesheet.jobDetails')}</Text>
             <PaperRow label="Operator" value={invoice.operator || '—'} />
             <PaperRow label="Well / Location" value={invoice.wellName || '—'} />
             {invoice.hauledTo ? <PaperRow label="Drop-off" value={invoice.hauledTo} /> : null}
@@ -206,7 +199,7 @@ function InvoiceDetailModal({
             <View style={p.divider} />
 
             {/* ─── Driver & Vehicle ─── */}
-            <Text style={p.sectionTitle}>DRIVER & VEHICLE</Text>
+            <Text style={p.sectionTitle}>{t('timesheet.driverVehicle')}</Text>
             <PaperRow label="Driver" value={invoice.driver || '—'} />
             {invoice.truckNumber ? <PaperRow label="Truck #" value={invoice.truckNumber} /> : null}
             {invoice.trailer ? <PaperRow label="Trailer #" value={invoice.trailer} /> : null}
@@ -215,7 +208,7 @@ function InvoiceDetailModal({
             {(invoice.startTime || invoice.stopTime) && (
               <>
                 <View style={p.divider} />
-                <Text style={p.sectionTitle}>TIME</Text>
+                <Text style={p.sectionTitle}>{t('timesheet.time')}</Text>
                 {invoice.startTime ? <PaperRow label="Start" value={invoice.startTime} /> : null}
                 {invoice.stopTime ? <PaperRow label="Stop" value={invoice.stopTime} /> : null}
               </>
@@ -224,18 +217,18 @@ function InvoiceDetailModal({
             <View style={p.divider} />
 
             {/* ─── Water Tickets ─── */}
-            <Text style={p.sectionTitle}>WATER TICKETS</Text>
+            <Text style={p.sectionTitle}>{t('timesheet.waterTickets')}</Text>
 
             {loadingTickets ? (
               <ActivityIndicator size="small" color={colors.brand.primary} style={{ paddingVertical: 20 }} />
             ) : tickets.length === 0 ? (
-              <Text style={p.noData}>No water tickets found</Text>
+              <Text style={p.noData}>{t('timesheet.noTickets')}</Text>
             ) : (
               tickets.map((tk) => (
                 <View key={tk.docId} style={p.ticket}>
                   {/* Ticket header */}
                   <View style={p.ticketHeader}>
-                    <Text style={[p.ticketTitle, { color: colors.brand.primary }]}>WATER TICKET</Text>
+                    <Text style={[p.ticketTitle, { color: colors.brand.primary }]}>{t('timesheet.waterTicket')}</Text>
                     <Text style={[p.ticketNum, p.mono]}>#{tk.ticketNumber}</Text>
                   </View>
 
@@ -280,7 +273,7 @@ function InvoiceDetailModal({
                   {/* Notes */}
                   {tk.notes ? (
                     <View style={p.ticketNotes}>
-                      <Text style={p.ticketNotesLabel}>Notes</Text>
+                      <Text style={p.ticketNotesLabel}>{t('common.notes')}</Text>
                       <Text style={p.ticketNotesText}>{tk.notes}</Text>
                     </View>
                   ) : null}
@@ -292,7 +285,7 @@ function InvoiceDetailModal({
             {labeledTimeline.length > 0 && (
               <>
                 <View style={p.divider} />
-                <Text style={p.sectionTitle}>JOB TIMELINE</Text>
+                <Text style={p.sectionTitle}>{t('timesheet.jobTimeline')}</Text>
                 {labeledTimeline.map((ev, i) => (
                   <View key={i} style={p.timelineRow}>
                     <View style={p.timelineDot} />
@@ -313,7 +306,7 @@ function InvoiceDetailModal({
             {invoice.notes ? (
               <>
                 <View style={p.divider} />
-                <Text style={p.sectionTitle}>REMARKS</Text>
+                <Text style={p.sectionTitle}>{t('timesheet.remarks')}</Text>
                 <Text style={p.notesText}>{invoice.notes}</Text>
               </>
             ) : null}
@@ -337,7 +330,7 @@ function InvoiceDetailModal({
 
             {/* ─── Footer ─── */}
             <View style={p.footer}>
-              <Text style={p.footerText}>WellBuilt Tickets</Text>
+              <Text style={p.footerText}>{t('timesheet.appName')}</Text>
             </View>
           </View>
         </ScrollView>
@@ -427,6 +420,7 @@ function PayrollRow({ row, onTap }: {
 
 export default function TimesheetScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>('this-week');
   const [summary, setSummary] = useState<TimesheetSummary | null>(null);
@@ -530,7 +524,7 @@ export default function TimesheetScreen() {
           <MaterialCommunityIcons name="arrow-left" size={22} color={colors.text.primary} />
         </Pressable>
         <View style={s.headerCenter}>
-          <Text style={s.headerTitle}>Payroll</Text>
+          <Text style={s.headerTitle}>{t('timesheet.title')}</Text>
           {summary && (
             <Text style={s.headerSubtitle}>
               {summary.periodStart} – {summary.periodEnd}
@@ -579,7 +573,7 @@ export default function TimesheetScreen() {
         {loading ? (
           <View style={s.loadingContainer}>
             <ActivityIndicator size="large" color={colors.brand.primary} />
-            <Text style={s.loadingText}>Loading payroll...</Text>
+            <Text style={s.loadingText}>{t('timesheet.title')}...</Text>
           </View>
         ) : summary ? (
           <>
@@ -601,19 +595,19 @@ export default function TimesheetScreen() {
             <View style={s.statsGrid}>
               <StatCard
                 icon="truck-delivery"
-                label="Loads"
+                label={t('daySummary.loads')}
                 value={String(summary.totalLoads)}
                 color={colors.status.online}
               />
               <StatCard
                 icon="water"
-                label="BBLs"
+                label={t('daySummary.bbls')}
                 value={String(Math.round(summary.totalBBLs))}
                 color={colors.brand.primary}
               />
               <StatCard
                 icon="clock-outline"
-                label="Hours"
+                label={t('daySummary.hours')}
                 value={summary.totalHours.toFixed(1)}
                 color={colors.status.warning}
               />
@@ -627,7 +621,7 @@ export default function TimesheetScreen() {
 
             {/* Job List */}
             <View style={s.sectionHeader}>
-              <Text style={s.sectionTitle}>Jobs</Text>
+              <Text style={s.sectionTitle}>{t('timesheet.jobs')}</Text>
               <Text style={s.sectionCount}>{summary.totalLoads} total</Text>
             </View>
 
@@ -649,7 +643,7 @@ export default function TimesheetScreen() {
           </>
         ) : (
           <View style={s.emptyState}>
-            <Text style={s.emptyText}>Unable to load payroll</Text>
+            <Text style={s.emptyText}>{t('timesheet.error')}</Text>
           </View>
         )}
       </ScrollView>
@@ -662,12 +656,12 @@ export default function TimesheetScreen() {
               <Pressable onPress={handleCloseDetail}>
                 <MaterialCommunityIcons name="chevron-left" size={26} color={colors.brand.primary} />
               </Pressable>
-              <Text style={p.modalTitle}>Invoice Detail</Text>
+              <Text style={p.modalTitle}>{t('timesheet.invoiceDetail')}</Text>
               <View style={{ width: 26 }} />
             </View>
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
               <ActivityIndicator size="large" color={colors.brand.primary} />
-              <Text style={{ color: colors.text.muted, marginTop: 12, fontSize: 14 }}>Loading invoice...</Text>
+              <Text style={{ color: colors.text.muted, marginTop: 12, fontSize: 14 }}>{t('timesheet.invoiceDetail')}...</Text>
             </View>
           </View>
         </Modal>

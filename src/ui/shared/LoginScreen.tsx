@@ -104,20 +104,20 @@ export default function LoginScreen() {
                     returnKeyType="next"
                     blurOnSubmit={false} onSubmitEditing={() => legalNameRef.current?.focus()} />
                 </View>
-                <Text style={styles.hintText}>This is your login name — other drivers will see this</Text>
+                <Text style={styles.hintText}>{t('loginExtra.displayNameHint')}</Text>
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Full Legal Name</Text>
+                <Text style={styles.inputLabel}>{t('loginExtra.fullLegalName')}</Text>
                 <View style={styles.inputWrap}>
                   <MaterialCommunityIcons name="card-account-details-outline" size={18} color={colors.text.muted} />
                   <TextInput ref={legalNameRef} style={styles.input} value={legalName}
-                    onChangeText={setLegalName} placeholder="First and last name (e.g., Mike Burger)"
+                    onChangeText={setLegalName} placeholder={t('loginExtra.legalNamePlaceholder')}
                     placeholderTextColor={colors.text.muted} autoCapitalize="words"
                     autoCorrect={false} returnKeyType="next"
                     blurOnSubmit={false} onSubmitEditing={() => companyRef.current?.focus()} />
                 </View>
-                <Text style={styles.hintText}>Used on printed tickets, invoices, and payroll</Text>
+                <Text style={styles.hintText}>{t('loginExtra.legalNameHint')}</Text>
               </View>
 
               <View style={styles.inputGroup}>

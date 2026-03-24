@@ -146,17 +146,17 @@ export default function SettingsScreen() {
       setProfileDirty(false);
       setVehicleDirty(false);
     } catch (err) {
-      Alert.alert('Save Failed', 'Could not save your changes. Check your connection.');
+      Alert.alert(t('settingsExtra.saveFailed'), t('settingsExtra.saveError'));
     } finally {
       setSaving(false);
     }
   }, [hash, saving, profileDirty, vehicleDirty, legalName, phone, cdl, truckNumber, trailerNumber]);
 
   const handleLogout = useCallback(() => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('settingsExtra.logOut'), t('settingsExtra.logOutConfirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Log Out',
+        text: t('settingsExtra.logOut'),
         style: 'destructive',
         onPress: async () => {
           await clearProfileCache();
@@ -245,7 +245,7 @@ export default function SettingsScreen() {
               style={styles.fieldInput}
               value={legalName}
               onChangeText={setLegalName}
-              placeholder="Your full legal name"
+              placeholder={t('settingsExtra.legalNamePlaceholder')}
               placeholderTextColor={colors.text.muted}
               autoCapitalize="words"
               returnKeyType="next"
@@ -260,7 +260,7 @@ export default function SettingsScreen() {
               style={styles.fieldInput}
               value={phone}
               onChangeText={(text) => setPhone(formatPhone(text))}
-              placeholder="(xxx) xxx-xxxx"
+              placeholder={t('settingsExtra.phonePlaceholder')}
               placeholderTextColor={colors.text.muted}
               keyboardType="phone-pad"
               returnKeyType="next"
@@ -275,7 +275,7 @@ export default function SettingsScreen() {
               style={styles.fieldInput}
               value={cdl}
               onChangeText={setCdl}
-              placeholder="Commercial driver's license"
+              placeholder={t('settingsExtra.cdlPlaceholder')}
               placeholderTextColor={colors.text.muted}
               autoCapitalize="characters"
               returnKeyType="next"
@@ -311,7 +311,7 @@ export default function SettingsScreen() {
             <Text style={styles.deviceText}>This device</Text>
           </View>
         </View>
-        <Text style={styles.sectionSubtitle}>Truck and trailer you're driving today</Text>
+        <Text style={styles.sectionSubtitle}>{t('settingsExtra.vehicleSubtitle')}</Text>
 
         <View style={styles.fieldGroup}>
           <View style={styles.fieldRow}>
@@ -322,7 +322,7 @@ export default function SettingsScreen() {
                 style={styles.fieldInput}
                 value={truckNumber}
                 onChangeText={setTruckNumber}
-                placeholder="e.g., 42"
+                placeholder={t('settingsExtra.truckNumberPlaceholder')}
                 placeholderTextColor={colors.text.muted}
                 returnKeyType="next"
                 blurOnSubmit={false}
@@ -336,7 +336,7 @@ export default function SettingsScreen() {
                 style={styles.fieldInput}
                 value={trailerNumber}
                 onChangeText={setTrailerNumber}
-                placeholder="e.g., T-15"
+                placeholder={t('settingsExtra.trailerNumberPlaceholder')}
                 placeholderTextColor={colors.text.muted}
                 returnKeyType="done"
               />
@@ -395,7 +395,7 @@ export default function SettingsScreen() {
         <View style={[styles.section, { marginBottom: spacing.xxl }]}>
           <Pressable onPress={handleLogout} style={styles.logoutButton}>
             <MaterialCommunityIcons name="logout" size={18} color="#EF4444" />
-            <Text style={styles.logoutText}>Log Out</Text>
+            <Text style={styles.logoutText}>{t('settingsExtra.logOut')}</Text>
           </Pressable>
         </View>
       </ScrollView>

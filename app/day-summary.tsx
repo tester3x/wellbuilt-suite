@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/core/context/AuthContext';
 import { colors } from '@/core/theme';
 import { firebasePatch } from '@/core/services/driverAuth';
@@ -69,6 +70,7 @@ function StatCard({ icon, label, value, color = colors.brand.primary }: StatCard
 
 export default function DaySummaryScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const { user, logoutWithCascade } = useAuth();
   const [summary, setSummary] = useState<DaySummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,10 +109,10 @@ export default function DaySummaryScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert('Log Out', 'Log out of all WellBuilt apps?', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('daySummary.logOut'), t('daySummary.logOutConfirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Log Out',
+        text: t('daySummary.logOut'),
         style: 'destructive',
         onPress: async () => {
           await logoutWithCascade();
@@ -131,14 +133,14 @@ export default function DaySummaryScreen() {
           <View style={s.checkCircle}>
             <MaterialCommunityIcons name="check" size={36} color={colors.status.online} />
           </View>
-          <Text style={s.title}>Shift Complete</Text>
+          <Text style={s.title}>{t('daySummary.title')}</Text>
           {timeRange ? <Text style={s.timeRange}>{timeRange}</Text> : null}
         </View>
 
         {loading ? (
           <View style={s.loadingContainer}>
             <ActivityIndicator size="large" color={colors.brand.primary} />
-            <Text style={s.loadingText}>Loading summary...</Text>
+            <Text style={s.loadingText}>{t('daySummary.loading')}</Text>
           </View>
         ) : summary ? (
           <>
@@ -146,25 +148,25 @@ export default function DaySummaryScreen() {
             <View style={s.statsGrid}>
               <StatCard
                 icon="truck-delivery"
-                label="Loads"
+                label={t('daySummary.loads')}
                 value={String(summary.totalLoads)}
                 color={colors.status.online}
               />
               <StatCard
                 icon="water"
-                label="BBLs"
+                label={t('daySummary.bbls')}
                 value={String(Math.round(summary.totalBBL))}
                 color={colors.brand.primary}
               />
               <StatCard
                 icon="map-marker-multiple"
-                label="Wells"
+                label={t('daySummary.wellsVisited')}
                 value={String(summary.wellsVisited.length)}
                 color={colors.brand.accent}
               />
               <StatCard
                 icon="clock-outline"
-                label="Total Hours"
+                label={t('daySummary.hours')}
                 value={summary.totalHoursWorked > 0 ? `${summary.totalHoursWorked}h` : '0h'}
                 color={colors.status.warning}
               />
@@ -183,7 +185,7 @@ export default function DaySummaryScreen() {
               {summary.driveMiles > 0 && (
                 <StatCard
                   icon="map-marker-distance"
-                  label="Miles"
+                  label={t('daySummary.miles')}
                   value={`${summary.driveMiles}`}
                   color="#38BDF8"
                 />
@@ -201,7 +203,7 @@ export default function DaySummaryScreen() {
             {/* Wells Visited */}
             {summary.wellsVisited.length > 0 && (
               <View style={s.wellsSection}>
-                <Text style={s.sectionTitle}>Wells Visited</Text>
+                <Text style={s.sectionTitle}>{t('daySummary.wellsVisited')}</Text>
                 <View style={s.wellBadges}>
                   {summary.wellsVisited.map((well, idx) => (
                     <View key={idx} style={s.wellBadge}>
@@ -214,13 +216,13 @@ export default function DaySummaryScreen() {
 
             {summary.totalLoads === 0 && (
               <View style={s.emptyState}>
-                <Text style={s.emptyText}>No completed loads today</Text>
+                <Text style={s.emptyText}>{t('daySummary.noLoads')}</Text>
               </View>
             )}
           </>
         ) : (
           <View style={s.emptyState}>
-            <Text style={s.emptyText}>Unable to load summary</Text>
+            <Text style={s.emptyText}>{t('daySummary.error')}</Text>
           </View>
         )}
       </ScrollView>
@@ -229,11 +231,11 @@ export default function DaySummaryScreen() {
       <View style={s.bottomButtons}>
         <Pressable style={s.closeButton} onPress={handleClose}>
           <MaterialCommunityIcons name="check-circle-outline" size={20} color={colors.text.primary} />
-          <Text style={s.closeButtonText}>Close</Text>
+          <Text style={s.closeButtonText}>{t('common.close')}</Text>
         </Pressable>
         <Pressable style={s.logoutButton} onPress={handleLogout}>
           <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
-          <Text style={s.logoutButtonText}>Log Out</Text>
+          <Text style={s.logoutButtonText}>{t('daySummary.logOut')}</Text>
         </Pressable>
       </View>
     </SafeAreaView>

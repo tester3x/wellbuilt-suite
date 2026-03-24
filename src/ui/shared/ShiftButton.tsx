@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 
 interface ShiftButtonProps {
@@ -23,6 +24,7 @@ function formatElapsed(startIso: string): string {
 }
 
 export function ShiftButton({ active, returning, returnStartTime, onStartReturn, onArrived }: ShiftButtonProps) {
+  const { t } = useTranslation();
   const [elapsed, setElapsed] = useState('0:00');
 
   // Tick the elapsed timer while returning
@@ -39,11 +41,11 @@ export function ShiftButton({ active, returning, returnStartTime, onStartReturn,
   if (returning) {
     const handleArrived = () => {
       Alert.alert(
-        'Arrived',
-        'Record your arrival and end shift?',
+        t('shift.arrived'),
+        t('shift.arrivedConfirm'),
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'End Shift', onPress: onArrived },
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('shift.endShift'), onPress: onArrived },
         ],
       );
     };
@@ -52,11 +54,11 @@ export function ShiftButton({ active, returning, returnStartTime, onStartReturn,
       <Pressable onPress={handleArrived} style={[styles.container, styles.returning]}>
         <MaterialCommunityIcons name="truck" size={20} color="#F59E0B" />
         <View style={styles.textContainer}>
-          <Text style={[styles.label, styles.labelReturning]}>Returning to Yard</Text>
-          <Text style={[styles.action, styles.actionReturning]}>{elapsed} driving</Text>
+          <Text style={[styles.label, styles.labelReturning]}>{t('shift.returningToYard')}</Text>
+          <Text style={[styles.action, styles.actionReturning]}>{elapsed} {t('shift.driving')}</Text>
         </View>
         <View style={styles.arrivedBadge}>
-          <Text style={styles.arrivedText}>Arrived</Text>
+          <Text style={styles.arrivedText}>{t('shift.arrived')}</Text>
         </View>
       </Pressable>
     );
@@ -66,11 +68,11 @@ export function ShiftButton({ active, returning, returnStartTime, onStartReturn,
   if (active) {
     const handleEndShift = () => {
       Alert.alert(
-        'End Shift',
-        'Start your return drive? Your drive time will be tracked.',
+        t('shift.endShift'),
+        t('shift.startReturnConfirm'),
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Return to Yard', onPress: onStartReturn, style: 'destructive' },
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('shift.returnToYard'), onPress: onStartReturn, style: 'destructive' },
         ],
       );
     };
@@ -79,8 +81,8 @@ export function ShiftButton({ active, returning, returnStartTime, onStartReturn,
       <Pressable onPress={handleEndShift} style={[styles.container, styles.active]}>
         <MaterialCommunityIcons name="clock-outline" size={20} color="#34D399" />
         <View style={styles.textContainer}>
-          <Text style={styles.label}>Shift Active</Text>
-          <Text style={styles.action}>Tap to end shift</Text>
+          <Text style={styles.label}>{t('shift.shiftActive')}</Text>
+          <Text style={styles.action}>{t('shift.tapToEnd')}</Text>
         </View>
         <View style={styles.dot} />
       </Pressable>
@@ -92,8 +94,8 @@ export function ShiftButton({ active, returning, returnStartTime, onStartReturn,
     <View style={[styles.container, styles.ended]}>
       <MaterialCommunityIcons name="clock-check-outline" size={20} color={colors.text.muted} />
       <View style={styles.textContainer}>
-        <Text style={[styles.label, styles.labelEnded]}>Shift Ended</Text>
-        <Text style={[styles.action, styles.actionEnded]}>GPS clock-out recorded</Text>
+        <Text style={[styles.label, styles.labelEnded]}>{t('shift.shiftEnded')}</Text>
+        <Text style={[styles.action, styles.actionEnded]}>{t('shift.clockOutRecorded')}</Text>
       </View>
     </View>
   );

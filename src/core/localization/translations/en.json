@@ -6,7 +6,12 @@
     "back": "Back",
     "save": "Save",
     "add": "Add",
-    "search": "Search"
+    "search": "Search",
+    "close": "Close",
+    "notes": "Notes",
+    "remove": "Remove",
+    "yes": "Yes",
+    "no": "No"
   },
   "companySelect": {
     "brand": "WellBuilt",
@@ -171,5 +176,84 @@
       "en": "English",
       "es": "Español"
     }
+  },
+  "daySummary": {
+    "title": "Shift Complete",
+    "logOut": "Log Out",
+    "logOutConfirm": "Log out of all WellBuilt apps?",
+    "loading": "Loading summary...",
+    "wellsVisited": "Wells Visited",
+    "noLoads": "No completed loads today",
+    "error": "Unable to load summary",
+    "loads": "Loads",
+    "bbls": "BBLs",
+    "hours": "Hours",
+    "miles": "Miles"
+  },
+  "timesheet": {
+    "title": "Payroll",
+    "invoiceDetail": "Invoice Detail",
+    "invoice": "INVOICE",
+    "jobDetails": "JOB DETAILS",
+    "driverVehicle": "DRIVER & VEHICLE",
+    "time": "TIME",
+    "waterTickets": "WATER TICKETS",
+    "waterTicket": "WATER TICKET",
+    "noTickets": "No water tickets found",
+    "jobTimeline": "JOB TIMELINE",
+    "remarks": "REMARKS",
+    "appName": "WellBuilt Tickets",
+    "jobs": "Jobs",
+    "error": "Unable to load payroll",
+    "status": {
+      "closed": "Closed",
+      "submitted": "Submitted",
+      "approved": "Approved",
+      "paid": "Paid",
+      "inProgress": "In Progress",
+      "jobClosed": "Job Closed"
+    }
+  },
+  "shift": {
+    "arrived": "Arrived",
+    "arrivedConfirm": "Record your arrival and end shift?",
+    "endShift": "End Shift",
+    "startReturnConfirm": "Start your return drive? Your drive time will be tracked.",
+    "returnToYard": "Return to Yard",
+    "returningToYard": "Returning to Yard",
+    "driving": "driving",
+    "shiftActive": "Shift Active",
+    "tapToEnd": "Tap to end shift",
+    "shiftEnded": "Shift Ended",
+    "clockOutRecorded": "GPS clock-out recorded",
+    "startShift": "Start Shift",
+    "tapToClockIn": "Tap to clock in",
+    "returning": "Returning",
+    "tapToEndShort": "Tap to end",
+    "selectPackage": "Select your job package for this shift"
+  },
+  "actionCard": {
+    "timesheet": "Timesheet",
+    "viewPay": "View your pay",
+    "eWallet": "eWallet",
+    "documents": "Documents"
+  },
+  "loginExtra": {
+    "fullLegalName": "Full Legal Name",
+    "legalNamePlaceholder": "First and last name (e.g., Mike Burger)",
+    "legalNameHint": "Used on printed tickets, invoices, and payroll",
+    "displayNameHint": "This is your login name — other drivers will see this"
+  },
+  "settingsExtra": {
+    "saveFailed": "Save Failed",
+    "saveError": "Could not save your changes. Check your connection.",
+    "logOut": "Log Out",
+    "logOutConfirm": "Are you sure you want to log out?",
+    "legalNamePlaceholder": "Your full legal name",
+    "phonePlaceholder": "(xxx) xxx-xxxx",
+    "cdlPlaceholder": "Commercial driver's license",
+    "vehicleSubtitle": "Truck and trailer you're driving today",
+    "truckNumberPlaceholder": "e.g., 42",
+    "trailerNumberPlaceholder": "e.g., T-15"
   }
 }

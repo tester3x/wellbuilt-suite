@@ -6,7 +6,12 @@
     "back": "Atrás",
     "save": "Guardar",
     "add": "Agregar",
-    "search": "Buscar"
+    "search": "Buscar",
+    "close": "Cerrar",
+    "notes": "Notas",
+    "remove": "Eliminar",
+    "yes": "Sí",
+    "no": "No"
   },
   "companySelect": {
     "brand": "WellBuilt",
@@ -171,5 +176,84 @@
       "en": "English",
       "es": "Español"
     }
+  },
+  "daySummary": {
+    "title": "Turno Completo",
+    "logOut": "Cerrar Sesión",
+    "logOutConfirm": "¿Cerrar sesión de todas las apps WellBuilt?",
+    "loading": "Cargando resumen...",
+    "wellsVisited": "Pozos Visitados",
+    "noLoads": "Sin cargas completadas hoy",
+    "error": "No se pudo cargar el resumen",
+    "loads": "Cargas",
+    "bbls": "BBLs",
+    "hours": "Horas",
+    "miles": "Millas"
+  },
+  "timesheet": {
+    "title": "Nómina",
+    "invoiceDetail": "Detalle de Factura",
+    "invoice": "FACTURA",
+    "jobDetails": "DETALLES DEL TRABAJO",
+    "driverVehicle": "CONDUCTOR Y VEHÍCULO",
+    "time": "TIEMPO",
+    "waterTickets": "BOLETAS DE AGUA",
+    "waterTicket": "BOLETA DE AGUA",
+    "noTickets": "No se encontraron boletas",
+    "jobTimeline": "LÍNEA DE TIEMPO",
+    "remarks": "OBSERVACIONES",
+    "appName": "WellBuilt Tickets",
+    "jobs": "Trabajos",
+    "error": "No se pudo cargar la nómina",
+    "status": {
+      "closed": "Cerrado",
+      "submitted": "Enviado",
+      "approved": "Aprobado",
+      "paid": "Pagado",
+      "inProgress": "En Progreso",
+      "jobClosed": "Trabajo Cerrado"
+    }
+  },
+  "shift": {
+    "arrived": "Llegó",
+    "arrivedConfirm": "¿Registrar su llegada y terminar turno?",
+    "endShift": "Terminar Turno",
+    "startReturnConfirm": "¿Iniciar su viaje de regreso? Su tiempo de conducción será rastreado.",
+    "returnToYard": "Regresar al Patio",
+    "returningToYard": "Regresando al Patio",
+    "driving": "conduciendo",
+    "shiftActive": "Turno Activo",
+    "tapToEnd": "Toque para terminar turno",
+    "shiftEnded": "Turno Terminado",
+    "clockOutRecorded": "Salida GPS registrada",
+    "startShift": "Iniciar Turno",
+    "tapToClockIn": "Toque para registrar entrada",
+    "returning": "Regresando",
+    "tapToEndShort": "Toque para terminar",
+    "selectPackage": "Seleccione su paquete de trabajo para este turno"
+  },
+  "actionCard": {
+    "timesheet": "Nómina",
+    "viewPay": "Ver su pago",
+    "eWallet": "eWallet",
+    "documents": "Documentos"
+  },
+  "loginExtra": {
+    "fullLegalName": "Nombre Legal Completo",
+    "legalNamePlaceholder": "Nombre y apellido (ej., Mike Burger)",
+    "legalNameHint": "Usado en boletas impresas, facturas y nómina",
+    "displayNameHint": "Este es su nombre de acceso — otros conductores lo verán"
+  },
+  "settingsExtra": {
+    "saveFailed": "Error al Guardar",
+    "saveError": "No se pudieron guardar los cambios. Verifique su conexión.",
+    "logOut": "Cerrar Sesión",
+    "logOutConfirm": "¿Está seguro de que desea cerrar sesión?",
+    "legalNamePlaceholder": "Su nombre legal completo",
+    "phonePlaceholder": "(xxx) xxx-xxxx",
+    "cdlPlaceholder": "Licencia de conducir comercial",
+    "vehicleSubtitle": "Camión y remolque que conduce hoy",
+    "truckNumberPlaceholder": "ej., 42",
+    "trailerNumberPlaceholder": "ej., T-15"
   }
 }

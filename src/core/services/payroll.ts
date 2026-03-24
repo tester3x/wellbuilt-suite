@@ -225,12 +225,14 @@ export async function fetchDriverInvoices(
       const docId = nameParts[nameParts.length - 1];
 
       const driver = parseFirestoreValue(f.driver) || '';
+      const driverDispName = parseFirestoreValue(f.driverDisplayName) || '';
       const invoiceCompanyId = parseFirestoreValue(f.companyId) || '';
       const status = parseFirestoreValue(f.status) || 'open';
 
       // Client-side filters:
-      // 1. Match driver name (case-insensitive)
-      if (driver.toLowerCase() !== displayName.toLowerCase()) continue;
+      // 1. Match driver name (case-insensitive) — check both driver (legalName) and driverDisplayName
+      const dn = displayName.toLowerCase();
+      if (driver.toLowerCase() !== dn && driverDispName.toLowerCase() !== dn) continue;
       // 2. Match company if specified
       if (companyId && invoiceCompanyId && invoiceCompanyId !== companyId) continue;
       // 3. Skip open/in-progress (match Dashboard: only closed+ count for pay)

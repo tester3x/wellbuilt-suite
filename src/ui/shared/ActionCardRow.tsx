@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert, Animated, Modal, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAppLauncher } from '@/core/hooks/useAppLauncher';
@@ -53,6 +54,7 @@ function PulsingDot({ color }: { color: string }) {
 }
 
 export function ActionCardRow({ active, returning, returnStartTime, onStartShift, onStartReturn, onArrived }: ActionCardRowProps) {
+  const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
   const { user } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
@@ -71,14 +73,14 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
   // ── Shift card press handler ──
   const handleShiftPress = () => {
     if (returning) {
-      Alert.alert('Arrived', 'Record your arrival and end shift?', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'End Shift', onPress: onArrived },
+      Alert.alert(t('shift.arrived'), t('shift.arrivedConfirm'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('shift.endShift'), onPress: onArrived },
       ]);
     } else if (active) {
-      Alert.alert('End Shift', 'Start your return drive? Your drive time will be tracked.', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Return to Yard', onPress: onStartReturn, style: 'destructive' },
+      Alert.alert(t('shift.endShift'), t('shift.startReturnConfirm'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('shift.returnToYard'), onPress: onStartReturn, style: 'destructive' },
       ]);
     } else {
       // Start shift — show package picker
@@ -114,22 +116,22 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
 
   // ── Shift card state ──
   let shiftIcon: keyof typeof MaterialCommunityIcons.glyphMap = 'play-circle-outline';
-  let shiftLabel = 'Start Shift';
-  let shiftSub = 'Tap to clock in';
+  let shiftLabel = t('shift.startShift');
+  let shiftSub = t('shift.tapToClockIn');
   let shiftColor: string = colors.brand.accent;
   let shiftBorder = `${colors.brand.accent}30`;
   let showDot = false;
 
   if (returning) {
     shiftIcon = 'truck';
-    shiftLabel = 'Returning';
+    shiftLabel = t('shift.returning');
     shiftSub = elapsed;
     shiftColor = '#F59E0B';
     shiftBorder = 'rgba(245, 158, 11, 0.3)';
   } else if (active) {
     shiftIcon = 'clock-outline';
-    shiftLabel = 'Shift Active';
-    shiftSub = 'Tap to end';
+    shiftLabel = t('shift.shiftActive');
+    shiftSub = t('shift.tapToEndShort');
     shiftColor = '#34D399';
     shiftBorder = 'rgba(52, 211, 153, 0.3)';
     showDot = true;
@@ -148,7 +150,7 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
         {showDot && <PulsingDot color={shiftColor} />}
         {returning && (
           <View style={[s.badge, { backgroundColor: '#F59E0B' }]}>
-            <Text style={s.badgeText}>Arrived</Text>
+            <Text style={s.badgeText}>{t('shift.arrived')}</Text>
           </View>
         )}
       </Pressable>
@@ -156,8 +158,8 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
       {/* Timesheet Card */}
       <Pressable onPress={() => router.push('/timesheet')} style={[s.card, s.cardTimesheet]}>
         <MaterialCommunityIcons name="cash-multiple" size={28} color="#34D399" />
-        <Text style={[s.label, { color: '#34D399' }]}>Timesheet</Text>
-        <Text style={[s.sub, { color: 'rgba(52, 211, 153, 0.6)' }]}>View your pay</Text>
+        <Text style={[s.label, { color: '#34D399' }]}>{t('actionCard.timesheet')}</Text>
+        <Text style={[s.sub, { color: 'rgba(52, 211, 153, 0.6)' }]}>{t('actionCard.viewPay')}</Text>
       </Pressable>
 
       {/* eWallet Card */}
@@ -170,8 +172,8 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
         style={[s.card, s.cardWallet]}
       >
         <MaterialCommunityIcons name="wallet-outline" size={28} color={colors.brand.accent} />
-        <Text style={[s.label, { color: colors.brand.accent }]}>eWallet</Text>
-        <Text style={[s.sub, { color: colors.text.muted }]}>Documents</Text>
+        <Text style={[s.label, { color: colors.brand.accent }]}>{t('actionCard.eWallet')}</Text>
+        <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.documents')}</Text>
       </Pressable>
 
       {/* ── Package Picker Modal ── */}
@@ -183,8 +185,8 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
       >
         <View style={s.modalOverlay}>
           <View style={s.modalCard}>
-            <Text style={s.modalTitle}>Start Shift</Text>
-            <Text style={s.modalSub}>Select your job package for this shift</Text>
+            <Text style={s.modalTitle}>{t('shift.startShift')}</Text>
+            <Text style={s.modalSub}>{t('shift.selectPackage')}</Text>
 
             {loadingPkgs ? (
               <ActivityIndicator color={colors.brand.accent} style={{ marginVertical: 24 }} />
@@ -223,13 +225,13 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
                 style={[s.modalBtn, s.modalBtnStart, (loadingPkgs || !selectedPkg) && { opacity: 0.4 }]}
               >
                 <MaterialCommunityIcons name="play-circle-outline" size={20} color="#000" />
-                <Text style={s.modalBtnStartText}>Start Shift</Text>
+                <Text style={s.modalBtnStartText}>{t('shift.startShift')}</Text>
               </Pressable>
               <Pressable
                 onPress={() => setShowPackageModal(false)}
                 style={[s.modalBtn, s.modalBtnCancel]}
               >
-                <Text style={s.modalBtnCancelText}>Cancel</Text>
+                <Text style={s.modalBtnCancelText}>{t('common.cancel')}</Text>
               </Pressable>
             </View>
           </View>
