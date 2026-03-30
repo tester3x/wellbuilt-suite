@@ -117,12 +117,15 @@ export async function fetchCompanyConfig(companyId: string): Promise<CompanyConf
     const doc = await res.json();
     const f = doc.fields || {};
 
-    const tier = (parseStr(f.tier) || 'suite') as Tier; // Default to suite for existing companies
+    const rawTier = parseStr(f.tier) || 'suite';
+    // Map Dashboard tier names (free/field/god) to WB S tier names
+    const TIER_ALIAS: Record<string, Tier> = { free: 'field-basics', field: 'full-field', god: 'suite' };
+    const tier: Tier = (TIER_ALIAS[rawTier] || rawTier) as Tier;
     const explicitApps = parseStrArray(f.enabledApps) as WBAppId[];
 
     const config: CompanyConfig = {
       tier,
-      enabledApps: explicitApps.length > 0 ? explicitApps : TIER_APPS[tier],
+      enabledApps: explicitApps.length > 0 ? explicitApps : (TIER_APPS[tier] || TIER_APPS['suite']),
       name: parseStr(f.name),
       requiredApps: parseStrArray(f.requiredApps),
       logoUrl: parseStr(f.logoUrl) || undefined,
