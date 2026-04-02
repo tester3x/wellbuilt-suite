@@ -43,6 +43,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   /** Whether the driver's shift is currently active (clock running) */
   shiftActive: boolean;
+  /** ISO timestamp when shift started (for running timer display) */
+  shiftStartTime: string | null;
   /** Whether the driver is in "returning to yard" state (driving back after last job) */
   returningToYard: boolean;
   /** ISO timestamp when return drive started (for elapsed timer) */
@@ -108,6 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [shiftActive, setShiftActive] = useState(false);
+  const [shiftStartTime, setShiftStartTime] = useState<string | null>(null);
   const [returningToYard, setReturningToYard] = useState(false);
   const [returnDepartTime, setReturnDepartTime] = useState<string | null>(null);
   const [activePackageId, setActivePackageId] = useState<string | null>(null);
@@ -128,7 +131,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Check if shift was explicitly started (and not ended)
           const shiftStarted = await SecureStore.getItemAsync('shiftStarted');
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
-          setShiftActive(shiftStarted === 'true' && shiftEnded !== 'true');
+          const isActive = shiftStarted === 'true' && shiftEnded !== 'true';
+          setShiftActive(isActive);
+          if (isActive) {
+            const startTime = await SecureStore.getItemAsync('shiftStartTime');
+            setShiftStartTime(startTime || null);
+          }
 
           // Restore active package from shift start
           const savedPkgId = await SecureStore.getItemAsync('activePackageId');
@@ -219,6 +227,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Record login GPS event for DOT drive time
     recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(() => {});
     await SecureStore.setItemAsync('shiftStarted', 'true');
+    await SecureStore.setItemAsync('shiftStartTime', new Date().toISOString());
     await SecureStore.deleteItemAsync('shiftEnded');
     // Save the selected package for this shift
     const pkg = packageId || user.defaultPackageId || null;
@@ -226,7 +235,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await SecureStore.setItemAsync('activePackageId', pkg);
       setActivePackageId(pkg);
     }
+    const startTime = new Date().toISOString();
     setShiftActive(true);
+    setShiftStartTime(startTime);
     console.log('[AuthContext] Shift started for:', user.displayName, 'package:', pkg || 'none');
   }, [user]);
 
@@ -327,6 +338,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       isAuthenticated: !!user,
       shiftActive,
+      shiftStartTime,
       activePackageId,
       returningToYard,
       returnDepartTime,

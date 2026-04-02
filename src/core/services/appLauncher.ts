@@ -71,6 +71,7 @@ export interface WBAppLaunchOptions {
     truck?: string;
     trailer?: string;
     packageId?: string;
+    shiftStartTime?: string;
   };
 }
 
@@ -120,6 +121,7 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
     if (sso.truck) paramObj.truck = sso.truck;
     if (sso.trailer) paramObj.trailer = sso.trailer;
     if (sso.packageId) paramObj.packageId = sso.packageId;
+    if (sso.shiftStartTime) paramObj.shiftStartTime = sso.shiftStartTime;
     const params = new URLSearchParams(paramObj);
     url = `${scheme}://login?${params.toString()}`;
   }

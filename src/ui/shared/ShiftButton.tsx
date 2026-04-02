@@ -8,6 +8,7 @@ interface ShiftButtonProps {
   active: boolean;
   returning: boolean;
   returnStartTime: string | null;
+  shiftStartTime: string | null;
   onStartReturn: () => Promise<void>;
   onArrived: () => Promise<void>;
 }
@@ -23,9 +24,32 @@ function formatElapsed(startIso: string): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export function ShiftButton({ active, returning, returnStartTime, onStartReturn, onArrived }: ShiftButtonProps) {
+/** Get DOT-style color based on shift hours: green < 8h, yellow 8-10h, red > 10h */
+function getShiftColor(startIso: string | null): string {
+  if (!startIso) return '#34D399';
+  const hours = (Date.now() - new Date(startIso).getTime()) / 3600000;
+  if (hours >= 10) return '#EF4444';
+  if (hours >= 8) return '#F59E0B';
+  return '#34D399';
+}
+
+export function ShiftButton({ active, returning, returnStartTime, shiftStartTime, onStartReturn, onArrived }: ShiftButtonProps) {
   const { t } = useTranslation();
   const [elapsed, setElapsed] = useState('0:00');
+  const [shiftElapsed, setShiftElapsed] = useState('0:00');
+  const [shiftColor, setShiftColor] = useState('#34D399');
+
+  // Tick the shift timer while active
+  useEffect(() => {
+    if (!active || !shiftStartTime) return;
+    setShiftElapsed(formatElapsed(shiftStartTime));
+    setShiftColor(getShiftColor(shiftStartTime));
+    const interval = setInterval(() => {
+      setShiftElapsed(formatElapsed(shiftStartTime));
+      setShiftColor(getShiftColor(shiftStartTime));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [active, shiftStartTime]);
 
   // Tick the elapsed timer while returning
   useEffect(() => {
@@ -78,13 +102,13 @@ export function ShiftButton({ active, returning, returnStartTime, onStartReturn,
     };
 
     return (
-      <Pressable onPress={handleEndShift} style={[styles.container, styles.active]}>
-        <MaterialCommunityIcons name="clock-outline" size={20} color="#34D399" />
+      <Pressable onPress={handleEndShift} style={[styles.container, styles.active, { borderColor: `${shiftColor}40` }]}>
+        <MaterialCommunityIcons name="clock-outline" size={20} color={shiftColor} />
         <View style={styles.textContainer}>
-          <Text style={styles.label}>{t('shift.shiftActive')}</Text>
-          <Text style={styles.action}>{t('shift.tapToEnd')}</Text>
+          <Text style={[styles.label, { color: shiftColor }]}>{t('shift.shiftActive')}</Text>
+          <Text style={[styles.action, { color: `${shiftColor}99` }]}>{t('shift.tapToEnd')}</Text>
         </View>
-        <View style={styles.dot} />
+        <Text style={{ color: shiftColor, fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'] }}>{shiftElapsed}</Text>
       </Pressable>
     );
   }

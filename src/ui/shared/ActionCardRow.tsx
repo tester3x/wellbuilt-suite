@@ -17,6 +17,7 @@ interface ActionCardRowProps {
   active: boolean;
   returning: boolean;
   returnStartTime: string | null;
+  shiftStartTime: string | null;
   onStartShift: (packageId?: string) => Promise<void>;
   onStartReturn: () => Promise<void>;
   onArrived: () => Promise<void>;
@@ -53,16 +54,40 @@ function PulsingDot({ color }: { color: string }) {
   );
 }
 
-export function ActionCardRow({ active, returning, returnStartTime, onStartShift, onStartReturn, onArrived }: ActionCardRowProps) {
+/** DOT-style color: green < 8h, yellow 8-10h, red > 10h */
+function getShiftColor(startIso: string | null): string {
+  if (!startIso) return '#34D399';
+  const hours = (Date.now() - new Date(startIso).getTime()) / 3600000;
+  if (hours >= 10) return '#EF4444';
+  if (hours >= 8) return '#F59E0B';
+  return '#34D399';
+}
+
+export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
   const { user } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
+  const [shiftElapsed, setShiftElapsed] = useState('0:00');
+  const [dotColor, setDotColor] = useState('#34D399');
   const [showPackageModal, setShowPackageModal] = useState(false);
   const [packages, setPackages] = useState<ShiftPackageOption[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<string>('');
   const [loadingPkgs, setLoadingPkgs] = useState(false);
 
+  // Tick shift timer while active
+  useEffect(() => {
+    if (!active || !shiftStartTime) return;
+    setShiftElapsed(formatElapsed(shiftStartTime));
+    setDotColor(getShiftColor(shiftStartTime));
+    const interval = setInterval(() => {
+      setShiftElapsed(formatElapsed(shiftStartTime));
+      setDotColor(getShiftColor(shiftStartTime));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [active, shiftStartTime]);
+
+  // Tick return timer while returning
   useEffect(() => {
     if (!returning || !returnStartTime) return;
     setElapsed(formatElapsed(returnStartTime));
@@ -130,10 +155,10 @@ export function ActionCardRow({ active, returning, returnStartTime, onStartShift
     shiftBorder = 'rgba(245, 158, 11, 0.3)';
   } else if (active) {
     shiftIcon = 'clock-outline';
-    shiftLabel = t('shift.shiftActive');
+    shiftLabel = shiftElapsed;
     shiftSub = t('shift.tapToEndShort');
-    shiftColor = '#34D399';
-    shiftBorder = 'rgba(52, 211, 153, 0.3)';
+    shiftColor = dotColor;
+    shiftBorder = `${dotColor}40`;
     showDot = true;
   }
 

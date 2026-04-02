@@ -363,11 +363,11 @@ export function calculateDaySummary(
     if (inv.wellName) wellSet.add(inv.wellName);
   }
 
-  // Total hours worked = shift start to shift end
+  // Total hours worked = shift start to shift end (or now if shift still open)
   let totalHoursWorked = 0;
-  if (loginEvt && logoutEvt) {
+  if (loginEvt) {
     const startMs = new Date(loginEvt.timestamp).getTime();
-    const endMs = new Date(logoutEvt.timestamp).getTime();
+    const endMs = logoutEvt ? new Date(logoutEvt.timestamp).getTime() : Date.now();
     if (endMs > startMs) {
       totalHoursWorked = Math.round((endMs - startMs) / 3600000 * 10) / 10;
     }

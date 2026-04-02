@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { loadVehicleInfo } from '../services/driverProfile';
 
 export function useAppLauncher() {
-  const { user, activePackageId } = useAuth();
+  const { user, activePackageId, shiftStartTime } = useAuth();
 
   const checkCanLaunch = useCallback((scheme?: string) => {
     return canLaunchApp(scheme);
@@ -27,10 +27,11 @@ export function useAppLauncher() {
       if (vehicle.truckNumber) (sso as any).truck = vehicle.truckNumber;
       if (vehicle.trailerNumber) (sso as any).trailer = vehicle.trailerNumber;
       if (activePackageId) (sso as any).packageId = activePackageId;
+      if (shiftStartTime) (sso as any).shiftStartTime = shiftStartTime;
     }
 
     return launchWBApp({ ...options, sso });
-  }, [user, activePackageId]);
+  }, [user, activePackageId, shiftStartTime]);
 
   return {
     canLaunchApp: checkCanLaunch,

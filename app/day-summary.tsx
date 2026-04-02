@@ -88,8 +88,11 @@ export default function DaySummaryScreen() {
     if (!user) return;
     (async () => {
       try {
+        // WB T writes legalName as the invoice driver field (falls back to displayName).
+        // Query with the same preference so Day Summary finds the right invoices.
+        const driverName = user.legalName || user.displayName;
         const [invoices, shift] = await Promise.all([
-          fetchTodayInvoices(user.displayName, user.companyId),
+          fetchTodayInvoices(driverName, user.companyId),
           fetchTodayShift(user.driverId),
         ]);
         const result = calculateDaySummary(invoices, shift?.events || []);
