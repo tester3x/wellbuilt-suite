@@ -242,15 +242,34 @@ export async function fetchDriverInvoices(
       const createdAt = parseFirestoreValue(f.createdAt) || '';
       const dateStr = parseFirestoreValue(f.date) || '';
 
+      // For s_t mode: invoiceNumber is empty/"N/A", use ticket number or well name instead
+      const rawInvoiceNum = parseFirestoreValue(f.invoiceNumber) || '';
+      const ticketNum = parseFirestoreValue(f.ticketNumber) || '';
+      const wellName = parseFirestoreValue(f.wellName) || '';
+      const tickets = parseFirestoreValue(f.tickets) || [];
+      const firstTicket = Array.isArray(tickets) && tickets.length > 0 ? String(tickets[0]) : '';
+      // Display priority: invoiceNumber (if real) > ticket number > first ticket from array > well name > docId
+      const displayNumber = (rawInvoiceNum && rawInvoiceNum !== 'N/A')
+        ? rawInvoiceNum
+        : ticketNum || firstTicket || wellName || docId.slice(0, 8);
+
+      // BBLs: try totalBBL first, then fall back to bbls/qty from ticket fields
+      let totalBBL = parseFirestoreValue(f.totalBBL) || 0;
+      if (!totalBBL) {
+        totalBBL = parseFloat(parseFirestoreValue(f.bbls) || '0')
+          || parseFloat(parseFirestoreValue(f.qty) || '0')
+          || 0;
+      }
+
       invoices.push({
         id: docId,
-        invoiceNumber: parseFirestoreValue(f.invoiceNumber) || docId.slice(0, 8),
+        invoiceNumber: displayNumber,
         driver,
         operator: parseFirestoreValue(f.operator) || '',
-        wellName: parseFirestoreValue(f.wellName) || '',
+        wellName,
         hauledTo: parseFirestoreValue(f.hauledTo) || '',
         jobType: parseFirestoreValue(f.commodityType) || parseFirestoreValue(f.jobType) || 'Production Water',
-        totalBBL: parseFirestoreValue(f.totalBBL) || 0,
+        totalBBL,
         totalHours: parseFirestoreValue(f.totalHours) || 0,
         status,
         date: dateStr,
