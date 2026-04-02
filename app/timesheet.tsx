@@ -443,7 +443,7 @@ export default function TimesheetScreen() {
       const { start, end, label } = getPeriodDates(selectedPeriod);
 
       const [invoices, payConfig] = await Promise.all([
-        fetchDriverInvoices(user.displayName, user.companyId, start, end),
+        fetchDriverInvoices(user.legalName || user.displayName, user.companyId, start, end),
         user.companyId ? fetchPayConfig(user.companyId) : Promise.resolve(null),
       ]);
 

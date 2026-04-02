@@ -255,7 +255,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const confirmArrival = useCallback(async () => {
     if (!user) return;
     // Record logout GPS event (arrival at yard = shift end)
-    recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
+    // Must await so day-summary screen can read the shift end time
+    await recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
     await SecureStore.setItemAsync('shiftEnded', 'true');
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('returnDepartTime');

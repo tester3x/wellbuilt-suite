@@ -175,7 +175,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         {showDot && <PulsingDot color={shiftColor} />}
         {returning && (
           <View style={[s.badge, { backgroundColor: '#F59E0B' }]}>
-            <Text style={s.badgeText}>{t('shift.arrived')}</Text>
+            <Text style={s.badgeText}>{t('shift.endShift')}</Text>
           </View>
         )}
       </Pressable>
