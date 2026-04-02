@@ -100,6 +100,7 @@ function getTimelineLabel(
     case 'resume': return 'Resumed';
     case 'transfer': return 'Transferred';
     case 'reroute': return 'Rerouted';
+    case 'accept': return 'Accepted';
     default: return event.type;
   }
 }
@@ -383,34 +384,29 @@ function PayrollRow({ row, onTap }: {
       <View style={s.rowHeader}>
         <View style={s.rowLeft}>
           <View style={[s.statusDot, { backgroundColor: sColor }]} />
-          <View style={{ flex: 1 }}>
-            <Text style={s.rowDate}>{row.date}</Text>
-            <Text style={s.rowInvoice}>#{row.invoiceNumber}</Text>
-          </View>
+          <Text style={s.rowDate}>{row.date}</Text>
+          <Text style={s.rowInvoice}>#{row.invoiceNumber}</Text>
+          <Text style={s.miniDot}>·</Text>
+          <Text style={s.miniText}>{row.operator}</Text>
+          <Text style={s.miniDot}>·</Text>
+          <Text style={s.miniText}>{rateLabel}</Text>
+          {row.bbls > 0 && (
+            <>
+              <Text style={s.miniDot}>·</Text>
+              <Text style={s.miniText}>{Math.round(row.bbls)} BBL</Text>
+            </>
+          )}
+          {row.hours > 0 && (
+            <>
+              <Text style={s.miniDot}>·</Text>
+              <Text style={s.miniText}>{row.hours.toFixed(1)}h</Text>
+            </>
+          )}
         </View>
         <View style={s.rowRight}>
           <Text style={s.rowPay}>{formatCurrency(row.employeePay)}</Text>
           <MaterialCommunityIcons name="chevron-right" size={16} color={colors.text.muted} />
         </View>
-      </View>
-
-      {/* Mini detail strip */}
-      <View style={s.miniDetail}>
-        <Text style={s.miniText}>{row.operator}</Text>
-        <Text style={s.miniDot}>·</Text>
-        <Text style={s.miniText}>{rateLabel}</Text>
-        {row.bbls > 0 && (
-          <>
-            <Text style={s.miniDot}>·</Text>
-            <Text style={s.miniText}>{Math.round(row.bbls)} BBL</Text>
-          </>
-        )}
-        {row.hours > 0 && (
-          <>
-            <Text style={s.miniDot}>·</Text>
-            <Text style={s.miniText}>{row.hours.toFixed(1)}h</Text>
-          </>
-        )}
       </View>
     </Pressable>
   );
@@ -858,14 +854,14 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    paddingBottom: 4,
+    paddingVertical: spacing.sm + 2,
   },
   rowLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    gap: spacing.sm,
+    gap: 6,
+    flexWrap: 'wrap',
   },
   statusDot: {
     width: 8,
@@ -880,7 +876,6 @@ const s = StyleSheet.create({
   rowInvoice: {
     fontSize: 12,
     color: colors.brand.primary,
-    marginTop: 1,
     fontFamily: MONO,
   },
   rowRight: {
