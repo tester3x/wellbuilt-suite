@@ -319,7 +319,23 @@ export function calculateDaySummary(
   invoices: DaySummaryInvoice[],
   shiftEvents: TimelineEvent[],
 ): DaySummary {
-  // Build unified timeline (shift events + invoice events)
+  // Extract shift bookends first — needed to filter invoices
+  const loginEvt = shiftEvents.find(e => e.type === 'login');
+  const logoutEvt = shiftEvents.find(e => e.type === 'logout');
+
+  // Filter invoices to only those within the shift window.
+  // Without a shift, show all (backwards compat). With a shift, only count
+  // invoices created between login and logout (or now if shift still open).
+  const shiftStartMs = loginEvt ? new Date(loginEvt.timestamp).getTime() : 0;
+  const shiftEndMs = logoutEvt ? new Date(logoutEvt.timestamp).getTime() : Date.now();
+  const shiftInvoices = loginEvt
+    ? invoices.filter(inv => {
+        const created = new Date(inv.createdAt).getTime();
+        return created >= shiftStartMs && created <= shiftEndMs;
+      })
+    : invoices;
+
+  // Build unified timeline from shift events + shift-filtered invoice events only
   const timeline: UnifiedEvent[] = [];
 
   for (const evt of shiftEvents) {
@@ -331,7 +347,7 @@ export function calculateDaySummary(
     });
   }
 
-  for (const inv of invoices) {
+  for (const inv of shiftInvoices) {
     for (const evt of inv.timeline) {
       timeline.push({
         type: evt.type,
@@ -349,27 +365,22 @@ export function calculateDaySummary(
     return tA - tB;
   });
 
-  // Extract shift bookends
-  const loginEvt = shiftEvents.find(e => e.type === 'login');
-  const logoutEvt = shiftEvents.find(e => e.type === 'logout');
+  // Loads = count of completed invoices within shift
+  const totalLoads = shiftInvoices.length;
+  const totalBBL = shiftInvoices.reduce((sum, i) => sum + i.totalBBL, 0);
 
-  // Loads = count of completed invoices
-  const totalLoads = invoices.length;
-  const totalBBL = invoices.reduce((sum, i) => sum + i.totalBBL, 0);
-
-  // Unique wells visited
+  // Unique wells visited during shift
   const wellSet = new Set<string>();
-  for (const inv of invoices) {
+  for (const inv of shiftInvoices) {
     if (inv.wellName) wellSet.add(inv.wellName);
   }
 
   // Total hours worked = shift start to shift end (or now if shift still open)
   let totalHoursWorked = 0;
   if (loginEvt) {
-    const startMs = new Date(loginEvt.timestamp).getTime();
     const endMs = logoutEvt ? new Date(logoutEvt.timestamp).getTime() : Date.now();
-    if (endMs > startMs) {
-      totalHoursWorked = Math.round((endMs - startMs) / 3600000 * 10) / 10;
+    if (endMs > shiftStartMs) {
+      totalHoursWorked = Math.round((endMs - shiftStartMs) / 3600000 * 10) / 10;
     }
   }
 

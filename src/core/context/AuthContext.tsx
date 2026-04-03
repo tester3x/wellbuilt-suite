@@ -149,8 +149,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setReturnDepartTime(savedReturnTime);
           }
 
-          // Ensure today's shift is tracked + close stale shifts (fire-and-forget)
-          checkShiftOnResume(session.driverId, session.displayName, session.companyId).catch(() => {});
+          // Only track shift if driver explicitly started one (tapped "Start Shift").
+          // Logged-in but not on-shift should NOT create a shift doc / login event.
+          if (isActive) {
+            checkShiftOnResume(session.driverId, session.displayName, session.companyId).catch(() => {});
+          }
 
           // Revalidate in background (non-blocking)
           revalidateDriverSession().then(async (stillValid) => {
