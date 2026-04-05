@@ -28,6 +28,7 @@ interface DaySummaryInvoice {
   totalHours: number;
   status: string;
   timeline: TimelineEvent[];
+  createdAt: string;
 }
 
 export interface DaySummary {
@@ -261,6 +262,7 @@ export async function fetchTodayInvoices(
         totalHours: parseFirestoreValue(fields.totalHours) || 0,
         status,
         timeline,
+        createdAt: parseFirestoreValue(fields.createdAt) || parseFirestoreValue(fields.invoiceStartedAt) || '',
       });
     }
 
@@ -330,7 +332,10 @@ export function calculateDaySummary(
   const shiftEndMs = logoutEvt ? new Date(logoutEvt.timestamp).getTime() : Date.now();
   const shiftInvoices = loginEvt
     ? invoices.filter(inv => {
-        const created = new Date(inv.createdAt).getTime();
+        // Use createdAt, fall back to first timeline event timestamp
+        const createdStr = inv.createdAt || inv.timeline[0]?.timestamp || '';
+        const created = new Date(createdStr).getTime();
+        if (isNaN(created)) return true; // Can't filter without a date — include it
         return created >= shiftStartMs && created <= shiftEndMs;
       })
     : invoices;
