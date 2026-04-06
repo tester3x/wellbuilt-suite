@@ -14,6 +14,7 @@ import {
   Modal,
   Pressable,
   TextInput,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -78,11 +79,13 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
   }, [endOdometer]);
 
   const handleReturnToYard = useCallback(async () => {
+    Keyboard.dismiss();
     await handleSaveOdometer();
     onReturnToYard(endOdometer.trim(), totalMiles);
   }, [endOdometer, totalMiles, handleSaveOdometer, onReturnToYard]);
 
   const handleEndHere = useCallback(async () => {
+    Keyboard.dismiss();
     await handleSaveOdometer();
     onEndHere(endOdometer.trim(), totalMiles);
   }, [endOdometer, totalMiles, handleSaveOdometer, onEndHere]);

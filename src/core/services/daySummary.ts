@@ -343,10 +343,17 @@ export function calculateDaySummary(
       })
     : invoices;
 
-  // Build unified timeline from shift events + shift-filtered invoice events only
+  // Build unified timeline from CURRENT shift events + shift-filtered invoice events.
+  // Only include shift events within the current shift window (multi-shift days have
+  // earlier events from previous shifts that would corrupt drive time / mileage).
   const timeline: UnifiedEvent[] = [];
 
   for (const evt of shiftEvents) {
+    const evtMs = new Date(evt.timestamp).getTime();
+    if (isNaN(evtMs)) continue;
+    // Only include events from the current shift window
+    if (loginEvt && evtMs < shiftStartMs) continue;
+    if (logoutEvt && evtMs > shiftEndMs + 60000) continue; // 1min grace for logout event itself
     timeline.push({
       type: evt.type,
       timestamp: evt.timestamp,
