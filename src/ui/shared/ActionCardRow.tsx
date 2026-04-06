@@ -1,17 +1,18 @@
 // ActionCardRow — horizontal row of 3 medium action cards:
-// Shift (status-aware), Timesheet (nav link), eWallet (coming soon).
-// On "Start Shift" tap, shows a package picker modal so the driver
-// can confirm or change their job package before starting.
+// Shift (status-aware), Timesheet (nav link), eWallet (launch).
+// On "Start Shift" tap, shows enhanced ShiftStartModal with vehicle info,
+// odometer, and pre-trip checklist.
+// On active shift tap, shows ShiftEndModal with end odometer and return options.
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Alert, Animated, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, Animated } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAppLauncher } from '@/core/hooks/useAppLauncher';
-import { useAuth } from '@/core/context/AuthContext';
-import { fetchCompanyPackages, type ShiftPackageOption } from '@/core/services/companyConfig';
+import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
+import ShiftEndModal from './ShiftEndModal';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -29,9 +30,9 @@ function formatElapsed(startIso: string): string {
   const totalSec = Math.floor(ms / 1000);
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  return `${m}:${String(s).padStart(2, '0')}`;
+  const sec = totalSec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
 // Pulsing dot for active shift
@@ -66,14 +67,11 @@ function getShiftColor(startIso: string | null): string {
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
-  const { user } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
-  const [showPackageModal, setShowPackageModal] = useState(false);
-  const [packages, setPackages] = useState<ShiftPackageOption[]>([]);
-  const [selectedPkg, setSelectedPkg] = useState<string>('');
-  const [loadingPkgs, setLoadingPkgs] = useState(false);
+  const [showStartModal, setShowStartModal] = useState(false);
+  const [showEndModal, setShowEndModal] = useState(false);
 
   // Tick shift timer while active
   useEffect(() => {
@@ -98,45 +96,36 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   // ── Shift card press handler ──
   const handleShiftPress = () => {
     if (returning) {
+      // Returning to yard — simple confirm arrival
       Alert.alert(t('shift.arrived'), t('shift.arrivedConfirm'), [
         { text: t('common.cancel'), style: 'cancel' },
         { text: t('shift.endShift'), onPress: onArrived },
       ]);
     } else if (active) {
-      Alert.alert(t('shift.endShift'), t('shift.startReturnConfirm'), [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('shift.returnToYard'), onPress: onStartReturn, style: 'destructive' },
-      ]);
+      // Active shift — show end shift modal
+      setShowEndModal(true);
     } else {
-      // Start shift — show package picker
-      openPackagePicker();
+      // Not started — show start shift modal
+      setShowStartModal(true);
     }
   };
 
-  const openPackagePicker = async () => {
-    setLoadingPkgs(true);
-    setShowPackageModal(true);
-    try {
-      const pkgs = await fetchCompanyPackages(user?.companyId || '');
-      setPackages(pkgs);
-      // Pre-select driver's default, or first available
-      const defaultId = user?.defaultPackageId;
-      if (defaultId && pkgs.some(p => p.id === defaultId)) {
-        setSelectedPkg(defaultId);
-      } else {
-        setSelectedPkg(pkgs[0]?.id || '');
-      }
-    } catch {
-      setPackages([{ id: 'water-hauling', name: 'Water Hauling' }]);
-      setSelectedPkg('water-hauling');
-    } finally {
-      setLoadingPkgs(false);
-    }
+  // ── Start shift confirmed ──
+  const handleStartConfirm = async (data: ShiftStartData) => {
+    setShowStartModal(false);
+    await onStartShift(data.packageId || undefined);
   };
 
-  const confirmStartShift = async () => {
-    setShowPackageModal(false);
-    await onStartShift(selectedPkg || undefined);
+  // ── End shift: return to yard ──
+  const handleReturnToYard = async (_endOdo: string, _totalMiles: string) => {
+    setShowEndModal(false);
+    await onStartReturn();
+  };
+
+  // ── End shift: already at yard ──
+  const handleEndHere = async (_endOdo: string, _totalMiles: string) => {
+    setShowEndModal(false);
+    await onArrived();
   };
 
   // ── Shift card state ──
@@ -201,67 +190,21 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.documents')}</Text>
       </Pressable>
 
-      {/* ── Package Picker Modal ── */}
-      <Modal
-        visible={showPackageModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowPackageModal(false)}
-      >
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>{t('shift.startShift')}</Text>
-            <Text style={s.modalSub}>{t('shift.selectPackage')}</Text>
+      {/* ── Enhanced Shift Start Modal ── */}
+      <ShiftStartModal
+        visible={showStartModal}
+        onClose={() => setShowStartModal(false)}
+        onConfirm={handleStartConfirm}
+      />
 
-            {loadingPkgs ? (
-              <ActivityIndicator color={colors.brand.accent} style={{ marginVertical: 24 }} />
-            ) : (
-              <View style={s.pkgList}>
-                {packages.map(pkg => (
-                  <Pressable
-                    key={pkg.id}
-                    onPress={() => setSelectedPkg(pkg.id)}
-                    style={[
-                      s.pkgOption,
-                      selectedPkg === pkg.id && s.pkgOptionSelected,
-                    ]}
-                  >
-                    <View style={[
-                      s.pkgRadio,
-                      selectedPkg === pkg.id && s.pkgRadioSelected,
-                    ]}>
-                      {selectedPkg === pkg.id && <View style={s.pkgRadioDot} />}
-                    </View>
-                    <Text style={[
-                      s.pkgLabel,
-                      selectedPkg === pkg.id && s.pkgLabelSelected,
-                    ]}>
-                      {pkg.name}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
-
-            <View style={s.modalButtons}>
-              <Pressable
-                onPress={confirmStartShift}
-                disabled={loadingPkgs || !selectedPkg}
-                style={[s.modalBtn, s.modalBtnStart, (loadingPkgs || !selectedPkg) && { opacity: 0.4 }]}
-              >
-                <MaterialCommunityIcons name="play-circle-outline" size={20} color="#000" />
-                <Text style={s.modalBtnStartText}>{t('shift.startShift')}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setShowPackageModal(false)}
-                style={[s.modalBtn, s.modalBtnCancel]}
-              >
-                <Text style={s.modalBtnCancelText}>{t('common.cancel')}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* ── Enhanced Shift End Modal ── */}
+      <ShiftEndModal
+        visible={showEndModal}
+        onClose={() => setShowEndModal(false)}
+        onReturnToYard={handleReturnToYard}
+        onEndHere={handleEndHere}
+        shiftStartTime={shiftStartTime}
+      />
     </View>
   );
 }
@@ -317,108 +260,5 @@ const s = StyleSheet.create({
     color: '#000',
     fontSize: 11,
     fontWeight: '700',
-  },
-  // ── Modal styles ──
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
-  modalCard: {
-    backgroundColor: colors.bg.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    padding: 24,
-    width: '100%',
-    maxWidth: 360,
-  },
-  modalTitle: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  modalSub: {
-    color: colors.text.muted,
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 20,
-  },
-  pkgList: {
-    gap: 8,
-    marginBottom: 20,
-  },
-  pkgOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-  },
-  pkgOptionSelected: {
-    borderColor: colors.brand.accent,
-    backgroundColor: `${colors.brand.accent}15`,
-  },
-  pkgRadio: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: colors.border.subtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pkgRadioSelected: {
-    borderColor: colors.brand.accent,
-  },
-  pkgRadioDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: colors.brand.accent,
-  },
-  pkgLabel: {
-    color: '#ccc',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  pkgLabelSelected: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  modalButtons: {
-    gap: 10,
-  },
-  modalBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: radius.md,
-  },
-  modalBtnStart: {
-    backgroundColor: colors.brand.accent,
-  },
-  modalBtnStartText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  modalBtnCancel: {
-    backgroundColor: 'transparent',
-  },
-  modalBtnCancelText: {
-    color: colors.text.muted,
-    fontSize: 14,
-    fontWeight: '500',
   },
 });
