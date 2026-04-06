@@ -117,7 +117,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   };
 
   // ── End shift: return to yard ──
-  const handleReturnToYard = async (_endOdo: string, _totalMiles: string) => {
+  const handleReturnToYard = async () => {
     setShowEndModal(false);
     await onStartReturn();
   };

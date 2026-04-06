@@ -1,16 +1,21 @@
-// ShiftArrivalModal — branded dark modal replacing native Alert for arrival confirmation.
-// Shown when driver taps shift card while in "Returning" state.
-// Includes post-trip reminders before ending shift.
+// ShiftArrivalModal — branded end-of-shift modal shown when driver arrives at yard.
+// Captures end odometer, shows total miles, return drive time, post-trip checklist.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Modal,
   Pressable,
+  TextInput,
+  ScrollView,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, radius } from '@/core/theme';
 
 interface ShiftArrivalModalProps {
@@ -43,65 +48,133 @@ function CheckItem({ label, checked, onToggle }: { label: string; checked: boole
 }
 
 export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnStartTime }: ShiftArrivalModalProps) {
+  const [endOdometer, setEndOdometer] = useState('');
+  const [startOdometer, setStartOdometer] = useState('');
+  const [totalMiles, setTotalMiles] = useState('');
   const [postTripDone, setPostTripDone] = useState(false);
   const [paperworkDone, setPaperworkDone] = useState(false);
 
-  // Reset on open
+  // Reset + load start odometer on open
   useEffect(() => {
-    if (visible) {
-      setPostTripDone(false);
-      setPaperworkDone(false);
-    }
+    if (!visible) return;
+    setPostTripDone(false);
+    setPaperworkDone(false);
+    setEndOdometer('');
+    setTotalMiles('');
+    (async () => {
+      const startOdo = await AsyncStorage.getItem('wellbuilt-shift-start-odometer').catch(() => null);
+      setStartOdometer(startOdo || '');
+    })();
   }, [visible]);
 
-  const allChecked = postTripDone && paperworkDone;
+  // Auto-calculate total miles
+  useEffect(() => {
+    const start = parseFloat(startOdometer.replace(/,/g, ''));
+    const end = parseFloat(endOdometer.replace(/,/g, ''));
+    if (!isNaN(start) && !isNaN(end) && end >= start) {
+      setTotalMiles(String(Math.round(end - start)));
+    } else {
+      setTotalMiles('');
+    }
+  }, [endOdometer, startOdometer]);
+
+  const hasOdometer = endOdometer.trim().length > 0;
+  const allChecked = postTripDone && paperworkDone && hasOdometer;
   const returnDrive = formatReturnDrive(returnStartTime);
+
+  const handleConfirm = useCallback(async () => {
+    Keyboard.dismiss();
+    // Save end odometer as next day's start pre-fill
+    if (endOdometer.trim()) {
+      await AsyncStorage.setItem('wellbuilt-last-odometer', endOdometer.trim()).catch(() => {});
+    }
+    onConfirm();
+  }, [endOdometer, onConfirm]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={s.overlay}>
+      <KeyboardAvoidingView
+        style={s.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <View style={s.card}>
-          <MaterialCommunityIcons name="map-marker-check" size={36} color={colors.status.online} style={s.headerIcon} />
-          <Text style={s.title}>Arrived at Yard</Text>
-          <Text style={s.subtitle}>Confirm arrival and end your shift</Text>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
+            <MaterialCommunityIcons name="map-marker-check" size={36} color={colors.status.online} style={s.headerIcon} />
+            <Text style={s.title}>Arrived at Yard</Text>
+            <Text style={s.subtitle}>Record odometer and confirm end of shift</Text>
 
-          {/* Return drive summary */}
-          <View style={s.summaryRow}>
-            <View style={s.summaryItem}>
-              <Text style={s.summaryLabel}>RETURN DRIVE</Text>
-              <Text style={s.summaryValue}>{returnDrive}</Text>
+            {/* Summary cards */}
+            <View style={s.summaryRow}>
+              <View style={s.summaryItem}>
+                <Text style={s.summaryLabel}>RETURN DRIVE</Text>
+                <Text style={s.summaryValue}>{returnDrive}</Text>
+              </View>
+              {startOdometer ? (
+                <View style={s.summaryItem}>
+                  <Text style={s.summaryLabel}>START ODO</Text>
+                  <Text style={s.summaryValue}>{startOdometer}</Text>
+                </View>
+              ) : null}
             </View>
-          </View>
 
-          {/* Post-trip checklist */}
-          <Text style={s.sectionLabel}>END OF SHIFT</Text>
-          <CheckItem
-            label="Post-trip vehicle inspection completed"
-            checked={postTripDone}
-            onToggle={() => setPostTripDone(v => !v)}
-          />
-          <CheckItem
-            label="All paperwork and jobs closed in app"
-            checked={paperworkDone}
-            onToggle={() => setPaperworkDone(v => !v)}
-          />
+            {/* End Odometer */}
+            <Text style={s.sectionLabel}>ODOMETER</Text>
+            <View style={s.inputRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.inputLabel}>End Miles</Text>
+                <TextInput
+                  style={s.input}
+                  value={endOdometer}
+                  onChangeText={setEndOdometer}
+                  placeholder="e.g., 124,590"
+                  placeholderTextColor={colors.text.muted}
+                  keyboardType="numeric"
+                  returnKeyType="done"
+                />
+              </View>
+              {totalMiles ? (
+                <View style={s.milesBox}>
+                  <Text style={s.milesLabel}>TOTAL</Text>
+                  <Text style={s.milesValue}>{totalMiles}</Text>
+                  <Text style={s.milesUnit}>miles</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {/* Post-trip checklist */}
+            <Text style={[s.sectionLabel, { marginTop: 16 }]}>END OF SHIFT</Text>
+            <CheckItem
+              label="Post-trip vehicle inspection completed"
+              checked={postTripDone}
+              onToggle={() => setPostTripDone(v => !v)}
+            />
+            <CheckItem
+              label="All paperwork and jobs closed in app"
+              checked={paperworkDone}
+              onToggle={() => setPaperworkDone(v => !v)}
+            />
+          </ScrollView>
 
           {/* Buttons */}
           <View style={s.buttons}>
             <Pressable
-              onPress={onConfirm}
+              onPressIn={allChecked ? handleConfirm : undefined}
               disabled={!allChecked}
               style={[s.btn, s.btnConfirm, !allChecked && { opacity: 0.4 }]}
             >
               <MaterialCommunityIcons name="check-circle-outline" size={20} color="#000" />
               <Text style={s.btnConfirmText}>End Shift</Text>
             </Pressable>
-            <Pressable onPress={onClose} style={[s.btn, s.btnCancel]}>
+            <Pressable onPressIn={onClose} style={[s.btn, s.btnCancel]}>
               <Text style={s.btnCancelText}>Cancel</Text>
             </Pressable>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -119,12 +192,13 @@ const s = StyleSheet.create({
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border.subtle,
-    padding: 24,
     width: '100%',
     maxWidth: 420,
+    maxHeight: '90%',
   },
   headerIcon: {
     alignSelf: 'center',
+    marginTop: 24,
     marginBottom: 8,
   },
   title: {
@@ -141,9 +215,13 @@ const s = StyleSheet.create({
     marginBottom: 16,
   },
   summaryRow: {
+    flexDirection: 'row',
+    gap: 12,
     marginBottom: 16,
+    paddingHorizontal: 24,
   },
   summaryItem: {
+    flex: 1,
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: radius.md,
     padding: 12,
@@ -166,13 +244,62 @@ const s = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1.2,
+    marginBottom: 8,
+    paddingHorizontal: 24,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-end',
+    paddingHorizontal: 24,
+  },
+  inputLabel: {
+    color: colors.text.secondary,
+    fontSize: 12,
+    fontWeight: '600',
     marginBottom: 4,
+  },
+  input: {
+    backgroundColor: colors.bg.input,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: radius.md,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  milesBox: {
+    backgroundColor: `${colors.status.online}15`,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${colors.status.online}30`,
+    padding: 10,
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  milesLabel: {
+    color: colors.text.muted,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  milesValue: {
+    color: colors.status.online,
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  milesUnit: {
+    color: colors.text.muted,
+    fontSize: 10,
   },
   checkRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingVertical: 10,
+    paddingHorizontal: 24,
     borderBottomWidth: 1,
     borderBottomColor: colors.border.subtle,
   },
@@ -199,7 +326,11 @@ const s = StyleSheet.create({
   },
   buttons: {
     gap: 8,
-    marginTop: 20,
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border.subtle,
   },
   btn: {
     flexDirection: 'row',
