@@ -14,6 +14,7 @@ import {
   Modal,
   Pressable,
   TextInput,
+  ScrollView,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -100,6 +101,11 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={s.card}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
           {/* Header */}
           <MaterialCommunityIcons name="clock-end" size={36} color={colors.status.warning} style={s.headerIcon} />
           <Text style={s.title}>End Shift</Text>
@@ -166,6 +172,7 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
               <Text style={s.btnCancelText}>Cancel</Text>
             </Pressable>
           </View>
+          </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Modal>
