@@ -17,7 +17,8 @@ import {
   completeRegistration,
   firebasePatch,
 } from '../services/driverAuth';
-import { recordShiftEvent, checkShiftOnResume } from '../services/shiftTracking';
+import { recordShiftEvent, checkShiftOnResume, saveYardLocation } from '../services/shiftTracking';
+import * as Location from 'expo-location';
 import { cascadeLogoutToSSOApps, clearSSOLaunchedApps } from '../services/appLauncher';
 
 export interface AuthUser {
@@ -263,6 +264,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Record logout GPS event (arrival at yard = shift end)
     // Must await so day-summary screen can read the shift end time
     await recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
+    // Cache this GPS as "the yard" for next shift's en route destination
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      saveYardLocation(loc.coords.latitude, loc.coords.longitude).catch(() => {});
+    } catch {}
     await SecureStore.setItemAsync('shiftEnded', 'true');
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('returnDepartTime');

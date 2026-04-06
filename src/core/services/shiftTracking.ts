@@ -255,6 +255,85 @@ export async function recordShiftEvent(
 }
 
 /**
+ * Fetch the last "logout" GPS coords from recent shift docs — this is "the yard".
+ * Scans up to 7 days back, returns the most recent logout event's lat/lng.
+ * Caches result in AsyncStorage for instant access.
+ */
+export async function fetchLastYardLocation(
+  driverId: string,
+): Promise<{ lat: number; lng: number; timestamp: string } | null> {
+  // Check AsyncStorage cache first
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    const cached = await AsyncStorage.getItem('wellbuilt-yard-location');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      // Use cache if less than 24 hours old (will update on next logout)
+      const age = Date.now() - new Date(parsed.timestamp).getTime();
+      if (age < 24 * 60 * 60 * 1000 && parsed.lat && parsed.lng) {
+        return parsed;
+      }
+    }
+  } catch {}
+
+  // Scan recent shift docs for last logout event
+  for (let daysBack = 1; daysBack <= 7; daysBack++) {
+    const checkDate = dateString(new Date(), -daysBack);
+    const path = docPath(driverId, checkDate);
+    const getUrl = `https://firestore.googleapis.com/v1/${path}?key=${FIREBASE_API_KEY}`;
+
+    try {
+      const resp = await fetchSafe(getUrl);
+      if (resp.status === 404 || !resp.ok) continue;
+
+      const doc = await resp.json();
+      const eventsArray = doc.fields?.events?.arrayValue?.values || [];
+
+      // Find the LAST logout event in this day's doc
+      let lastLogout: { lat: number; lng: number; timestamp: string } | null = null;
+      for (const v of eventsArray) {
+        const f = v.mapValue?.fields;
+        if (f?.type?.stringValue === 'logout') {
+          const lat = f?.lat?.doubleValue ?? f?.lat?.integerValue;
+          const lng = f?.lng?.doubleValue ?? f?.lng?.integerValue;
+          const ts = f?.timestamp?.stringValue;
+          if (lat && lng && ts) {
+            lastLogout = { lat, lng, timestamp: ts };
+          }
+        }
+      }
+
+      if (lastLogout) {
+        // Cache it
+        try {
+          const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+          await AsyncStorage.setItem('wellbuilt-yard-location', JSON.stringify(lastLogout));
+        } catch {}
+        console.log(`[shiftTracking] Yard location from ${checkDate}: ${lastLogout.lat.toFixed(4)}, ${lastLogout.lng.toFixed(4)}`);
+        return lastLogout;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Save the current logout GPS as the yard location cache.
+ * Called after confirmArrival() records the logout event.
+ */
+export async function saveYardLocation(lat: number, lng: number): Promise<void> {
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    await AsyncStorage.setItem('wellbuilt-yard-location', JSON.stringify({
+      lat, lng, timestamp: new Date().toISOString(),
+    }));
+  } catch {}
+}
+
+/**
  * Called on app open when driver is already logged in (persisted session).
  * Handles the common case: driver never logs out, just opens the app the next day.
  *

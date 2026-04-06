@@ -14,6 +14,7 @@ import { useAppLauncher } from '@/core/hooks/useAppLauncher';
 import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
+import EnRouteYardCard from './EnRouteYardCard';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -145,44 +146,61 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     showDot = true;
   }
 
+  // When returning to yard, show full-width en route card instead of 3-card row
+  if (returning) {
+    return (
+      <View>
+        <EnRouteYardCard
+          returnStartTime={returnStartTime}
+          onArrived={() => setShowArrivalModal(true)}
+        />
+
+        {/* ── Arrival Confirmation Modal ── */}
+        <ShiftArrivalModal
+          visible={showArrivalModal}
+          onClose={() => setShowArrivalModal(false)}
+          onConfirm={() => { setShowArrivalModal(false); onArrived(); }}
+          returnStartTime={returnStartTime}
+        />
+      </View>
+    );
+  }
+
   return (
-    <View style={s.row}>
-      {/* Shift Card */}
-      <Pressable
-        onPress={handleShiftPress}
-        style={[s.card, { borderColor: shiftBorder }]}
-      >
-        <MaterialCommunityIcons name={shiftIcon} size={28} color={shiftColor} />
-        <Text style={[s.label, { color: shiftColor }]}>{shiftLabel}</Text>
-        <Text style={[s.sub, { color: shiftColor, opacity: 0.6 }]}>{shiftSub}</Text>
-        {showDot && <PulsingDot color={shiftColor} />}
-        {returning && (
-          <View style={[s.badge, { backgroundColor: '#F59E0B' }]}>
-            <Text style={s.badgeText}>{t('shift.endShift')}</Text>
-          </View>
-        )}
-      </Pressable>
+    <View>
+      <View style={s.row}>
+        {/* Shift Card */}
+        <Pressable
+          onPress={handleShiftPress}
+          style={[s.card, { borderColor: shiftBorder }]}
+        >
+          <MaterialCommunityIcons name={shiftIcon} size={28} color={shiftColor} />
+          <Text style={[s.label, { color: shiftColor }]}>{shiftLabel}</Text>
+          <Text style={[s.sub, { color: shiftColor, opacity: 0.6 }]}>{shiftSub}</Text>
+          {showDot && <PulsingDot color={shiftColor} />}
+        </Pressable>
 
-      {/* Timesheet Card */}
-      <Pressable onPress={() => router.push('/timesheet')} style={[s.card, s.cardTimesheet]}>
-        <MaterialCommunityIcons name="cash-multiple" size={28} color="#34D399" />
-        <Text style={[s.label, { color: '#34D399' }]}>{t('actionCard.timesheet')}</Text>
-        <Text style={[s.sub, { color: 'rgba(52, 211, 153, 0.6)' }]}>{t('actionCard.viewPay')}</Text>
-      </Pressable>
+        {/* Timesheet Card */}
+        <Pressable onPress={() => router.push('/timesheet')} style={[s.card, s.cardTimesheet]}>
+          <MaterialCommunityIcons name="cash-multiple" size={28} color="#34D399" />
+          <Text style={[s.label, { color: '#34D399' }]}>{t('actionCard.timesheet')}</Text>
+          <Text style={[s.sub, { color: 'rgba(52, 211, 153, 0.6)' }]}>{t('actionCard.viewPay')}</Text>
+        </Pressable>
 
-      {/* eWallet Card */}
-      <Pressable
-        onPress={() => launchWBApp({
-          name: 'WB eWallet',
-          scheme: 'wbewallet',
-          androidPackage: 'com.wellbuilt.ewallet',
-        })}
-        style={[s.card, s.cardWallet]}
-      >
-        <MaterialCommunityIcons name="wallet-outline" size={28} color={colors.brand.accent} />
-        <Text style={[s.label, { color: colors.brand.accent }]}>{t('actionCard.eWallet')}</Text>
-        <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.documents')}</Text>
-      </Pressable>
+        {/* eWallet Card */}
+        <Pressable
+          onPress={() => launchWBApp({
+            name: 'WB eWallet',
+            scheme: 'wbewallet',
+            androidPackage: 'com.wellbuilt.ewallet',
+          })}
+          style={[s.card, s.cardWallet]}
+        >
+          <MaterialCommunityIcons name="wallet-outline" size={28} color={colors.brand.accent} />
+          <Text style={[s.label, { color: colors.brand.accent }]}>{t('actionCard.eWallet')}</Text>
+          <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.documents')}</Text>
+        </Pressable>
+      </View>
 
       {/* ── Enhanced Shift Start Modal ── */}
       <ShiftStartModal
@@ -197,14 +215,6 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         onClose={() => setShowEndModal(false)}
         onReturnToYard={handleReturnToYard}
         shiftStartTime={shiftStartTime}
-      />
-
-      {/* ── Arrival Confirmation Modal (replaces native Alert) ── */}
-      <ShiftArrivalModal
-        visible={showArrivalModal}
-        onClose={() => setShowArrivalModal(false)}
-        onConfirm={() => { setShowArrivalModal(false); onArrived(); }}
-        returnStartTime={returnStartTime}
       />
     </View>
   );
