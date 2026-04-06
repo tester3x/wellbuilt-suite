@@ -27,13 +27,7 @@ interface ShiftEndModalProps {
   visible: boolean;
   onClose: () => void;
   onReturnToYard: (endOdometer: string, totalMiles: string) => void;
-  onEndHere: (endOdometer: string, totalMiles: string) => void;
   shiftStartTime: string | null;
-}
-
-export interface ShiftEndData {
-  endOdometer: string;
-  totalMiles: string;
 }
 
 function formatShiftDuration(startIso: string | null): string {
@@ -45,7 +39,7 @@ function formatShiftDuration(startIso: string | null): string {
   return `${h}h ${m}m`;
 }
 
-export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndHere, shiftStartTime }: ShiftEndModalProps) {
+export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftStartTime }: ShiftEndModalProps) {
   const [endOdometer, setEndOdometer] = useState('');
   const [startOdometer, setStartOdometer] = useState('');
   const [totalMiles, setTotalMiles] = useState('');
@@ -100,13 +94,6 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
     dismissThenRun(run);
   }, [endOdometer, totalMiles, handleSaveOdometer, onReturnToYard, dismissThenRun]);
 
-  const handleEndHere = useCallback(async () => {
-    const run = async () => {
-      await handleSaveOdometer();
-      onEndHere(endOdometer.trim(), totalMiles);
-    };
-    dismissThenRun(run);
-  }, [endOdometer, totalMiles, handleSaveOdometer, onEndHere, dismissThenRun]);
 
   const hasOdometer = endOdometer.trim().length > 0;
   const shiftDuration = formatShiftDuration(shiftStartTime);
@@ -176,14 +163,6 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
             >
               <MaterialCommunityIcons name="truck" size={20} color="#000" />
               <Text style={s.btnReturnText}>Return to Yard</Text>
-            </Pressable>
-            <Pressable
-              onPressIn={hasOdometer ? handleEndHere : undefined}
-              disabled={!hasOdometer}
-              style={[s.btn, s.btnEndHere, !hasOdometer && { opacity: 0.4 }]}
-            >
-              <MaterialCommunityIcons name="map-marker-check" size={18} color={colors.status.online} />
-              <Text style={s.btnEndHereText}>I'm Already at the Yard</Text>
             </Pressable>
             <Pressable onPressIn={onClose} style={[s.btn, s.btnCancel]}>
               <Text style={s.btnCancelText}>Cancel</Text>
@@ -332,16 +311,6 @@ const s = StyleSheet.create({
     color: '#000',
     fontSize: 16,
     fontWeight: '700',
-  },
-  btnEndHere: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: `${colors.status.online}40`,
-  },
-  btnEndHereText: {
-    color: colors.status.online,
-    fontSize: 14,
-    fontWeight: '600',
   },
   btnCancel: {
     backgroundColor: 'transparent',

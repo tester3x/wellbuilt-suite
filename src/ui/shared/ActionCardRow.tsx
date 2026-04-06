@@ -122,11 +122,6 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     await onStartReturn();
   };
 
-  // ── End shift: already at yard ──
-  const handleEndHere = async (_endOdo: string, _totalMiles: string) => {
-    setShowEndModal(false);
-    await onArrived();
-  };
 
   // ── Shift card state ──
   let shiftIcon: keyof typeof MaterialCommunityIcons.glyphMap = 'play-circle-outline';
@@ -202,7 +197,6 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         visible={showEndModal}
         onClose={() => setShowEndModal(false)}
         onReturnToYard={handleReturnToYard}
-        onEndHere={handleEndHere}
         shiftStartTime={shiftStartTime}
       />
     </View>
