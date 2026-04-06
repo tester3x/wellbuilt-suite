@@ -5,7 +5,7 @@
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Alert, Animated } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Animated } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
@@ -13,6 +13,7 @@ import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAppLauncher } from '@/core/hooks/useAppLauncher';
 import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
+import ShiftArrivalModal from './ShiftArrivalModal';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -72,6 +73,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [dotColor, setDotColor] = useState('#34D399');
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
+  const [showArrivalModal, setShowArrivalModal] = useState(false);
 
   // Tick shift timer while active
   useEffect(() => {
@@ -96,11 +98,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   // ── Shift card press handler ──
   const handleShiftPress = () => {
     if (returning) {
-      // Returning to yard — simple confirm arrival
-      Alert.alert(t('shift.arrived'), t('shift.arrivedConfirm'), [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('shift.endShift'), onPress: onArrived },
-      ]);
+      // Returning to yard — branded arrival confirmation with post-trip checklist
+      setShowArrivalModal(true);
     } else if (active) {
       // Active shift — show end shift modal
       setShowEndModal(true);
@@ -198,6 +197,14 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         onClose={() => setShowEndModal(false)}
         onReturnToYard={handleReturnToYard}
         shiftStartTime={shiftStartTime}
+      />
+
+      {/* ── Arrival Confirmation Modal (replaces native Alert) ── */}
+      <ShiftArrivalModal
+        visible={showArrivalModal}
+        onClose={() => setShowArrivalModal(false)}
+        onConfirm={() => { setShowArrivalModal(false); onArrived(); }}
+        returnStartTime={returnStartTime}
       />
     </View>
   );

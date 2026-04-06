@@ -111,8 +111,8 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftS
             bounces={false}
           >
           {/* Header */}
-          <MaterialCommunityIcons name="clock-end" size={36} color={colors.status.warning} style={s.headerIcon} />
-          <Text style={s.title}>End Shift</Text>
+          <MaterialCommunityIcons name="truck" size={36} color={colors.status.warning} style={s.headerIcon} />
+          <Text style={s.title}>Return to Yard</Text>
           <Text style={s.subtitle}>Record your ending odometer before heading back</Text>
 
           {/* Shift Summary */}
