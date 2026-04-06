@@ -79,17 +79,34 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
     }
   }, [endOdometer]);
 
-  const handleReturnToYard = useCallback(async () => {
+  // Dismiss keyboard first, wait for it to settle, then close.
+  // Prevents stutter: KeyboardAvoidingView sliding down + modal fade = two competing animations.
+  const dismissThenRun = useCallback((action: () => void) => {
+    const isKeyboardUp = Keyboard.isVisible?.() ?? false;
     Keyboard.dismiss();
-    await handleSaveOdometer();
-    onReturnToYard(endOdometer.trim(), totalMiles);
-  }, [endOdometer, totalMiles, handleSaveOdometer, onReturnToYard]);
+    if (isKeyboardUp) {
+      // Give keyboard animation time to finish before closing modal
+      setTimeout(action, 350);
+    } else {
+      action();
+    }
+  }, []);
+
+  const handleReturnToYard = useCallback(async () => {
+    const run = async () => {
+      await handleSaveOdometer();
+      onReturnToYard(endOdometer.trim(), totalMiles);
+    };
+    dismissThenRun(run);
+  }, [endOdometer, totalMiles, handleSaveOdometer, onReturnToYard, dismissThenRun]);
 
   const handleEndHere = useCallback(async () => {
-    Keyboard.dismiss();
-    await handleSaveOdometer();
-    onEndHere(endOdometer.trim(), totalMiles);
-  }, [endOdometer, totalMiles, handleSaveOdometer, onEndHere]);
+    const run = async () => {
+      await handleSaveOdometer();
+      onEndHere(endOdometer.trim(), totalMiles);
+    };
+    dismissThenRun(run);
+  }, [endOdometer, totalMiles, handleSaveOdometer, onEndHere, dismissThenRun]);
 
   const hasOdometer = endOdometer.trim().length > 0;
   const shiftDuration = formatShiftDuration(shiftStartTime);
