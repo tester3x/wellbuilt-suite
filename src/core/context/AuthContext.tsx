@@ -227,10 +227,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const startShift = useCallback(async (packageId?: string) => {
     if (!user) return;
-    // Record login GPS event for DOT drive time
+    // Capture timestamp FIRST — before any awaits steal seconds
+    const startTime = new Date().toISOString();
+    // Set React state immediately so timer starts from the correct moment
+    setShiftActive(true);
+    setShiftStartTime(startTime);
+    // Record login GPS event for DOT drive time (fire-and-forget)
     recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(() => {});
+    // Persist to SecureStore (survives app kill) — non-blocking for UI
     await SecureStore.setItemAsync('shiftStarted', 'true');
-    await SecureStore.setItemAsync('shiftStartTime', new Date().toISOString());
+    await SecureStore.setItemAsync('shiftStartTime', startTime);
     await SecureStore.deleteItemAsync('shiftEnded');
     // Save the selected package for this shift
     const pkg = packageId || user.defaultPackageId || null;
@@ -238,9 +244,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await SecureStore.setItemAsync('activePackageId', pkg);
       setActivePackageId(pkg);
     }
-    const startTime = new Date().toISOString();
-    setShiftActive(true);
-    setShiftStartTime(startTime);
     console.log('[AuthContext] Shift started for:', user.displayName, 'package:', pkg || 'none');
   }, [user]);
 
