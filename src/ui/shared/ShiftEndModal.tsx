@@ -153,7 +153,7 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
           {/* Buttons */}
           <View style={s.buttons}>
             <Pressable
-              onPress={handleReturnToYard}
+              onPressIn={hasOdometer ? handleReturnToYard : undefined}
               disabled={!hasOdometer}
               style={[s.btn, s.btnReturn, !hasOdometer && { opacity: 0.4 }]}
             >
@@ -161,14 +161,14 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
               <Text style={s.btnReturnText}>Return to Yard</Text>
             </Pressable>
             <Pressable
-              onPress={handleEndHere}
+              onPressIn={hasOdometer ? handleEndHere : undefined}
               disabled={!hasOdometer}
               style={[s.btn, s.btnEndHere, !hasOdometer && { opacity: 0.4 }]}
             >
               <MaterialCommunityIcons name="map-marker-check" size={18} color={colors.status.online} />
               <Text style={s.btnEndHereText}>I'm Already at the Yard</Text>
             </Pressable>
-            <Pressable onPress={onClose} style={[s.btn, s.btnCancel]}>
+            <Pressable onPressIn={onClose} style={[s.btn, s.btnCancel]}>
               <Text style={s.btnCancelText}>Cancel</Text>
             </Pressable>
           </View>
