@@ -20,6 +20,12 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius } from '@/core/theme';
+import { useAuth } from '@/core/context/AuthContext';
+import {
+  fetchTodayInvoices,
+  fetchTodayShift,
+  calculateDaySummary,
+} from '@/core/services/daySummary';
 
 interface ShiftEndModalProps {
   visible: boolean;
@@ -44,20 +50,48 @@ function formatShiftDuration(startIso: string | null): string {
 }
 
 export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndHere, shiftStartTime }: ShiftEndModalProps) {
+  const { user } = useAuth();
   const [endOdometer, setEndOdometer] = useState('');
   const [startOdometer, setStartOdometer] = useState('');
   const [totalMiles, setTotalMiles] = useState('');
+  const [estimatedMiles, setEstimatedMiles] = useState<number | null>(null);
 
-  // Load start odometer on open
+  // Load start odometer + estimate end from GPS breadcrumbs
   useEffect(() => {
     if (!visible) return;
     setEndOdometer('');
     setTotalMiles('');
+    setEstimatedMiles(null);
     (async () => {
       const startOdo = await AsyncStorage.getItem('wellbuilt-shift-start-odometer').catch(() => null);
       setStartOdometer(startOdo || '');
+
+      // Estimate end odometer from GPS drive miles
+      if (user) {
+        try {
+          const driverName = user.legalName || user.displayName;
+          const [invoices, shift] = await Promise.all([
+            fetchTodayInvoices(driverName, user.companyId),
+            fetchTodayShift(user.driverId),
+          ]);
+          const summary = calculateDaySummary(invoices, shift?.events || []);
+          if (summary.driveMiles > 0) {
+            setEstimatedMiles(summary.driveMiles);
+            // Pre-fill end odometer if we have a start
+            if (startOdo) {
+              const startNum = parseFloat(startOdo.replace(/,/g, ''));
+              if (!isNaN(startNum)) {
+                const estimated = Math.round(startNum + summary.driveMiles);
+                setEndOdometer(String(estimated));
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[ShiftEndModal] Failed to estimate miles:', err);
+        }
+      }
     })();
-  }, [visible]);
+  }, [visible, user]);
 
   // Auto-calculate total miles
   useEffect(() => {
@@ -87,6 +121,7 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
     onEndHere(endOdometer.trim(), totalMiles);
   }, [endOdometer, totalMiles, handleSaveOdometer, onEndHere]);
 
+  const hasOdometer = endOdometer.trim().length > 0;
   const shiftDuration = formatShiftDuration(shiftStartTime);
 
   return (
@@ -140,13 +175,28 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, onEndH
             ) : null}
           </View>
 
+          {/* GPS estimate hint */}
+          {estimatedMiles !== null && (
+            <Text style={s.estimateHint}>
+              GPS estimate: ~{estimatedMiles} mi driven this shift
+            </Text>
+          )}
+
           {/* Buttons */}
           <View style={s.buttons}>
-            <Pressable onPress={handleReturnToYard} style={[s.btn, s.btnReturn]}>
+            <Pressable
+              onPress={handleReturnToYard}
+              disabled={!hasOdometer}
+              style={[s.btn, s.btnReturn, !hasOdometer && { opacity: 0.4 }]}
+            >
               <MaterialCommunityIcons name="truck" size={20} color="#000" />
               <Text style={s.btnReturnText}>Return to Yard</Text>
             </Pressable>
-            <Pressable onPress={handleEndHere} style={[s.btn, s.btnEndHere]}>
+            <Pressable
+              onPress={handleEndHere}
+              disabled={!hasOdometer}
+              style={[s.btn, s.btnEndHere, !hasOdometer && { opacity: 0.4 }]}
+            >
               <MaterialCommunityIcons name="map-marker-check" size={18} color={colors.status.online} />
               <Text style={s.btnEndHereText}>I'm Already at the Yard</Text>
             </Pressable>
@@ -276,6 +326,12 @@ const s = StyleSheet.create({
     fontSize: 10,
   },
 
+  estimateHint: {
+    color: colors.text.muted,
+    fontSize: 11,
+    fontStyle: 'italic',
+    marginTop: 6,
+  },
   // Buttons
   buttons: {
     gap: 8,
