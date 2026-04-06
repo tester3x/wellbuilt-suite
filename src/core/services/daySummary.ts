@@ -321,9 +321,12 @@ export function calculateDaySummary(
   invoices: DaySummaryInvoice[],
   shiftEvents: TimelineEvent[],
 ): DaySummary {
-  // Extract shift bookends first — needed to filter invoices
-  const loginEvt = shiftEvents.find(e => e.type === 'login');
-  const logoutEvt = shiftEvents.find(e => e.type === 'logout');
+  // Extract shift bookends — use the LAST login/logout pair (multiple shifts per day
+  // append events via arrayUnion, so the first login is the earliest shift, not current).
+  const logins = shiftEvents.filter(e => e.type === 'login');
+  const logouts = shiftEvents.filter(e => e.type === 'logout');
+  const loginEvt = logins[logins.length - 1] || null;
+  const logoutEvt = logouts[logouts.length - 1] || null;
 
   // Filter invoices to only those within the shift window.
   // Without a shift, show all (backwards compat). With a shift, only count
