@@ -153,7 +153,7 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
               onToggle={() => setPostTripDone(v => !v)}
             />
             <CheckItem
-              label="All paperwork and jobs closed in app"
+              label="All paperwork completed"
               checked={paperworkDone}
               onToggle={() => setPaperworkDone(v => !v)}
             />
