@@ -3,10 +3,11 @@
 // Same profile path as WB T: drivers/approved/{hash}/profile/
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Image, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import SignatureModal from '@/core/components/SignatureModal';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
@@ -41,6 +42,8 @@ export default function SettingsScreen() {
   const [cdl, setCdl] = useState('');
   const [truckNumber, setTruckNumber] = useState('');
   const [trailerNumber, setTrailerNumber] = useState('');
+  const [signatureBase64, setSignatureBase64] = useState<string | null>(null);
+  const [showSignatureModal, setShowSignatureModal] = useState(false);
   const phoneRef = useRef<TextInput>(null);
   const cdlRef = useRef<TextInput>(null);
   const truckRef = useRef<TextInput>(null);
@@ -70,6 +73,7 @@ export default function SettingsScreen() {
         setLegalName(p.legalName || p.displayName || '');
         setPhone(p.phone || '');
         setCdl(p.cdl || '');
+        if (p.signature) setSignatureBase64(p.signature);
       } else {
         // No profile yet — use auth legalName or fall back to displayName
         setLegalName(user?.legalName || user?.displayName || '');
@@ -292,15 +296,34 @@ export default function SettingsScreen() {
               </View>
             </View>
           ) : null}
-          {profile?.signature ? (
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Signature</Text>
-              <View style={styles.signaturePreview}>
-                <Text style={styles.signatureOnFile}>Signature on file</Text>
-                <MaterialCommunityIcons name="check-circle" size={16} color="#34D399" />
-              </View>
-            </View>
-          ) : null}
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Signature</Text>
+            {signatureBase64 ? (
+              <TouchableOpacity onPress={() => setShowSignatureModal(true)} activeOpacity={0.8}>
+                <View style={styles.signaturePreview}>
+                  <Image
+                    source={{ uri: `data:image/png;base64,${signatureBase64}` }}
+                    style={{ height: 60, width: '100%', borderRadius: 4 }}
+                    resizeMode="contain"
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, paddingHorizontal: 4 }}>
+                  <Text style={{ color: colors.text.muted, fontSize: 12 }}>{legalName || user?.displayName || ''}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <MaterialCommunityIcons name="pencil-outline" size={12} color={colors.text.accent} />
+                    <Text style={{ color: colors.text.accent, fontSize: 12 }}>Re-sign</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={() => setShowSignatureModal(true)} activeOpacity={0.7}>
+                <View style={[styles.signaturePreview, { justifyContent: 'center', alignItems: 'center', height: 60 }]}>
+                  <MaterialCommunityIcons name="pencil-outline" size={18} color={colors.text.accent} />
+                  <Text style={{ color: colors.text.accent, fontSize: 13, marginLeft: 6 }}>Tap to sign</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* ── Vehicle & Equipment ── */}
@@ -400,6 +423,22 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
+
+      <SignatureModal
+        visible={showSignatureModal}
+        onClose={() => setShowSignatureModal(false)}
+        onSave={async (base64) => {
+          setSignatureBase64(base64);
+          // Save to Firebase profile immediately
+          if (hash) {
+            try {
+              await saveDriverProfile(hash, { signature: base64 });
+              setProfile(prev => prev ? { ...prev, signature: base64 } : null);
+            } catch {}
+          }
+        }}
+        accent={colors.text.accent}
+      />
     </View>
   );
 }
