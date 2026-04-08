@@ -400,7 +400,15 @@ export function calculateDaySummary(
   }
 
   // Drive / on-site / distance from unified timeline
-  const { driveMinutes, onSiteMinutes, driveMiles } = calculateDriveAndOnSiteTime(timeline);
+  const { driveMinutes, onSiteMinutes, driveMiles: haversineMiles } = calculateDriveAndOnSiteTime(timeline);
+
+  // Prefer invoice-accumulated driveMiles (Directions API road distance) over Haversine
+  const invoiceMiles = shiftInvoices.reduce((sum, inv) => {
+    const miles = (inv as any).driveMiles || (inv as any).driveDistanceMiles || 0;
+    return sum + miles;
+  }, 0);
+  const driveMiles = invoiceMiles > 0 ? Math.round(invoiceMiles * 10) / 10 : haversineMiles;
+
   const driveHours = driveMinutes / 60;
   const avgSpeedMph = driveHours > 0 && driveMiles > 0
     ? Math.round(driveMiles / driveHours)

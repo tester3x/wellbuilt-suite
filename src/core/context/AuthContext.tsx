@@ -18,6 +18,7 @@ import {
   firebasePatch,
 } from '../services/driverAuth';
 import { recordShiftEvent, checkShiftOnResume, saveYardLocation } from '../services/shiftTracking';
+import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { cascadeLogoutToSSOApps, clearSSOLaunchedApps } from '../services/appLauncher';
 
@@ -198,6 +199,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.assignedRoutes,
         result.defaultPackageId
       );
+      // Pre-load profile + vehicle info from Firebase (fire-and-forget)
+      // So truck/trailer/signature are ready for SSO deep links + shift start
+      loadDriverProfile(result.passcodeHash).catch(() => {});
+      loadVehicleInfo(result.passcodeHash).catch(() => {});
+
       // New login = clean slate. Clear stale flags + SSO tracking from previous session.
       await SecureStore.deleteItemAsync('shiftEnded');
       await SecureStore.deleteItemAsync('shiftStarted');
