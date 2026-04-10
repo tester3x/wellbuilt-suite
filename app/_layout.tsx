@@ -11,6 +11,7 @@ import { AuthProvider } from '@/core/context/AuthContext';
 
 import { FirstLaunchProvider } from '@/core/context/FirstLaunchContext';
 import { OfflineBanner } from '@/core/components/OfflineBanner';
+import AppSwitcher from '@/core/components/AppSwitcher';
 import { colors } from '@/core/theme';
 import { allSkins, defaultSkinId } from '@/ui/skins';
 import { startConnectivityMonitor, stopConnectivityMonitor } from '@/core/services/connectivity';
@@ -47,6 +48,7 @@ export default function RootLayout() {
             <View style={styles.container}>
               <StatusBar style="light" />
               <OfflineBanner />
+              <AppSwitcher selfScheme="wellbuilt-suite" />
               <Stack
                 screenOptions={{
                   headerShown: false,
