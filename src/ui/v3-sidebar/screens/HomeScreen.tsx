@@ -34,8 +34,8 @@ export default function HomeScreen() {
     return true;
   });
 
-  const handleArrived = useCallback(async () => {
-    await confirmArrival();
+  const handleArrived = useCallback(async (odometerMiles?: number) => {
+    await confirmArrival(odometerMiles);
     router.push('/day-summary');
   }, [confirmArrival]);
 

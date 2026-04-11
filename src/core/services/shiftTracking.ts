@@ -321,6 +321,23 @@ export async function fetchLastYardLocation(
 }
 
 /**
+ * Write odometer miles to today's shift doc for Day Summary.
+ */
+export async function writeOdometerMiles(driverId: string, miles: number): Promise<void> {
+  const date = todayStr();
+  const patchUrl = `https://firestore.googleapis.com/v1/${docPath(driverId, date)}?updateMask.fieldPaths=odometerMiles&key=${FIREBASE_API_KEY}`;
+  await fetch(patchUrl, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fields: {
+        odometerMiles: { integerValue: String(miles) },
+      },
+    }),
+  });
+}
+
+/**
  * Save the current logout GPS as the yard location cache.
  * Called after confirmArrival() records the logout event.
  */

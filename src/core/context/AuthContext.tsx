@@ -62,7 +62,7 @@ interface AuthContextType {
   /** Start the return-to-yard drive (captures GPS, writes depart_return event) */
   startReturn: () => Promise<void>;
   /** Confirm arrival at yard (captures GPS, writes logout event, ends shift) */
-  confirmArrival: () => Promise<void>;
+  confirmArrival: (odometerMiles?: number) => Promise<void>;
   /** Register a new driver (goes to pending state) */
   register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
@@ -265,11 +265,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log('[AuthContext] Return to yard started for:', user.displayName);
   }, [user]);
 
-  const confirmArrival = useCallback(async () => {
+  const confirmArrival = useCallback(async (odometerMiles?: number) => {
     if (!user) return;
     // Record logout GPS event (arrival at yard = shift end)
     // Must await so day-summary screen can read the shift end time
     await recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
+    // Write odometer miles to shift doc for Day Summary
+    if (odometerMiles != null && odometerMiles > 0) {
+      const { writeOdometerMiles } = await import('../services/shiftTracking');
+      writeOdometerMiles(user.driverId, odometerMiles).catch(() => {});
+    }
     // Cache this GPS as "the yard" for next shift's en route destination
     try {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });

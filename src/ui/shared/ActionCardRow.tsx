@@ -23,7 +23,7 @@ interface ActionCardRowProps {
   shiftStartTime: string | null;
   onStartShift: (packageId?: string) => Promise<void>;
   onStartReturn: () => Promise<void>;
-  onArrived: () => Promise<void>;
+  onArrived: (odometerMiles?: number) => Promise<void>;
 }
 
 function formatElapsed(startIso: string): string {
@@ -159,7 +159,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         <ShiftArrivalModal
           visible={showArrivalModal}
           onClose={() => setShowArrivalModal(false)}
-          onConfirm={() => { setShowArrivalModal(false); onArrived(); }}
+          onConfirm={(miles) => { setShowArrivalModal(false); onArrived(miles); }}
           returnStartTime={returnStartTime}
         />
       </View>

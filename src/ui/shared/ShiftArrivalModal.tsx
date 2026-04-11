@@ -21,7 +21,7 @@ import { colors, radius } from '@/core/theme';
 interface ShiftArrivalModalProps {
   visible: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (odometerMiles?: number) => void;
   returnStartTime: string | null;
 }
 
@@ -88,8 +88,10 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
     if (endOdometer.trim()) {
       await AsyncStorage.setItem('wellbuilt-last-odometer', endOdometer.trim()).catch(() => {});
     }
-    onConfirm();
-  }, [endOdometer, onConfirm]);
+    // Pass odometer miles to parent so it can write to Firestore shift doc
+    const miles = totalMiles ? parseInt(totalMiles, 10) : undefined;
+    onConfirm(miles);
+  }, [endOdometer, totalMiles, onConfirm]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>

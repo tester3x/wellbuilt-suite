@@ -95,7 +95,7 @@ export default function DaySummaryScreen() {
           fetchTodayInvoices(driverName, user.companyId),
           fetchTodayShift(user.driverId),
         ]);
-        const result = calculateDaySummary(invoices, shift?.events || []);
+        const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles);
         setSummary(result);
       } catch (err) {
         console.warn('[DaySummary] Failed to load data:', err);
@@ -180,9 +180,15 @@ export default function DaySummaryScreen() {
                 color="#F97316"
               />
               <StatCard
-                icon="hard-hat"
-                label="On-Site"
-                value={formatDuration(summary.onSiteMinutes)}
+                icon="arrow-down-bold-circle"
+                label="At Pickup"
+                value={formatDuration(summary.pickupMinutes)}
+                color="#34D399"
+              />
+              <StatCard
+                icon="arrow-up-bold-circle"
+                label="At Drop-off"
+                value={formatDuration(summary.dropoffMinutes)}
                 color="#A78BFA"
               />
               {summary.driveMiles > 0 && (

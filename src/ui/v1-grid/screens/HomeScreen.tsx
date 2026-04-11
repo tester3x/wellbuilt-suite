@@ -39,8 +39,8 @@ export default function HomeScreen() {
   const showTierBanner = companyConfig && companyConfig.tier !== 'suite';
   const enabledCount = companyApps.filter(a => isWBAppEnabled(a.id)).length;
 
-  const handleArrived = useCallback(async () => {
-    await confirmArrival();
+  const handleArrived = useCallback(async (odometerMiles?: number) => {
+    await confirmArrival(odometerMiles);
     router.push('/day-summary');
   }, [confirmArrival]);
 

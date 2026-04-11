@@ -38,6 +38,8 @@ export interface DaySummary {
   totalHoursWorked: number;
   driveMinutes: number;
   onSiteMinutes: number;
+  pickupMinutes: number;
+  dropoffMinutes: number;
   driveMiles: number;
   avgSpeedMph: number;
   shiftStart: string | null;
@@ -66,10 +68,14 @@ interface UnifiedEvent {
 function calculateDriveAndOnSiteTime(timeline: UnifiedEvent[]): {
   driveMinutes: number;
   onSiteMinutes: number;
+  pickupMinutes: number;
+  dropoffMinutes: number;
   driveMiles: number;
 } {
   let driveMs = 0;
   let onSiteMs = 0;
+  let pickupMs = 0;
+  let dropoffMs = 0;
   let driveMeters = 0;
 
   for (let i = 0; i < timeline.length - 1; i++) {
@@ -85,7 +91,15 @@ function calculateDriveAndOnSiteTime(timeline: UnifiedEvent[]): {
     if ((curr.type === 'depart' || curr.type === 'depart_site') && next.type === 'arrive') {
       driveMs += diffMs;
       isDrive = true;
-    } else if (curr.type === 'login' && next.type === 'depart') {
+    } else if (curr.type === 'accept' && next.type === 'arrive') {
+      // Driving to well after accepting job
+      driveMs += diffMs;
+      isDrive = true;
+    } else if (curr.type === 'close' && next.type === 'accept') {
+      // Driving from SWD to next well (between jobs)
+      driveMs += diffMs;
+      isDrive = true;
+    } else if (curr.type === 'login' && (next.type === 'depart' || next.type === 'accept')) {
       driveMs += diffMs;
       isDrive = true;
     } else if (curr.type === 'depart_return' && next.type === 'logout') {
@@ -96,6 +110,12 @@ function calculateDriveAndOnSiteTime(timeline: UnifiedEvent[]): {
       isDrive = true;
     } else if (curr.type === 'arrive' && (next.type === 'depart_site' || next.type === 'close')) {
       onSiteMs += diffMs;
+      // arrive→depart_site = at pickup (loading), arrive→close = at drop-off (unloading)
+      if (next.type === 'depart_site') {
+        pickupMs += diffMs;
+      } else {
+        dropoffMs += diffMs;
+      }
     }
 
     if (isDrive && curr.lat && curr.lng && next.lat && next.lng) {
@@ -106,6 +126,8 @@ function calculateDriveAndOnSiteTime(timeline: UnifiedEvent[]): {
   return {
     driveMinutes: Math.round(driveMs / 60000),
     onSiteMinutes: Math.round(onSiteMs / 60000),
+    pickupMinutes: Math.round(pickupMs / 60000),
+    dropoffMinutes: Math.round(dropoffMs / 60000),
     driveMiles: Math.round(driveMeters / 1609.34 * 10) / 10,
   };
 }
@@ -305,7 +327,8 @@ export async function fetchTodayShift(
       };
     });
 
-    return { events };
+    const odometerMiles = parseFirestoreValue(doc.fields?.odometerMiles) || 0;
+    return { events, odometerMiles };
   } catch (err) {
     console.warn('[daySummary] Failed to fetch shift:', err);
     return null;
@@ -320,6 +343,7 @@ export async function fetchTodayShift(
 export function calculateDaySummary(
   invoices: DaySummaryInvoice[],
   shiftEvents: TimelineEvent[],
+  odometerMiles?: number,
 ): DaySummary {
   // Extract shift bookends — use the LAST login/logout pair (multiple shifts per day
   // append events via arrayUnion, so the first login is the earliest shift, not current).
@@ -400,14 +424,16 @@ export function calculateDaySummary(
   }
 
   // Drive / on-site / distance from unified timeline
-  const { driveMinutes, onSiteMinutes, driveMiles: haversineMiles } = calculateDriveAndOnSiteTime(timeline);
+  const { driveMinutes, onSiteMinutes, pickupMinutes, dropoffMinutes, driveMiles: haversineMiles } = calculateDriveAndOnSiteTime(timeline);
 
-  // Prefer invoice-accumulated driveMiles (Directions API road distance) over Haversine
+  // Prefer odometer (most accurate) > invoice Directions API > Haversine
   const invoiceMiles = shiftInvoices.reduce((sum, inv) => {
     const miles = (inv as any).driveMiles || (inv as any).driveDistanceMiles || 0;
     return sum + miles;
   }, 0);
-  const driveMiles = invoiceMiles > 0 ? Math.round(invoiceMiles * 10) / 10 : haversineMiles;
+  const driveMiles = (odometerMiles && odometerMiles > 0)
+    ? odometerMiles
+    : (invoiceMiles > 0 ? Math.round(invoiceMiles * 10) / 10 : haversineMiles);
 
   const driveHours = driveMinutes / 60;
   const avgSpeedMph = driveHours > 0 && driveMiles > 0
@@ -421,6 +447,8 @@ export function calculateDaySummary(
     totalHoursWorked,
     driveMinutes,
     onSiteMinutes,
+    pickupMinutes,
+    dropoffMinutes,
     driveMiles,
     avgSpeedMph,
     shiftStart: loginEvt?.timestamp || null,
