@@ -44,11 +44,14 @@ export const TIER_ORDER: Tier[] = ['field-basics', 'full-field', 'suite'];
 
 // ── Company config interface ──────────────────────────────────
 
+export type JsaMode = 'off' | 'per_shift' | 'per_location' | 'per_load';
+
 export interface CompanyConfig {
   tier: Tier;
   enabledApps: WBAppId[];
   name: string;
   requiredApps: string[]; // BYOA app IDs
+  jsaMode?: JsaMode;
   logoUrl?: string;
   primaryColor?: string;
   phone?: string;
@@ -123,11 +126,13 @@ export async function fetchCompanyConfig(companyId: string): Promise<CompanyConf
     const tier: Tier = (TIER_ALIAS[rawTier] || rawTier) as Tier;
     const explicitApps = parseStrArray(f.enabledApps) as WBAppId[];
 
+    const jsaModeRaw = parseStr(f.jsaMode) || 'off';
     const config: CompanyConfig = {
       tier,
       enabledApps: explicitApps.length > 0 ? explicitApps : (TIER_APPS[tier] || TIER_APPS['suite']),
       name: parseStr(f.name),
       requiredApps: parseStrArray(f.requiredApps),
+      jsaMode: (['off', 'per_shift', 'per_location', 'per_load'].includes(jsaModeRaw) ? jsaModeRaw : 'off') as JsaMode,
       logoUrl: parseStr(f.logoUrl) || undefined,
       primaryColor: parseStr(f.primaryColor) || undefined,
       phone: parseStr(f.phone) || undefined,

@@ -10,9 +10,13 @@ interface AppListItemProps {
   app: WellBuiltApp;
   onPress: () => void;
   onLongPress?: () => void;
+  /** Optional badge text (e.g. "3 pending") shown below subtitle */
+  badge?: string;
+  /** Optional detail text shown below badge (e.g. well names) */
+  badgeDetail?: string;
 }
 
-export function AppListItem({ app, onPress, onLongPress }: AppListItemProps) {
+export function AppListItem({ app, onPress, onLongPress, badge, badgeDetail }: AppListItemProps) {
   const { t } = useTranslation();
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
 
@@ -24,6 +28,14 @@ export function AppListItem({ app, onPress, onLongPress }: AppListItemProps) {
       <View style={styles.info}>
         <Text style={styles.name}>{app.name}</Text>
         <Text style={styles.subtitle}>{app.subtitle}</Text>
+        {badge ? (
+          <View style={styles.badgeRow}>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{badge}</Text>
+            </View>
+            {badgeDetail ? <Text style={styles.badgeDetail} numberOfLines={1}>{badgeDetail}</Text> : null}
+          </View>
+        ) : null}
       </View>
       <View style={styles.right}>
         <View style={styles.statusRow}>
@@ -49,4 +61,8 @@ const styles = StyleSheet.create({
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusText: { ...typography.caption, color: colors.text.muted, fontSize: 10 },
   version: { ...typography.caption, color: colors.text.muted, fontSize: 10, marginTop: 2 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  badge: { backgroundColor: '#FBBF2420', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  badgeText: { fontSize: 11, fontWeight: '600', color: '#FBBF24' },
+  badgeDetail: { ...typography.caption, color: colors.text.muted, fontSize: 11, flex: 1 },
 });

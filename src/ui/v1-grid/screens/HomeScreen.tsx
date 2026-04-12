@@ -1,5 +1,5 @@
-import React, { useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert, TouchableOpacity, AppState } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,6 +43,69 @@ export default function HomeScreen() {
     await confirmArrival(odometerMiles);
     router.push('/day-summary');
   }, [confirmArrival]);
+
+  // ── JSA shift-start gate ──────────────────────────────────────
+  const jsaMode = companyConfig?.jsaMode || 'off';
+  const jsaRequired = jsaMode !== 'off';
+  const [jsaPending, setJsaPending] = useState(false);
+
+  // Check Firestore for today's JSA completion when shift is active
+  const checkJsaCompletion = useCallback(async () => {
+    if (!jsaRequired || !shiftActive || !user) return;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const driverName = user.legalName || user.displayName;
+      const url = `https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents:runQuery?key=AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI`;
+      const body = {
+        structuredQuery: {
+          from: [{ collectionId: 'jsas' }],
+          where: {
+            compositeFilter: {
+              op: 'AND',
+              filters: [
+                { fieldFilter: { field: { fieldPath: 'driverName' }, op: 'EQUAL', value: { stringValue: driverName } } },
+                { fieldFilter: { field: { fieldPath: 'date' }, op: 'EQUAL', value: { stringValue: today } } },
+              ],
+            },
+          },
+          limit: 1,
+        },
+      };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) return;
+      const results = await res.json();
+      const found = results.some((r: any) => r.document);
+      setJsaPending(!found);
+    } catch {
+      // Network error — don't block, just leave pending state as-is
+    }
+  }, [jsaRequired, shiftActive, user]);
+
+  // Check on mount, foreground resume, and when shift becomes active
+  useEffect(() => {
+    if (!jsaRequired || !shiftActive) {
+      setJsaPending(false);
+      return;
+    }
+    setJsaPending(true); // Assume pending until we confirm
+    checkJsaCompletion();
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkJsaCompletion();
+    });
+    return () => sub.remove();
+  }, [jsaRequired, shiftActive, checkJsaCompletion]);
+
+  const handleJsaLaunch = useCallback(() => {
+    launchWBApp({
+      name: 'WB JSA',
+      scheme: 'jsaapp',
+      androidPackage: 'com.syconik801.jsaapp',
+    });
+  }, [launchWBApp]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -95,7 +158,17 @@ export default function HomeScreen() {
           </View>
         )}
 
-        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
+        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} jsaMode={jsaMode} jsaPending={jsaPending} onJsaLaunch={handleJsaLaunch} />
+
+        {/* 🔴 DEBUG: Admin-only Day Summary preview — REMOVE BEFORE PRODUCTION */}
+        {user?.isAdmin && (
+          <TouchableOpacity
+            onPress={() => router.push('/day-summary')}
+            style={{ alignSelf: 'center', backgroundColor: '#ef4444', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, marginVertical: 12 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🔴 TEST Day Summary</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>

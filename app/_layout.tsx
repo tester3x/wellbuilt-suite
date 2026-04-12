@@ -48,7 +48,7 @@ export default function RootLayout() {
             <View style={styles.container}>
               <StatusBar style="light" />
               <OfflineBanner />
-              <AppSwitcher selfScheme="wellbuilt-suite" />
+              {/* AppSwitcher removed — WB S IS the hub, has all apps already */}
               <Stack
                 screenOptions={{
                   headerShown: false,

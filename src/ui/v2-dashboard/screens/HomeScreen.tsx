@@ -1,5 +1,5 @@
-import React, { useCallback } from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView, AppState } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +12,7 @@ import { AppListItem } from '../components/AppListItem';
 import { WidgetContainer } from '../components/WidgetContainer';
 import { SystemStatusBar } from '../components/SystemStatusBar';
 import { ActionCardRow } from '@/ui/shared/ActionCardRow';
+import { fetchPendingDispatches, DispatchSummary } from '@/core/services/dispatchJobs';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -20,6 +21,31 @@ export default function HomeScreen() {
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
+
+  // Pending dispatch jobs for Tickets card badge
+  const [dispatches, setDispatches] = useState<DispatchSummary[]>([]);
+  const lastFetchRef = useRef<number>(0);
+  const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  const refreshDispatches = useCallback(async () => {
+    if (!user?.passcodeHash) return;
+    if (Date.now() - lastFetchRef.current < CACHE_TTL) return;
+    lastFetchRef.current = Date.now();
+    const results = await fetchPendingDispatches(user.passcodeHash);
+    setDispatches(results);
+  }, [user?.passcodeHash]);
+
+  // Fetch on mount + foreground resume
+  useEffect(() => {
+    refreshDispatches();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        lastFetchRef.current = 0; // force refresh on foreground
+        refreshDispatches();
+      }
+    });
+    return () => sub.remove();
+  }, [refreshDispatches]);
 
   React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
   if (!user) return null;
@@ -54,12 +80,34 @@ export default function HomeScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
 
+        {/* 🔴 DEBUG: Admin-only Day Summary preview — REMOVE BEFORE PRODUCTION */}
+        {user?.isAdmin && (
+          <Pressable
+            onPress={() => router.push('/day-summary')}
+            style={{ alignSelf: 'center', backgroundColor: '#ef4444', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, marginBottom: 12 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🔴 TEST Day Summary</Text>
+          </Pressable>
+        )}
+
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}
         >
           <View style={styles.appList}>
-            {companyApps.map(app => (
+            {companyApps.map(app => {
+              // Build badge props for Tickets card
+              const isTickets = app.id === 'water-ticket';
+              const badgeText = isTickets && dispatches.length > 0
+                ? `${dispatches.length} pending`
+                : undefined;
+              const badgeDetailText = isTickets && dispatches.length > 0 && dispatches.length <= 3
+                ? dispatches.map(d => d.wellName).join(', ')
+                : undefined;
+
+              return (
               <AppListItem key={app.id} app={app}
+                badge={badgeText}
+                badgeDetail={badgeDetailText}
                 onPress={() => {
                   if (hasLaunched(app.id)) {
                     launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
@@ -69,7 +117,8 @@ export default function HomeScreen() {
                 }}
                 onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
               />
-            ))}
+              );
+            })}
           </View>
         </WidgetContainer>
 

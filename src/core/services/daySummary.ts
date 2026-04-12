@@ -31,10 +31,17 @@ interface DaySummaryInvoice {
   createdAt: string;
 }
 
+export interface WellStat {
+  name: string;
+  bbls: number;
+  loads: number;
+}
+
 export interface DaySummary {
   totalLoads: number;
   totalBBL: number;
   wellsVisited: string[];
+  wellStats: WellStat[];
   totalHoursWorked: number;
   driveMinutes: number;
   onSiteMinutes: number;
@@ -408,11 +415,23 @@ export function calculateDaySummary(
   const totalLoads = shiftInvoices.length;
   const totalBBL = shiftInvoices.reduce((sum, i) => sum + i.totalBBL, 0);
 
-  // Unique wells visited during shift
+  // Unique wells visited during shift + per-well BBL/load stats
   const wellSet = new Set<string>();
+  const wellMap = new Map<string, { bbls: number; loads: number }>();
   for (const inv of shiftInvoices) {
-    if (inv.wellName) wellSet.add(inv.wellName);
+    if (inv.wellName) {
+      wellSet.add(inv.wellName);
+      const existing = wellMap.get(inv.wellName) || { bbls: 0, loads: 0 };
+      existing.bbls += inv.totalBBL;
+      existing.loads += 1;
+      wellMap.set(inv.wellName, existing);
+    }
   }
+  const wellStats: WellStat[] = Array.from(wellMap.entries()).map(([name, stat]) => ({
+    name,
+    bbls: Math.round(stat.bbls),
+    loads: stat.loads,
+  }));
 
   // Total hours worked = shift start to shift end (or now if shift still open)
   let totalHoursWorked = 0;
@@ -444,6 +463,7 @@ export function calculateDaySummary(
     totalLoads,
     totalBBL,
     wellsVisited: Array.from(wellSet),
+    wellStats,
     totalHoursWorked,
     driveMinutes,
     onSiteMinutes,

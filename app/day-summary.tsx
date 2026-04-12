@@ -51,21 +51,77 @@ function formatDuration(minutes: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-interface StatCardProps {
-  icon: string;
+// ── Time breakdown bar colors ────────────────────────────────────────────────
+const BAR_COLORS = {
+  drive:   '#3b82f6',
+  pickup:  '#22c55e',
+  dropoff: '#8b5cf6',
+  yard:    '#f59e0b',
+  other:   '#6b7280',
+} as const;
+
+interface TimeBarProps {
   label: string;
-  value: string;
-  color?: string;
+  minutes: number;
+  totalMinutes: number;
+  color: string;
 }
 
-function StatCard({ icon, label, value, color = colors.brand.primary }: StatCardProps) {
+function TimeBar({ label, minutes, totalMinutes, color }: TimeBarProps) {
+  const pct = totalMinutes > 0 ? Math.max((minutes / totalMinutes) * 100, 2) : 0;
   return (
-    <View style={s.statCard}>
-      <MaterialCommunityIcons name={icon as any} size={22} color={color} />
-      <Text style={s.statValue}>{value}</Text>
-      <Text style={s.statLabel}>{label}</Text>
+    <View style={s.timeBarRow}>
+      <View style={s.timeBarHeader}>
+        <Text style={[s.timeBarLabel, { color }]}>{label}</Text>
+        <Text style={s.timeBarValue}>{formatDuration(minutes)}</Text>
+      </View>
+      <View style={[s.timeBarTrack, { backgroundColor: color + '26' }]}>
+        <View style={[s.timeBarFill, { width: `${pct}%`, backgroundColor: color }]} />
+      </View>
     </View>
   );
+}
+
+// ── DEBUG: Mock data for layout testing ─────────────────────────────────────
+const DEV_TEST = true; // 🔴 REMOVE BEFORE PRODUCTION
+function randomMockSummary(): DaySummary {
+  const wells = ['GABRIEL 6-36-25TFH', 'THOR 1-31-30H', 'GABRIEL 2-36-25H', 'GABRIEL 7-36-25TFH', 'DAGGER 1-22-15H', 'RENEGADE 4-8-17TFH', 'IRONBANK 6-19-30H'];
+  const visitedCount = Math.floor(Math.random() * 4) + 2; // 2-5 wells
+  const shuffled = wells.sort(() => Math.random() - 0.5).slice(0, visitedCount);
+  // Generate per-well stats — some wells get multiple loads
+  const wellStats = shuffled.map(name => {
+    const loads = Math.random() > 0.6 ? 2 : 1; // 40% chance of 2 loads
+    const bblPerLoad = [120, 130, 140, 150, 160][Math.floor(Math.random() * 5)];
+    return { name, bbls: loads * bblPerLoad, loads };
+  });
+  const loads = wellStats.reduce((s, w) => s + w.loads, 0);
+  const driveMin = Math.floor(Math.random() * 120) + 180; // 180-300
+  const pickupMin = Math.floor(Math.random() * 15) + 5;   // 5-20
+  const dropoffMin = Math.floor(Math.random() * 10) + 3;  // 3-13
+  const otherMin = Math.floor(Math.random() * 40) + 15;   // 15-55
+  const totalMin = driveMin + pickupMin + dropoffMin + otherMin;
+  const totalHours = Math.round(totalMin / 6) / 10;
+  const miles = Math.round((Math.random() * 60 + 60) * 10) / 10; // 60-120
+  const now = new Date();
+  const startH = 6 + Math.floor(Math.random() * 3); // 6-8 AM
+  const start = new Date(now); start.setHours(startH, Math.floor(Math.random() * 30), 0);
+  const end = new Date(start.getTime() + totalMin * 60000);
+  const totalBBL = wellStats.reduce((s, w) => s + w.bbls, 0);
+  return {
+    totalLoads: loads,
+    totalBBL,
+    wellsVisited: shuffled,
+    wellStats,
+    totalHoursWorked: totalHours,
+    driveMinutes: driveMin,
+    onSiteMinutes: pickupMin + dropoffMin,
+    pickupMinutes: pickupMin,
+    dropoffMinutes: dropoffMin,
+    driveMiles: miles,
+    avgSpeedMph: Math.round(miles / (driveMin / 60)),
+    shiftStart: start.toISOString(),
+    shiftEnd: end.toISOString(),
+  };
 }
 
 export default function DaySummaryScreen() {
@@ -85,6 +141,12 @@ export default function DaySummaryScreen() {
   }, [router]);
 
   useEffect(() => {
+    // 🔴 DEBUG: Auto-load mock data when DEV_TEST is on
+    if (DEV_TEST) {
+      setSummary(randomMockSummary());
+      setLoading(false);
+      return;
+    }
     if (!user) return;
     (async () => {
       try {
@@ -140,6 +202,16 @@ export default function DaySummaryScreen() {
           {timeRange ? <Text style={s.timeRange}>{timeRange}</Text> : null}
         </View>
 
+        {/* 🔴 DEBUG: Test button — tap to load random realistic data */}
+        {DEV_TEST && (
+          <Pressable
+            onPress={() => { setSummary(randomMockSummary()); setLoading(false); }}
+            style={{ alignSelf: 'center', backgroundColor: '#ef4444', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, marginBottom: 16 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🔴 TEST — Random Data</Text>
+          </Pressable>
+        )}
+
         {loading ? (
           <View style={s.loadingContainer}>
             <ActivityIndicator size="large" color={colors.brand.primary} />
@@ -147,79 +219,85 @@ export default function DaySummaryScreen() {
           </View>
         ) : summary ? (
           <>
-            {/* Stats Grid */}
-            <View style={s.statsGrid}>
-              <StatCard
-                icon="truck-delivery"
-                label={t('daySummary.loads')}
-                value={String(summary.totalLoads)}
-                color={colors.status.online}
-              />
-              <StatCard
-                icon="water"
-                label={t('daySummary.bbls')}
-                value={String(Math.round(summary.totalBBL))}
-                color={colors.brand.primary}
-              />
-              <StatCard
-                icon="map-marker-multiple"
-                label={t('daySummary.wellsVisited')}
-                value={String(summary.wellsVisited.length)}
-                color={colors.brand.accent}
-              />
-              <StatCard
-                icon="clock-outline"
-                label={t('daySummary.hours')}
-                value={summary.totalHoursWorked > 0 ? `${summary.totalHoursWorked}h` : '0h'}
-                color={colors.status.warning}
-              />
-              <StatCard
-                icon="road-variant"
-                label="Drive Time"
-                value={formatDuration(summary.driveMinutes)}
-                color="#F97316"
-              />
-              <StatCard
-                icon="arrow-down-bold-circle"
-                label="At Pickup"
-                value={formatDuration(summary.pickupMinutes)}
-                color="#34D399"
-              />
-              <StatCard
-                icon="arrow-up-bold-circle"
-                label="At Drop-off"
-                value={formatDuration(summary.dropoffMinutes)}
-                color="#A78BFA"
-              />
-              {summary.driveMiles > 0 && (
-                <StatCard
-                  icon="map-marker-distance"
-                  label={t('daySummary.miles')}
-                  value={`${summary.driveMiles}`}
-                  color="#38BDF8"
-                />
-              )}
-              {summary.avgSpeedMph > 0 && (
-                <StatCard
-                  icon="speedometer"
-                  label="Avg Speed"
-                  value={`${summary.avgSpeedMph} mph`}
-                  color="#FB923C"
-                />
-              )}
-            </View>
-
-            {/* Wells Visited */}
-            {summary.wellsVisited.length > 0 && (
-              <View style={s.wellsSection}>
-                <Text style={s.sectionTitle}>{t('daySummary.wellsVisited')}</Text>
-                <View style={s.wellBadges}>
-                  {summary.wellsVisited.map((well, idx) => (
-                    <View key={idx} style={s.wellBadge}>
-                      <Text style={s.wellBadgeText}>{well}</Text>
-                    </View>
-                  ))}
+            {/* ── Time card ──────────────────────────────────────── */}
+            {(() => {
+              const totalMin = Math.round(summary.totalHoursWorked * 60);
+              const accountedMin = summary.driveMinutes + summary.pickupMinutes + summary.dropoffMinutes;
+              const otherMin = Math.max(totalMin - accountedMin, 0);
+              return totalMin > 0 ? (
+                <View style={s.timeSection}>
+                  <View style={s.cardHeader}>
+                    <Text style={s.sectionTitle}><MaterialCommunityIcons name="clock-outline" size={14} color={colors.text.secondary} />  TIME</Text>
+                    <Text style={s.cardTotal}>{summary.totalHoursWorked}h</Text>
+                  </View>
+                  <TimeBar label="Drive"     minutes={summary.driveMinutes}   totalMinutes={totalMin} color={BAR_COLORS.drive} />
+                  <TimeBar label="Pickup"    minutes={summary.pickupMinutes}  totalMinutes={totalMin} color={BAR_COLORS.pickup} />
+                  <TimeBar label="Drop-off"  minutes={summary.dropoffMinutes} totalMinutes={totalMin} color={BAR_COLORS.dropoff} />
+                  {otherMin > 0 && (
+                    <TimeBar label="Other" minutes={otherMin} totalMinutes={totalMin} color={BAR_COLORS.other} />
+                  )}
                 </View>
+              ) : null;
+            })()}
+
+            {/* ── Wells card ─────────────────────────────────────── */}
+            {summary.wellStats && summary.wellStats.length > 0 && (
+              <View style={s.timeSection}>
+                <View style={s.cardHeader}>
+                  <Text style={s.sectionTitle}><MaterialCommunityIcons name="oil" size={14} color={colors.text.secondary} />  WELLS</Text>
+                  <Text style={s.cardTotal}>
+                    {summary.totalLoads} loads · {Math.round(summary.totalBBL)} BBL
+                  </Text>
+                </View>
+                {summary.wellStats.map((well, idx) => {
+                  const pct = summary.totalBBL > 0 ? Math.max((well.bbls / summary.totalBBL) * 100, 3) : 0;
+                  const wellColors = ['#f59e0b', '#3b82f6', '#22c55e', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
+                  const color = wellColors[idx % wellColors.length];
+                  return (
+                    <View key={idx} style={s.timeBarRow}>
+                      <View style={s.timeBarHeader}>
+                        <Text style={[s.timeBarLabel, { color }]} numberOfLines={1}>{well.name}</Text>
+                        <Text style={s.timeBarValue}>
+                          {well.bbls} BBL
+                          <Text style={{ color: colors.text.muted, fontWeight: '400' }}> · {well.loads}x</Text>
+                        </Text>
+                      </View>
+                      <View style={[s.timeBarTrack, { backgroundColor: color + '26' }]}>
+                        <View style={[s.timeBarFill, { width: `${pct}%`, backgroundColor: color }]} />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* ── Miles card ─────────────────────────────────────── */}
+            {summary.driveMiles > 0 && (
+              <View style={s.timeSection}>
+                <View style={s.cardHeader}>
+                  <Text style={s.sectionTitle}><MaterialCommunityIcons name="map-marker-distance" size={14} color={colors.text.secondary} />  MILES</Text>
+                  <Text style={s.cardTotal}>{summary.driveMiles} mi</Text>
+                </View>
+                {summary.avgSpeedMph > 0 && (
+                  <View style={s.milesRow}>
+                    <View style={s.milesStat}>
+                      <Text style={s.milesValue}>{summary.avgSpeedMph}</Text>
+                      <Text style={s.milesLabel}>mph avg</Text>
+                    </View>
+                    {summary.driveMinutes > 0 && (
+                      <View style={s.milesStat}>
+                        <Text style={s.milesValue}>{formatDuration(summary.driveMinutes)}</Text>
+                        <Text style={s.milesLabel}>drive time</Text>
+                      </View>
+                    )}
+                    {summary.totalLoads > 0 && (
+                      <View style={s.milesStat}>
+                        <Text style={s.milesValue}>{Math.round(summary.driveMiles / summary.totalLoads * 10) / 10}</Text>
+                        <Text style={s.milesLabel}>mi/load</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             )}
 
@@ -293,32 +371,73 @@ const s = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
   },
-  statsGrid: {
+  // ── Card header (title left, total right) ────────
+  cardHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
   },
-  statCard: {
-    width: '47%',
+  cardTotal: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text.primary,
+  },
+  // ── Miles card stats row ────────────────────────
+  milesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingVertical: 4,
+  },
+  milesStat: {
+    alignItems: 'center',
+  },
+  milesValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.text.primary,
+  },
+  milesLabel: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+
+  // ── Time breakdown section ──────────────────────
+  timeSection: {
+    marginBottom: 28,
     backgroundColor: colors.bg.card,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
     borderColor: colors.border.subtle,
   },
-  statValue: {
-    fontSize: 28,
-    fontWeight: '700',
+  timeBarRow: {
+    marginBottom: 12,
+  },
+  timeBarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  timeBarLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  timeBarValue: {
+    fontSize: 14,
+    fontWeight: '600',
     color: colors.text.primary,
-    marginTop: 8,
   },
-  statLabel: {
-    fontSize: 13,
-    color: colors.text.muted,
-    marginTop: 2,
+  timeBarTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
-  wellsSection: {
-    marginTop: 24,
+  timeBarFill: {
+    height: 8,
+    borderRadius: 4,
   },
   sectionTitle: {
     fontSize: 14,
@@ -327,24 +446,6 @@ const s = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 12,
-  },
-  wellBadges: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  wellBadge: {
-    backgroundColor: colors.bg.elevated,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-  },
-  wellBadgeText: {
-    color: colors.text.primary,
-    fontSize: 13,
-    fontWeight: '500',
   },
   emptyState: {
     alignItems: 'center',

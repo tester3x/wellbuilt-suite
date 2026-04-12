@@ -4,13 +4,14 @@
 // odometer, and pre-trip checklist.
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, Pressable, Animated, Linking } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAppLauncher } from '@/core/hooks/useAppLauncher';
+import { type JsaMode } from '@/core/services/companyConfig';
 import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
@@ -24,6 +25,9 @@ interface ActionCardRowProps {
   onStartShift: (packageId?: string) => Promise<void>;
   onStartReturn: () => Promise<void>;
   onArrived: (odometerMiles?: number) => Promise<void>;
+  jsaMode?: JsaMode;
+  jsaPending?: boolean;
+  onJsaLaunch?: () => void;
 }
 
 function formatElapsed(startIso: string): string {
@@ -66,7 +70,7 @@ function getShiftColor(startIso: string | null): string {
   return '#34D399';
 }
 
-export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived }: ActionCardRowProps) {
+export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
   const [elapsed, setElapsed] = useState('0:00');
@@ -114,6 +118,11 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const handleStartConfirm = async (data: ShiftStartData) => {
     setShowStartModal(false);
     await onStartShift(data.packageId || undefined);
+    // If JSA mode is on, launch JSA app immediately after shift starts
+    if (jsaMode && jsaMode !== 'off' && onJsaLaunch) {
+      // Small delay so shift UI updates first
+      setTimeout(() => onJsaLaunch(), 500);
+    }
   };
 
   // ── End shift: return to yard ──
@@ -202,6 +211,21 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         </Pressable>
       </View>
 
+      {/* ── JSA Required Banner ── */}
+      {active && jsaPending && jsaMode && jsaMode !== 'off' && (
+        <Pressable
+          onPress={onJsaLaunch}
+          style={s.jsaBanner}
+        >
+          <MaterialCommunityIcons name="shield-alert" size={20} color="#000" />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={s.jsaBannerTitle}>JSA Required</Text>
+            <Text style={s.jsaBannerSub}>Complete your Job Safety Analysis to start working</Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={22} color="#000" />
+        </Pressable>
+      )}
+
       {/* ── Enhanced Shift Start Modal ── */}
       <ShiftStartModal
         visible={showStartModal}
@@ -221,6 +245,25 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 }
 
 const s = StyleSheet.create({
+  jsaBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f59e0b',
+    borderRadius: radius.lg,
+    padding: 14,
+    marginBottom: spacing.md,
+    marginTop: -spacing.sm,
+  },
+  jsaBannerTitle: {
+    color: '#000',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  jsaBannerSub: {
+    color: 'rgba(0,0,0,0.6)',
+    fontSize: 12,
+    marginTop: 1,
+  },
   row: {
     flexDirection: 'row',
     gap: spacing.sm,
