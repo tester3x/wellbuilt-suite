@@ -120,8 +120,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const handleStartConfirm = async (data: ShiftStartData) => {
     setShowStartModal(false);
     await onStartShift(data.packageId || undefined);
-    // If JSA mode is on, show choice modal instead of auto-launching
-    if (jsaMode && jsaMode !== 'off' && onJsaLaunch) {
+    // Rule-driven: show JSA choice modal for shift_start_optional/new_location prompts.
+    // per_load (each_job) = no modal at shift start, WB T handles per-job.
+    if (jsaMode && jsaMode !== 'off' && jsaMode !== 'per_load' && onJsaLaunch) {
       setTimeout(() => setShowJsaChoice(true), 500);
     }
   };

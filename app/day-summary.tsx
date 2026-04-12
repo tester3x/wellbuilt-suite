@@ -136,6 +136,7 @@ export default function DaySummaryScreen() {
     pdfUrl: string | null;
     locationCount: number;
   } | null>(null);
+  const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
 
   // Android back button: go to WB S home, not back to WB T
   useEffect(() => {
@@ -173,33 +174,48 @@ export default function DaySummaryScreen() {
     })();
   }, [user]);
 
-  // Fetch JSA day status
+  // Fetch JSA day status + determine if gate applies
   useEffect(() => {
     if (!user?.driverId) return;
     const todayStr = new Date().toISOString().slice(0, 10);
     const docId = `${user.driverId}_${todayStr}`;
-    const url = `https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents/jsa_day_status/${docId}?key=AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI`;
+    const API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
+    const BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
     (async () => {
+      // Fetch JSA day status
       try {
-        const resp = await fetch(url);
+        const resp = await fetch(`${BASE}/jsa_day_status/${docId}?key=${API_KEY}`);
         if (!resp.ok) {
           setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, locationCount: 0 });
-          return;
+        } else {
+          const doc = await resp.json();
+          const f = doc.fields;
+          const locs = f?.locations?.arrayValue?.values;
+          setJsaStatus({
+            completed: f?.jsaCompleted?.booleanValue === true,
+            completedAt: f?.jsaCompletedAt?.timestampValue || null,
+            pdfUrl: f?.pdfUrl?.stringValue || null,
+            locationCount: Array.isArray(locs) ? locs.length : 0,
+          });
         }
-        const doc = await resp.json();
-        const f = doc.fields;
-        const locs = f?.locations?.arrayValue?.values;
-        setJsaStatus({
-          completed: f?.jsaCompleted?.booleanValue === true,
-          completedAt: f?.jsaCompletedAt?.timestampValue || null,
-          pdfUrl: f?.pdfUrl?.stringValue || null,
-          locationCount: Array.isArray(locs) ? locs.length : 0,
-        });
       } catch {
         setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, locationCount: 0 });
       }
+
+      // Read jsaMode from company config to determine gate behavior
+      // per_shift and per_location gate shift end; per_load and off do not
+      if (user.companyId) {
+        try {
+          const resp = await fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`);
+          if (resp.ok) {
+            const doc = await resp.json();
+            const mode = doc.fields?.jsaMode?.stringValue || 'off';
+            setJsaGateShiftEnd(mode === 'per_shift' || mode === 'per_location');
+          }
+        } catch {}
+      }
     })();
-  }, [user?.driverId]);
+  }, [user?.driverId, user?.companyId]);
 
   const handleClose = () => {
     // Close = dismiss summary, stay logged in. No cascade logout.
@@ -208,8 +224,8 @@ export default function DaySummaryScreen() {
   };
 
   const handleLogout = () => {
-    // JSA gate: cannot log out without completing JSA
-    if (jsaStatus && !jsaStatus.completed) {
+    // JSA gate: only block logout if rule.gateShiftEnd (per_shift, per_location)
+    if (jsaGateShiftEnd && jsaStatus && !jsaStatus.completed) {
       Alert.alert(
         'JSA Required',
         'You must complete your Job Safety Analysis before ending your shift.',
