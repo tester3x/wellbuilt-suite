@@ -38,7 +38,7 @@ export async function fetchPendingDispatches(driverHash: string): Promise<Dispat
           filters: [
             {
               fieldFilter: {
-                field: { fieldPath: 'driverId' },
+                field: { fieldPath: 'driverHash' },
                 op: 'EQUAL',
                 value: { stringValue: driverHash },
               },
