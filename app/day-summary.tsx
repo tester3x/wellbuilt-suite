@@ -130,6 +130,12 @@ export default function DaySummaryScreen() {
   const { user, logoutWithCascade } = useAuth();
   const [summary, setSummary] = useState<DaySummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [jsaStatus, setJsaStatus] = useState<{
+    completed: boolean;
+    completedAt: string | null;
+    pdfUrl: string | null;
+    locationCount: number;
+  } | null>(null);
 
   // Android back button: go to WB S home, not back to WB T
   useEffect(() => {
@@ -167,6 +173,34 @@ export default function DaySummaryScreen() {
     })();
   }, [user]);
 
+  // Fetch JSA day status
+  useEffect(() => {
+    if (!user?.driverId) return;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const docId = `${user.driverId}_${todayStr}`;
+    const url = `https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents/jsa_day_status/${docId}?key=AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI`;
+    (async () => {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, locationCount: 0 });
+          return;
+        }
+        const doc = await resp.json();
+        const f = doc.fields;
+        const locs = f?.locations?.arrayValue?.values;
+        setJsaStatus({
+          completed: f?.jsaCompleted?.booleanValue === true,
+          completedAt: f?.jsaCompletedAt?.timestampValue || null,
+          pdfUrl: f?.pdfUrl?.stringValue || null,
+          locationCount: Array.isArray(locs) ? locs.length : 0,
+        });
+      } catch {
+        setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, locationCount: 0 });
+      }
+    })();
+  }, [user?.driverId]);
+
   const handleClose = () => {
     // Close = dismiss summary, stay logged in. No cascade logout.
     // Logout cascade only happens on explicit "Log Out" button.
@@ -174,6 +208,26 @@ export default function DaySummaryScreen() {
   };
 
   const handleLogout = () => {
+    // JSA gate: cannot log out without completing JSA
+    if (jsaStatus && !jsaStatus.completed) {
+      Alert.alert(
+        'JSA Required',
+        'You must complete your Job Safety Analysis before ending your shift.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Complete JSA Now',
+            onPress: () => {
+              import('expo-linking').then(({ default: Linking }) => {
+                Linking.openURL('jsaapp://start').catch(() => {});
+              });
+            },
+          },
+        ],
+      );
+      return;
+    }
+
     Alert.alert(t('daySummary.logOut'), t('daySummary.logOutConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
@@ -268,6 +322,64 @@ export default function DaySummaryScreen() {
                     </View>
                   );
                 })}
+              </View>
+            )}
+
+            {/* ── JSA card ──────────────────────────────────────── */}
+            {jsaStatus && (
+              <View style={s.timeSection}>
+                <View style={s.cardHeader}>
+                  <Text style={s.sectionTitle}>
+                    <MaterialCommunityIcons
+                      name={jsaStatus.completed ? 'shield-check' : 'shield-alert'}
+                      size={14}
+                      color={jsaStatus.completed ? '#22c55e' : '#f59e0b'}
+                    />  JSA
+                  </Text>
+                  <Text style={[s.cardTotal, { color: jsaStatus.completed ? '#22c55e' : '#f59e0b' }]}>
+                    {jsaStatus.completed ? 'Completed' : 'Pending'}
+                  </Text>
+                </View>
+                {jsaStatus.completed && jsaStatus.completedAt && (
+                  <View style={s.milesRow}>
+                    <View style={s.milesStat}>
+                      <Text style={s.milesValue}>{formatTime12h(jsaStatus.completedAt)}</Text>
+                      <Text style={s.milesLabel}>completed</Text>
+                    </View>
+                    <View style={s.milesStat}>
+                      <Text style={s.milesValue}>{jsaStatus.locationCount}</Text>
+                      <Text style={s.milesLabel}>locations</Text>
+                    </View>
+                  </View>
+                )}
+                {jsaStatus.completed && jsaStatus.pdfUrl ? (
+                  <Pressable
+                    onPress={() => {
+                      import('expo-linking').then(({ default: Linking }) => {
+                        Linking.openURL(jsaStatus.pdfUrl!).catch(() => {});
+                      });
+                    }}
+                    style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                  >
+                    <MaterialCommunityIcons name="file-pdf-box" size={18} color="#ef4444" />
+                    <Text style={{ color: colors.brand.accent, fontSize: 13, fontWeight: '600' }}>View PDF</Text>
+                  </Pressable>
+                ) : !jsaStatus.completed ? (
+                  <Pressable
+                    onPress={() => {
+                      import('expo-linking').then(({ default: Linking }) => {
+                        Linking.openURL('jsaapp://start').catch(() => {});
+                      });
+                    }}
+                    style={{
+                      marginTop: 8, backgroundColor: '#f59e0b', borderRadius: 8,
+                      padding: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}
+                  >
+                    <MaterialCommunityIcons name="shield-edit-outline" size={18} color="#000" />
+                    <Text style={{ color: '#000', fontSize: 13, fontWeight: '700' }}>Complete JSA Now</Text>
+                  </Pressable>
+                ) : null}
               </View>
             )}
 

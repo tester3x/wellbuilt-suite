@@ -16,6 +16,7 @@ import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
+import JsaChoiceModal from './JsaChoiceModal';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -79,6 +80,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
+  const [showJsaChoice, setShowJsaChoice] = useState(false);
 
   // Tick shift timer while active
   useEffect(() => {
@@ -118,10 +120,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const handleStartConfirm = async (data: ShiftStartData) => {
     setShowStartModal(false);
     await onStartShift(data.packageId || undefined);
-    // If JSA mode is on, launch JSA app immediately after shift starts
+    // If JSA mode is on, show choice modal instead of auto-launching
     if (jsaMode && jsaMode !== 'off' && onJsaLaunch) {
-      // Small delay so shift UI updates first
-      setTimeout(() => onJsaLaunch(), 500);
+      setTimeout(() => setShowJsaChoice(true), 500);
     }
   };
 
@@ -225,6 +226,18 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           <MaterialCommunityIcons name="chevron-right" size={22} color="#000" />
         </Pressable>
       )}
+
+      {/* ── JSA Choice Modal (after shift start) ── */}
+      <JsaChoiceModal
+        visible={showJsaChoice}
+        onCompleteNow={() => {
+          setShowJsaChoice(false);
+          if (onJsaLaunch) onJsaLaunch();
+        }}
+        onStartWorking={() => {
+          setShowJsaChoice(false);
+        }}
+      />
 
       {/* ── Enhanced Shift Start Modal ── */}
       <ShiftStartModal
