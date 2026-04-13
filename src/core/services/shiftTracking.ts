@@ -186,8 +186,7 @@ export async function recordShiftEvent(
   try {
     const gps = await captureGPS();
     if (!gps) {
-      console.warn(`[shiftTracking] GPS unavailable for ${type} — skipping`);
-      return;
+      console.warn(`[shiftTracking] GPS unavailable for ${type} — recording without GPS`);
     }
 
     if (type === 'login') {
@@ -200,9 +199,9 @@ export async function recordShiftEvent(
 
     const event: ShiftEvent = {
       type,
-      timestamp: gps.timestamp,
-      lat: gps.lat,
-      lng: gps.lng,
+      timestamp: gps?.timestamp || new Date().toISOString(),
+      lat: gps?.lat || 0,
+      lng: gps?.lng || 0,
       source,
     };
 

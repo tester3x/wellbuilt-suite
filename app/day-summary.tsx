@@ -83,7 +83,7 @@ function TimeBar({ label, minutes, totalMinutes, color }: TimeBarProps) {
 }
 
 // ── DEBUG: Mock data for layout testing ─────────────────────────────────────
-const DEV_TEST = true; // 🔴 REMOVE BEFORE PRODUCTION
+const DEV_TEST = false;
 function randomMockSummary(): DaySummary {
   const wells = ['GABRIEL 6-36-25TFH', 'THOR 1-31-30H', 'GABRIEL 2-36-25H', 'GABRIEL 7-36-25TFH', 'DAGGER 1-22-15H', 'RENEGADE 4-8-17TFH', 'IRONBANK 6-19-30H'];
   const visitedCount = Math.floor(Math.random() * 4) + 2; // 2-5 wells
