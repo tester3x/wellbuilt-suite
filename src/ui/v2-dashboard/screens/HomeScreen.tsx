@@ -80,15 +80,6 @@ export default function HomeScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
 
-        {/* 🔴 DEBUG: Admin-only Day Summary preview — REMOVE BEFORE PRODUCTION */}
-        {user?.isAdmin && (
-          <Pressable
-            onPress={() => router.push('/day-summary')}
-            style={{ alignSelf: 'center', backgroundColor: '#ef4444', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, marginBottom: 12 }}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🔴 TEST Day Summary</Text>
-          </Pressable>
-        )}
 
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}

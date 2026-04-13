@@ -160,15 +160,6 @@ export default function HomeScreen() {
 
         <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} jsaMode={jsaMode} jsaPending={jsaPending} onJsaLaunch={handleJsaLaunch} />
 
-        {/* 🔴 DEBUG: Admin-only Day Summary preview — REMOVE BEFORE PRODUCTION */}
-        {user?.isAdmin && (
-          <TouchableOpacity
-            onPress={() => router.push('/day-summary')}
-            style={{ alignSelf: 'center', backgroundColor: '#ef4444', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, marginVertical: 12 }}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🔴 TEST Day Summary</Text>
-          </TouchableOpacity>
-        )}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>

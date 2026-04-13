@@ -137,6 +137,7 @@ export default function DaySummaryScreen() {
     locationCount: number;
   } | null>(null);
   const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
+  const [jsaGateLoaded, setJsaGateLoaded] = useState(false);
 
   // Android back button: go to WB S home, not back to WB T
   useEffect(() => {
@@ -152,70 +153,58 @@ export default function DaySummaryScreen() {
     if (DEV_TEST) {
       setSummary(randomMockSummary());
       setLoading(false);
+      setJsaGateLoaded(true);
       return;
     }
     if (!user) return;
-    (async () => {
-      try {
-        // WB T writes legalName as the invoice driver field (falls back to displayName).
-        // Query with the same preference so Day Summary finds the right invoices.
-        const driverName = user.legalName || user.displayName;
-        const [invoices, shift] = await Promise.all([
-          fetchTodayInvoices(driverName, user.companyId),
-          fetchTodayShift(user.driverId),
-        ]);
-        const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles);
-        setSummary(result);
-      } catch (err) {
-        console.warn('[DaySummary] Failed to load data:', err);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [user]);
-
-  // Fetch JSA day status + determine if gate applies
-  useEffect(() => {
-    if (!user?.driverId) return;
+    const driverName = user.legalName || user.displayName;
     const todayStr = new Date().toISOString().slice(0, 10);
-    const docId = `${user.driverId}_${todayStr}`;
+    const jsaDocId = `${user.driverId}_${todayStr}`;
     const API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
     const BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
-    (async () => {
-      // Fetch JSA day status
-      try {
-        const resp = await fetch(`${BASE}/jsa_day_status/${docId}?key=${API_KEY}`);
-        if (!resp.ok) {
-          setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, locationCount: 0 });
-        } else {
-          const doc = await resp.json();
-          const f = doc.fields;
-          const locs = f?.locations?.arrayValue?.values;
-          setJsaStatus({
-            completed: f?.jsaCompleted?.booleanValue === true,
-            completedAt: f?.jsaCompletedAt?.timestampValue || null,
-            pdfUrl: f?.pdfUrl?.stringValue || null,
-            locationCount: Array.isArray(locs) ? locs.length : 0,
-          });
-        }
-      } catch {
+
+    // All 4 fetches in parallel — no sequential waits
+    const invoicesP = fetchTodayInvoices(driverName, user.companyId).catch(() => [] as any[]);
+    const shiftP = fetchTodayShift(user.driverId).catch(() => null);
+    const jsaP = fetch(`${BASE}/jsa_day_status/${jsaDocId}?key=${API_KEY}`)
+      .then(r => r.ok ? r.json() : null).catch(() => null);
+    const companyP = user.companyId
+      ? fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`)
+          .then(r => r.ok ? r.json() : null).catch(() => null)
+      : Promise.resolve(null);
+
+    Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoices, shift, jsaDoc, companyDoc]) => {
+      // Summary data
+      const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles);
+      setSummary(result);
+
+      // JSA status
+      if (jsaDoc) {
+        const f = jsaDoc.fields;
+        const locs = f?.locations?.arrayValue?.values;
+        setJsaStatus({
+          completed: f?.jsaCompleted?.booleanValue === true,
+          completedAt: f?.jsaCompletedAt?.timestampValue || null,
+          pdfUrl: f?.pdfUrl?.stringValue || null,
+          locationCount: Array.isArray(locs) ? locs.length : 0,
+        });
+      } else {
         setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, locationCount: 0 });
       }
 
-      // Read jsaMode from company config to determine gate behavior
-      // per_shift and per_location gate shift end; per_load and off do not
-      if (user.companyId) {
-        try {
-          const resp = await fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`);
-          if (resp.ok) {
-            const doc = await resp.json();
-            const mode = doc.fields?.jsaMode?.stringValue || 'off';
-            setJsaGateShiftEnd(mode === 'per_shift' || mode === 'per_location');
-          }
-        } catch {}
+      // JSA gate from company config
+      if (companyDoc) {
+        const mode = companyDoc.fields?.jsaMode?.stringValue || 'off';
+        setJsaGateShiftEnd(mode === 'per_shift' || mode === 'per_location');
       }
-    })();
-  }, [user?.driverId, user?.companyId]);
+
+      setJsaGateLoaded(true);
+      setLoading(false);
+    }).catch(() => {
+      setJsaGateLoaded(true);
+      setLoading(false);
+    });
+  }, [user]);
 
   const handleClose = () => {
     // Close = dismiss summary, stay logged in. No cascade logout.
@@ -448,7 +437,7 @@ export default function DaySummaryScreen() {
           <MaterialCommunityIcons name="check-circle-outline" size={20} color={colors.text.primary} />
           <Text style={s.closeButtonText}>{t('common.close')}</Text>
         </Pressable>
-        <Pressable style={s.logoutButton} onPress={handleLogout}>
+        <Pressable style={[s.logoutButton, !jsaGateLoaded && { opacity: 0.4 }]} onPress={handleLogout} disabled={!jsaGateLoaded}>
           <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
           <Text style={s.logoutButtonText}>{t('daySummary.logOut')}</Text>
         </Pressable>

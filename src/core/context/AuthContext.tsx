@@ -270,22 +270,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Record logout GPS event (arrival at yard = shift end)
     // Must await so day-summary screen can read the shift end time
     await recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
-    // Write odometer miles to shift doc for Day Summary
+    // Everything below is fire-and-forget — don't block navigation to Day Summary
+    // Write odometer miles to shift doc
     if (odometerMiles != null && odometerMiles > 0) {
-      const { writeOdometerMiles } = await import('../services/shiftTracking');
-      writeOdometerMiles(user.driverId, odometerMiles).catch(() => {});
+      import('../services/shiftTracking').then(({ writeOdometerMiles }) =>
+        writeOdometerMiles(user.driverId, odometerMiles).catch(() => {}));
     }
-    // Cache this GPS as "the yard" for next shift's en route destination
-    try {
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      saveYardLocation(loc.coords.latitude, loc.coords.longitude).catch(() => {});
-    } catch {}
-    await SecureStore.setItemAsync('shiftEnded', 'true');
-    await SecureStore.deleteItemAsync('shiftStarted');
-    await SecureStore.deleteItemAsync('returnDepartTime');
+    // Cache yard GPS — recordShiftEvent already captured GPS, so just grab last known
+    Location.getLastKnownPositionAsync().then(loc => {
+      if (loc) saveYardLocation(loc.coords.latitude, loc.coords.longitude).catch(() => {});
+    }).catch(() => {});
+    // Update local state + SecureStore in parallel
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
+    Promise.all([
+      SecureStore.setItemAsync('shiftEnded', 'true'),
+      SecureStore.deleteItemAsync('shiftStarted'),
+      SecureStore.deleteItemAsync('returnDepartTime'),
+    ]).catch(() => {});
     console.log('[AuthContext] Arrived at yard, shift ended for:', user.displayName);
     // No cascade here — day summary screen handles logout via logoutWithCascade
   }, [user]);
