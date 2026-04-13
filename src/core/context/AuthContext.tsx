@@ -17,7 +17,7 @@ import {
   completeRegistration,
   firebasePatch,
 } from '../services/driverAuth';
-import { recordShiftEvent, checkShiftOnResume, saveYardLocation } from '../services/shiftTracking';
+import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat } from '../services/shiftTracking';
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { cascadeLogoutToSSOApps, clearSSOLaunchedApps } from '../services/appLauncher';
@@ -241,6 +241,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setShiftStartTime(startTime);
     // Record login GPS event for DOT drive time (fire-and-forget)
     recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(() => {});
+    // Notify dispatch via chat (fire-and-forget)
+    if (user.companyId) {
+      sendShiftStartToChat(user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+    }
     // Persist to SecureStore (survives app kill) — non-blocking for UI
     await SecureStore.setItemAsync('shiftStarted', 'true');
     await SecureStore.setItemAsync('shiftStartTime', startTime);

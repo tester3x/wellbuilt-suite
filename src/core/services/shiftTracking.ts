@@ -247,7 +247,7 @@ export async function recordShiftEvent(
       return;
     }
 
-    console.log(`[shiftTracking] Recorded ${type} at ${gps.lat.toFixed(4)}, ${gps.lng.toFixed(4)}`);
+    console.log(`[shiftTracking] Recorded ${type} at ${gps?.lat?.toFixed(4) ?? 0}, ${gps?.lng?.toFixed(4) ?? 0}`);
   } catch (err) {
     console.error(`[shiftTracking] Failed to record ${type}:`, err);
   }
@@ -323,7 +323,7 @@ export async function fetchLastYardLocation(
  * Write odometer miles to today's shift doc for Day Summary.
  */
 export async function writeOdometerMiles(driverId: string, miles: number): Promise<void> {
-  const date = todayStr();
+  const date = dateString(new Date());
   const patchUrl = `https://firestore.googleapis.com/v1/${docPath(driverId, date)}?updateMask.fieldPaths=odometerMiles&key=${FIREBASE_API_KEY}`;
   await fetch(patchUrl, {
     method: 'PATCH',
@@ -419,7 +419,7 @@ export async function checkShiftOnResume(
       body: JSON.stringify(body),
     });
 
-    console.log(`[shiftTracking] Resume: recorded today's login at ${gps.lat.toFixed(4)}, ${gps.lng.toFixed(4)}`);
+    console.log(`[shiftTracking] Resume: recorded today's login at ${gps?.lat?.toFixed(4) ?? 0}, ${gps?.lng?.toFixed(4) ?? 0}`);
   } catch (err) {
     console.error('[shiftTracking] checkShiftOnResume failed:', err);
   }
@@ -473,12 +473,15 @@ export async function sendShiftStartToChat(
     const docs = results.filter((r: any) => r.document);
     if (docs.length === 0) return;
 
-    // Filter for threads with a dispatch user (user:*) as the other participant
+    // Filter for threads with exactly 2 participants: this driver + a dispatch user (user:*)
     const dispatchThreads = docs.filter(d => {
       const participants = d.document?.fields?.participants?.arrayValue?.values || [];
-      return participants.some((p: any) =>
+      if (participants.length !== 2) return false;
+      const hasDriver = participants.some((p: any) => p.stringValue === participantId);
+      const hasDispatch = participants.some((p: any) =>
         p.stringValue?.startsWith('user:') && p.stringValue !== participantId,
       );
+      return hasDriver && hasDispatch;
     });
 
     if (dispatchThreads.length === 0) return;
