@@ -425,3 +425,123 @@ export async function checkShiftOnResume(
     console.error('[shiftTracking] checkShiftOnResume failed:', err);
   }
 }
+
+// ── Shift-start chat message to dispatch ────────────────────────────────────
+// Sends a system message to all dispatch direct threads: "Driver has come on shift."
+// Uses Firestore REST API to query threads and write messages.
+
+const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents`;
+const RUN_QUERY_URL = `${FIRESTORE_BASE}:runQuery?key=${FIREBASE_API_KEY}`;
+
+/**
+ * Send a shift-start notification to all dispatch direct chat threads.
+ * Fire-and-forget — never throws, never blocks UI.
+ */
+export async function sendShiftStartToChat(
+  driverId: string,
+  driverName: string,
+  companyId: string,
+): Promise<void> {
+  try {
+    const participantId = `driver:${driverId}`;
+
+    // Find direct threads where this driver participates
+    const queryBody = {
+      structuredQuery: {
+        from: [{ collectionId: 'chat_threads' }],
+        where: {
+          compositeFilter: {
+            op: 'AND',
+            filters: [
+              { fieldFilter: { field: { fieldPath: 'type' }, op: 'EQUAL', value: { stringValue: 'direct' } } },
+              { fieldFilter: { field: { fieldPath: 'participants' }, op: 'ARRAY_CONTAINS', value: { stringValue: participantId } } },
+              { fieldFilter: { field: { fieldPath: 'companyId' }, op: 'EQUAL', value: { stringValue: companyId } } },
+            ],
+          },
+        },
+        limit: 20,
+      },
+    };
+
+    const resp = await fetchSafe(RUN_QUERY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(queryBody),
+    });
+    if (!resp.ok) return;
+
+    const results: any[] = await resp.json();
+    const docs = results.filter((r: any) => r.document);
+    if (docs.length === 0) return;
+
+    // Filter for threads with a dispatch user (user:*) as the other participant
+    const dispatchThreads = docs.filter(d => {
+      const participants = d.document?.fields?.participants?.arrayValue?.values || [];
+      return participants.some((p: any) =>
+        p.stringValue?.startsWith('user:') && p.stringValue !== participantId,
+      );
+    });
+
+    if (dispatchThreads.length === 0) return;
+
+    const now = new Date().toISOString();
+    const message = `${driverName} has come on shift.`;
+
+    // Send system message to each dispatch thread
+    for (const threadDoc of dispatchThreads) {
+      const threadPath = threadDoc.document.name;
+      const threadId = threadPath.split('/').pop();
+      if (!threadId) continue;
+
+      try {
+        // Create message sub-document
+        const msgUrl = `${FIRESTORE_BASE}/chat_threads/${threadId}/messages?key=${FIREBASE_API_KEY}`;
+        await fetchSafe(msgUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              text: { stringValue: message },
+              senderId: { stringValue: participantId },
+              senderName: { stringValue: driverName },
+              timestamp: { timestampValue: now },
+              type: { stringValue: 'system' },
+              systemType: { stringValue: 'shift_start' },
+              clientId: { stringValue: `shift_start_${Date.now()}_${threadId.slice(0, 6)}` },
+            },
+          }),
+        });
+
+        // Update thread lastMessage
+        const threadUrl = `${FIRESTORE_BASE}/chat_threads/${threadId}?key=${FIREBASE_API_KEY}`
+          + '&updateMask.fieldPaths=lastMessage&updateMask.fieldPaths=updatedAt';
+        await fetchSafe(threadUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              lastMessage: {
+                mapValue: {
+                  fields: {
+                    text: { stringValue: message },
+                    senderId: { stringValue: participantId },
+                    senderName: { stringValue: driverName },
+                    timestamp: { timestampValue: now },
+                    type: { stringValue: 'system' },
+                  },
+                },
+              },
+              updatedAt: { timestampValue: now },
+            },
+          }),
+        });
+
+        console.log(`[shiftTracking] Sent shift-start message to thread: ${threadId}`);
+      } catch (err) {
+        console.warn('[shiftTracking] Failed to send shift-start to thread:', threadId, err);
+      }
+    }
+  } catch (err) {
+    console.warn('[shiftTracking] sendShiftStartToChat failed (non-blocking):', err);
+  }
+}
