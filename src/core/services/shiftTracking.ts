@@ -370,16 +370,28 @@ export async function checkShiftOnResume(
     const getUrl = `https://firestore.googleapis.com/v1/${path}?key=${FIREBASE_API_KEY}`;
 
     const resp = await fetchSafe(getUrl);
-    if (resp.ok) return;
+    if (resp.ok) {
+      // Doc exists — but check if it has a login event. If not, the original
+      // recordShiftEvent('login') failed silently and we need to backfill it.
+      // Without a login event, Day Summary shows --:-- for start time.
+      try {
+        const doc = await resp.json();
+        const events = doc.fields?.events?.arrayValue?.values || [];
+        const hasLogin = events.some((v: any) => v.mapValue?.fields?.type?.stringValue === 'login');
+        if (hasLogin) return; // All good — login event exists
+        console.log('[shiftTracking] Resume: shift doc exists but missing login event — backfilling');
+      } catch {
+        return; // Can't parse doc — don't risk a bad write
+      }
+    }
 
     const gps = await captureGPS();
-    if (!gps) return;
 
     const event: ShiftEvent = {
       type: 'login',
-      timestamp: gps.timestamp,
-      lat: gps.lat,
-      lng: gps.lng,
+      timestamp: gps?.timestamp || new Date().toISOString(),
+      lat: gps?.lat || 0,
+      lng: gps?.lng || 0,
       source,
     };
 
@@ -473,13 +485,17 @@ export async function sendShiftStartToChat(
     const docs = results.filter((r: any) => r.document);
     if (docs.length === 0) return;
 
-    // Filter for threads with exactly 2 participants: this driver + a dispatch user (user:*)
+    // Filter for threads with exactly 2 DISTINCT participants: this driver + a dispatch user (user:*)
+    // Self-chat guard: skip threads where all participants resolve to the same person
     const dispatchThreads = docs.filter(d => {
       const participants = d.document?.fields?.participants?.arrayValue?.values || [];
       if (participants.length !== 2) return false;
-      const hasDriver = participants.some((p: any) => p.stringValue === participantId);
-      const hasDispatch = participants.some((p: any) =>
-        p.stringValue?.startsWith('user:') && p.stringValue !== participantId,
+      // Deduplicate — reject if both participants are the same ID
+      const ids = participants.map((p: any) => p.stringValue).filter(Boolean);
+      if (new Set(ids).size < 2) return false;
+      const hasDriver = ids.includes(participantId);
+      const hasDispatch = ids.some((id: string) =>
+        id.startsWith('user:') && id !== participantId,
       );
       return hasDriver && hasDispatch;
     });

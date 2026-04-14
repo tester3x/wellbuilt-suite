@@ -240,7 +240,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setShiftActive(true);
     setShiftStartTime(startTime);
     // Record login GPS event for DOT drive time (fire-and-forget)
-    recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(() => {});
+    recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(err => console.warn('[startShift] recordShiftEvent failed:', err));
     // Notify dispatch via chat (fire-and-forget)
     if (user.companyId) {
       sendShiftStartToChat(user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
