@@ -154,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Only track shift if driver explicitly started one (tapped "Start Shift").
           // Logged-in but not on-shift should NOT create a shift doc / login event.
           if (isActive) {
-            checkShiftOnResume(session.driverId, session.displayName, session.companyId).catch(() => {});
+            checkShiftOnResume(session.driverId, session.legalName || session.displayName, session.companyId).catch(() => {});
           }
 
           // Revalidate in background (non-blocking)
@@ -240,7 +240,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setShiftActive(true);
     setShiftStartTime(startTime);
     // Record login GPS event for DOT drive time (fire-and-forget)
-    recordShiftEvent('login', user.driverId, user.displayName, user.companyId).catch(err => console.warn('[startShift] recordShiftEvent failed:', err));
+    recordShiftEvent('login', user.driverId, user.legalName || user.displayName, user.companyId).catch(err => console.warn('[startShift] recordShiftEvent failed:', err));
     // Notify dispatch via chat (fire-and-forget)
     if (user.companyId) {
       sendShiftStartToChat(user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
@@ -262,7 +262,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     const now = new Date().toISOString();
     // Record depart_return GPS event
-    recordShiftEvent('depart_return', user.driverId, user.displayName, user.companyId).catch(() => {});
+    recordShiftEvent('depart_return', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
     await SecureStore.setItemAsync('returnDepartTime', now);
     setReturningToYard(true);
     setReturnDepartTime(now);
@@ -273,7 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     // Record logout GPS event (arrival at yard = shift end)
     // Must await so day-summary screen can read the shift end time
-    await recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
+    await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
     // Everything below is fire-and-forget — don't block navigation to Day Summary
     // Write odometer miles to shift doc
     if (odometerMiles != null && odometerMiles > 0) {
@@ -317,7 +317,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     // If shift is still active, end it as safety net before logging out
     if (shiftActive && user) {
-      recordShiftEvent('logout', user.driverId, user.displayName, user.companyId).catch(() => {});
+      recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
     }
     // Write RTDB signal so other apps self-logout on next foreground (backup)
     if (user) {
