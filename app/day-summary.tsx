@@ -27,6 +27,8 @@ import {
   calculateDaySummary,
   type DaySummary,
 } from '@/core/services/daySummary';
+import { acknowledgeShiftJsa } from '@/core/services/jsaShiftAck';
+import JsaCloseModal from '@/ui/shared/JsaCloseModal';
 
 function formatTime12h(iso: string | null): string {
   if (!iso) return '--:--';
@@ -138,6 +140,13 @@ export default function DaySummaryScreen() {
   } | null>(null);
   const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
   const [jsaGateLoaded, setJsaGateLoaded] = useState(false);
+  const [jsaAllowAcknowledge, setJsaAllowAcknowledge] = useState(true);
+  // Shift-end JSA gate state — modal opens when driver hits Log Out without
+  // jsaCompleted. Acknowledge writes jsa_day_status.jsaCompleted=true; Read
+  // deep-links to WB JSA. After Acknowledge, logout proceeds via the same
+  // confirm Alert that already exists below.
+  const [showJsaModal, setShowJsaModal] = useState(false);
+  const [jsaAcknowledging, setJsaAcknowledging] = useState(false);
 
   // Android back button: go to WB S home, not back to WB T
   useEffect(() => {
@@ -210,10 +219,16 @@ export default function DaySummaryScreen() {
         setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, wellCount: 0 });
       }
 
-      // JSA gate from company config
+      // JSA gate from company config. Legacy 'per_load' / 'per_location' read
+      // as their behavior (per_load was per-job, no shift gate; per_location
+      // gated like per_shift). Per the 4/24 mode rename, only 'per_shift'
+      // gates shift end going forward.
       if (companyDoc) {
         const mode = companyDoc.fields?.jsaMode?.stringValue || 'off';
         setJsaGateShiftEnd(mode === 'per_shift' || mode === 'per_location');
+        const allow = companyDoc.fields?.jsaAllowAcknowledge?.booleanValue;
+        // Default true when field missing — matches Dashboard JsaCard default.
+        setJsaAllowAcknowledge(allow !== false);
       }
 
       setJsaGateLoaded(true);
@@ -231,23 +246,12 @@ export default function DaySummaryScreen() {
   };
 
   const handleLogout = () => {
-    // JSA gate: only block logout if rule.gateShiftEnd (per_shift, per_location)
+    // JSA gate: only block logout if rule.gateShiftEnd is true (per_shift) and
+    // jsaCompleted hasn't flipped to true today. The proper modal replaces
+    // the Alert-based shortcut so drivers get the same Read/Ack experience
+    // they see in WB T at job-close.
     if (jsaGateShiftEnd && jsaStatus && !jsaStatus.completed) {
-      Alert.alert(
-        'JSA Required',
-        'You must complete your Job Safety Analysis before ending your shift.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Complete JSA Now',
-            onPress: () => {
-              import('expo-linking').then(({ default: Linking }) => {
-                Linking.openURL('jsaapp://start').catch(() => {});
-              });
-            },
-          },
-        ],
-      );
+      setShowJsaModal(true);
       return;
     }
 
@@ -261,6 +265,55 @@ export default function DaySummaryScreen() {
         },
       },
     ]);
+  };
+
+  // ── JSA gate modal handlers ───────────────────────────────────────────
+
+  /** Acknowledge today's JSA in-place — write jsa_day_status flag, then resume logout. */
+  const handleJsaAcknowledge = async () => {
+    if (jsaAcknowledging || !user) return;
+    setJsaAcknowledging(true);
+    try {
+      const driverName = user.legalName || user.displayName || '';
+      const ok = await acknowledgeShiftJsa(
+        user.driverId,
+        driverName,
+        user.companyId || '',
+        'acknowledged',
+      );
+      if (!ok) {
+        Alert.alert('Network Issue', 'Could not record acknowledgment. Try again or tap Read JSA.');
+        return;
+      }
+      // Reflect locally so the gate doesn't re-fire on the next handleLogout call.
+      setJsaStatus(prev => prev ? { ...prev, completed: true, completedAt: new Date().toISOString() } : prev);
+      setShowJsaModal(false);
+      // Loop back into the logout-confirm Alert flow.
+      setTimeout(() => handleLogout(), 0);
+    } finally {
+      setJsaAcknowledging(false);
+    }
+  };
+
+  /** Open WB JSA via deep link. Halt logout — driver returns and re-taps Log Out. */
+  const handleJsaRead = async () => {
+    setShowJsaModal(false);
+    try {
+      const Linking = await import('expo-linking');
+      const params = new URLSearchParams({ returnTo: 'wbs' });
+      if (user?.driverId) params.set('hash', user.driverId);
+      const name = user?.legalName || user?.displayName;
+      if (name) params.set('name', name);
+      await Linking.openURL(`jsaapp://start?${params.toString()}`);
+    } catch (err) {
+      console.warn('[day-summary] Read JSA deep link failed:', err);
+      Alert.alert('JSA App Not Available', 'Could not open the WB JSA app. Tap Acknowledged or install WB JSA.');
+    }
+  };
+
+  const handleJsaCancel = () => {
+    if (jsaAcknowledging) return;
+    setShowJsaModal(false);
   };
 
   const timeRange = summary
@@ -460,6 +513,17 @@ export default function DaySummaryScreen() {
           <Text style={s.logoutButtonText}>{t('daySummary.logOut')}</Text>
         </Pressable>
       </View>
+
+      {/* JSA shift-end gate modal — same Read / Ack / Cancel UI as WB T */}
+      <JsaCloseModal
+        visible={showJsaModal}
+        allowAcknowledge={jsaAllowAcknowledge}
+        busy={jsaAcknowledging}
+        accent={colors.brand.accent}
+        onAcknowledge={handleJsaAcknowledge}
+        onRead={handleJsaRead}
+        onCancel={handleJsaCancel}
+      />
     </SafeAreaView>
   );
 }
