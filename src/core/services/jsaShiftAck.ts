@@ -2,9 +2,11 @@
 //
 // Mirrors WB T's acknowledgeShiftJsa (utils/jsaTracking.ts). Writes
 // jsaCompleted=true + acknowledgedMethod ('acknowledged' | 'read') to
-// jsa_day_status/{driverHash}_{today}. After this fires, the WB S
+// jsa_day_status/{driverHash}_{shiftId}. After this fires, the WB S
 // shift-end gate at logout time sees jsaCompleted=true and lets the
 // driver out without re-prompting.
+
+import { getCurrentShiftId } from './shiftTracking';
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIRESTORE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -12,15 +14,15 @@ const FIRESTORE_DOC_BASE = `https://firestore.googleapis.com/v1/projects/${FIRES
 const TIMEOUT_MS = 10_000;
 
 /**
- * Today's UTC date as YYYY-MM-DD. Matches the doc-id format jsa_day_status
- * uses everywhere in the system.
+ * Today's UTC date as YYYY-MM-DD. Used as the JSA scope when no shiftId is
+ * present (legacy fallback for sessions that started before this rollout).
  */
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 /**
- * PATCH jsa_day_status/{driverHash}_{today}.{jsaCompleted, acknowledgedMethod, jsaCompletedAt}.
+ * PATCH jsa_day_status/{driverHash}_{shiftId}.{jsaCompleted, acknowledgedMethod, jsaCompletedAt}.
  * Returns true on success. Driver name + companyId fields included so the doc
  * is queryable from Dashboard even when the JSA was never created via the
  * JSA app's signoff flow (per_shift Acknowledge cheat path).
@@ -33,14 +35,15 @@ export async function acknowledgeShiftJsa(
 ): Promise<boolean> {
   if (!driverHash) return false;
   try {
-    const todayStr = todayUtc();
-    const docId = `${driverHash}_${todayStr}`;
+    const scope = (await getCurrentShiftId()) || todayUtc();
+    const docId = `${driverHash}_${scope}`;
     const nowIso = new Date().toISOString();
 
     const patchUrl = `${FIRESTORE_DOC_BASE}/jsa_day_status/${docId}?key=${FIRESTORE_API_KEY}`
       + '&updateMask.fieldPaths=driverHash'
       + '&updateMask.fieldPaths=driverName'
       + '&updateMask.fieldPaths=companyId'
+      + '&updateMask.fieldPaths=shiftId'
       + '&updateMask.fieldPaths=date'
       + '&updateMask.fieldPaths=jsaCompleted'
       + '&updateMask.fieldPaths=jsaCompletedAt'
@@ -51,7 +54,8 @@ export async function acknowledgeShiftJsa(
       driverHash: { stringValue: driverHash },
       driverName: { stringValue: driverName },
       companyId: { stringValue: companyId },
-      date: { stringValue: todayStr },
+      shiftId: { stringValue: scope },
+      date: { stringValue: todayUtc() },
       jsaCompleted: { booleanValue: true },
       jsaCompletedAt: { timestampValue: nowIso },
       acknowledgedMethod: { stringValue: method },
@@ -73,7 +77,7 @@ export async function acknowledgeShiftJsa(
       console.warn(`[jsaShiftAck] PATCH failed: HTTP ${resp.status} ${body.slice(0, 200)}`);
       return false;
     }
-    console.log(`[jsaShiftAck] Shift JSA acknowledged via ${method} for ${driverName} on ${todayStr}`);
+    console.log(`[jsaShiftAck] Shift JSA acknowledged via ${method} for ${driverName} (scope=${scope})`);
     return true;
   } catch (err: any) {
     console.warn('[jsaShiftAck] error:', err?.message || err);

@@ -17,7 +17,7 @@ import {
   completeRegistration,
   firebasePatch,
 } from '../services/driverAuth';
-import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat } from '../services/shiftTracking';
+import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, clearCurrentShiftId, getCurrentShiftId } from '../services/shiftTracking';
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { cascadeLogoutToSSOApps, clearSSOLaunchedApps } from '../services/appLauncher';
@@ -236,11 +236,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     // Capture timestamp FIRST — before any awaits steal seconds
     const startTime = new Date().toISOString();
+    // Mint a fresh shiftId for the new shift. JSA is keyed by this id
+    // across WB S / WB T / WB JSA — closing a shift "freezes" its JSA
+    // because the next shift gets a new id. SSO deep links pass it down
+    // to WB T / WB JSA on launch (see appLauncher.ts).
+    const shiftId = mintShiftId();
+    setCurrentShiftId(shiftId).catch(() => {});
     // Set React state immediately so timer starts from the correct moment
     setShiftActive(true);
     setShiftStartTime(startTime);
     // Record login GPS event for DOT drive time (fire-and-forget)
-    recordShiftEvent('login', user.driverId, user.legalName || user.displayName, user.companyId).catch(err => console.warn('[startShift] recordShiftEvent failed:', err));
+    recordShiftEvent('login', user.driverId, user.legalName || user.displayName, user.companyId, 'wbs', shiftId).catch(err => console.warn('[startShift] recordShiftEvent failed:', err));
     // Notify dispatch via chat (fire-and-forget)
     if (user.companyId) {
       sendShiftStartToChat(user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
@@ -274,6 +280,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Record logout GPS event (arrival at yard = shift end)
     // Must await so day-summary screen can read the shift end time
     await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+    // Freeze the JSA for THIS shift — clear shiftId so any subsequent
+    // shift mints a new id (and therefore a new JSA scope).
+    clearCurrentShiftId().catch(() => {});
     // Everything below is fire-and-forget — don't block navigation to Day Summary
     // Write odometer miles to shift doc
     if (odometerMiles != null && odometerMiles > 0) {
@@ -306,6 +315,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
     await SecureStore.deleteItemAsync('activePackageId');
+    clearCurrentShiftId().catch(() => {});
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
@@ -328,6 +338,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
     await SecureStore.deleteItemAsync('activePackageId');
+    clearCurrentShiftId().catch(() => {});
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);

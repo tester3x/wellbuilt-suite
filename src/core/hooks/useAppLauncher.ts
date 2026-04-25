@@ -6,6 +6,7 @@ import {
 } from '../services/appLauncher';
 import { useAuth } from '../context/AuthContext';
 import { loadVehicleInfo } from '../services/driverProfile';
+import { getCurrentShiftId } from '../services/shiftTracking';
 
 export function useAppLauncher() {
   const { user, activePackageId, shiftStartTime } = useAuth();
@@ -28,6 +29,10 @@ export function useAppLauncher() {
       if (vehicle.trailerNumber) (sso as any).trailer = vehicle.trailerNumber;
       if (activePackageId) (sso as any).packageId = activePackageId;
       if (shiftStartTime) (sso as any).shiftStartTime = shiftStartTime;
+      // Active shiftId — scopes the JSA in WB T / WB JSA so each shift
+      // has its own JSA and closing a shift freezes it.
+      const shiftId = await getCurrentShiftId();
+      if (shiftId) (sso as any).shiftId = shiftId;
     }
 
     return launchWBApp({ ...options, sso });

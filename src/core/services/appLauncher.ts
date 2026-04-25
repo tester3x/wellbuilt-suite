@@ -72,6 +72,8 @@ export interface WBAppLaunchOptions {
     trailer?: string;
     packageId?: string;
     shiftStartTime?: string;
+    /** Active shiftId. Scopes the JSA in WB T / WB JSA so each shift has its own JSA. */
+    shiftId?: string;
   };
 }
 
@@ -122,6 +124,7 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
     if (sso.trailer) paramObj.trailer = sso.trailer;
     if (sso.packageId) paramObj.packageId = sso.packageId;
     if (sso.shiftStartTime) paramObj.shiftStartTime = sso.shiftStartTime;
+    if (sso.shiftId) paramObj.shiftId = sso.shiftId;
     const params = new URLSearchParams(paramObj);
     url = `${scheme}://login?${params.toString()}`;
   }

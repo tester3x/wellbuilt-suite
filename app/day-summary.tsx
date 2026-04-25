@@ -28,6 +28,7 @@ import {
   type DaySummary,
 } from '@/core/services/daySummary';
 import { acknowledgeShiftJsa } from '@/core/services/jsaShiftAck';
+import { getCurrentShiftId } from '@/core/services/shiftTracking';
 import JsaCloseModal from '@/ui/shared/JsaCloseModal';
 
 function formatTime12h(iso: string | null): string {
@@ -167,31 +168,29 @@ export default function DaySummaryScreen() {
     }
     if (!user) return;
     const driverName = user.legalName || user.displayName;
-    // jsa_day_status doc ids are keyed by UTC date (jsaTracking.ts uses
-    // toISOString().slice(0,10)). Past 6 PM Mountain (midnight UTC) the
-    // local-day driver is on shift, but `new Date().toISOString()` reports
-    // tomorrow's UTC date — so today's doc id misses by one. Same trap the
-    // WB T JSA banner had; same fallback: try today, then yesterday.
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const yesterdayStr = (() => {
-      const d = new Date();
-      d.setUTCDate(d.getUTCDate() - 1);
-      return d.toISOString().slice(0, 10);
-    })();
     const API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
     const BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
+
+    // JSA scope is per-shift now: jsa_day_status doc id = `{driverId}_{shiftId}`.
+    // shiftId was minted at Start Shift and persisted in AsyncStorage; it
+    // survives Close-but-stay-logged-in (only cleared on confirmArrival /
+    // logout). On the very first shift right after this rollout, the
+    // shiftId may not exist yet (older session) — fall back to today's
+    // UTC date so the screen still loads (legacy doc); going forward,
+    // every new shift mints an id so this fallback never fires for a
+    // post-rollout shift.
+    const shiftIdP = getCurrentShiftId().then(id => id || (() => {
+      // Fallback: legacy date-keyed doc id
+      return new Date().toISOString().slice(0, 10);
+    })());
 
     // All 4 fetches in parallel — no sequential waits
     const invoicesP = fetchTodayInvoices(driverName, user.companyId).catch(() => [] as any[]);
     const shiftP = fetchTodayShift(user.driverId).catch(() => null);
-    const fetchJsaForDate = (dateStr: string) =>
-      fetch(`${BASE}/jsa_day_status/${user.driverId}_${dateStr}?key=${API_KEY}`)
-        .then(r => r.ok ? r.json() : null).catch(() => null);
-    const jsaP = fetchJsaForDate(todayStr).then(async (doc) => {
-      if (doc) return doc;
-      // Today missed — try yesterday (UTC-rollover during a late shift).
-      return fetchJsaForDate(yesterdayStr);
-    });
+    const jsaP = shiftIdP.then(scope =>
+      fetch(`${BASE}/jsa_day_status/${user.driverId}_${scope}?key=${API_KEY}`)
+        .then(r => r.ok ? r.json() : null).catch(() => null)
+    );
     const companyP = user.companyId
       ? fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`)
           .then(r => r.ok ? r.json() : null).catch(() => null)
@@ -304,6 +303,8 @@ export default function DaySummaryScreen() {
       if (user?.driverId) params.set('hash', user.driverId);
       const name = user?.legalName || user?.displayName;
       if (name) params.set('name', name);
+      const shiftId = await getCurrentShiftId();
+      if (shiftId) params.set('shiftId', shiftId);
       await Linking.openURL(`jsaapp://start?${params.toString()}`);
     } catch (err) {
       console.warn('[day-summary] Read JSA deep link failed:', err);

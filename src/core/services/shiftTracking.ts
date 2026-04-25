@@ -7,8 +7,44 @@
 //
 // Stale shift safeguard: on login, checks previous day's doc for an unmatched login.
 // If found, auto-closes it with a synthetic logout at 23:59:59 of that day.
+//
+// shiftId — unique-per-shift token minted at Start Shift, used as the JSA
+// scope key across WB S / WB T / WB JSA. Format `${YYYY-MM-DD}_${HHMMSS}`.
+// Each shift gets its own JSA doc; closing the shift "freezes" that JSA
+// because new shifts mint a new id. Stored in AsyncStorage so all three
+// apps can read it (passed through SSO deep links to WB T / WB JSA).
 
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const SHIFT_ID_KEY = 'wellbuilt-current-shift-id';
+
+/** Generate a new shift id from the current local time. */
+export function mintShiftId(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}_${hh}${mi}${ss}`;
+}
+
+/** Persist the active shiftId to AsyncStorage. */
+export async function setCurrentShiftId(shiftId: string): Promise<void> {
+  try { await AsyncStorage.setItem(SHIFT_ID_KEY, shiftId); } catch {}
+}
+
+/** Read the active shiftId, or null if no shift is active. */
+export async function getCurrentShiftId(): Promise<string | null> {
+  try { return await AsyncStorage.getItem(SHIFT_ID_KEY); } catch { return null; }
+}
+
+/** Clear the active shiftId — called on shift end / logout. */
+export async function clearCurrentShiftId(): Promise<void> {
+  try { await AsyncStorage.removeItem(SHIFT_ID_KEY); } catch {}
+}
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -205,6 +241,7 @@ export async function recordShiftEvent(
   displayName: string,
   companyId?: string,
   source: 'wbt' | 'wbm' | 'wbs' = 'wbs',
+  shiftId?: string,
 ): Promise<void> {
   try {
     const gps = await captureGPS();
@@ -238,6 +275,12 @@ export async function recordShiftEvent(
     if (companyId) {
       fields.companyId = { stringValue: companyId };
       fieldPaths.push('companyId');
+    }
+    // Tag the shift doc with the latest shiftId so audit lookups can find
+    // which JSA docs (jsa_day_status/{hash}_{shiftId}) belong to this day.
+    if (shiftId) {
+      fields.currentShiftId = { stringValue: shiftId };
+      fieldPaths.push('currentShiftId');
     }
 
     const body = {
