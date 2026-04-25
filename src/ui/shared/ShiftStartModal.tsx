@@ -27,7 +27,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
 import { loadVehicleInfo, saveVehicleInfo } from '@/core/services/driverProfile';
-import { fetchCompanyPackages, type ShiftPackageOption } from '@/core/services/companyConfig';
+import { fetchCompanyPackages, fetchCompanyConfig, canonicalizeJsaMode, type ShiftPackageOption } from '@/core/services/companyConfig';
+
+type JsaModeCanonical = 'off' | 'per_shift' | 'per_job';
+
+/** Mode-aware explainer text shown in the start-shift modal. */
+function jsaExplainer(mode: JsaModeCanonical): { title: string; body: string } | null {
+  switch (mode) {
+    case 'per_shift':
+      return {
+        title: 'JSA — Once per shift',
+        body: 'You\'ll be prompted to acknowledge or read today\'s JSA at your first job close. Your shift can\'t end until it\'s done. Tap the JSA tile any time to do it now.',
+      };
+    case 'per_job':
+      return {
+        title: 'JSA — Once per job',
+        body: 'You\'ll be prompted at every job close. Your first JSA today becomes a template — every job after that can be acknowledged with one tap.',
+      };
+    default:
+      return null;
+  }
+}
 
 const ODOMETER_KEY = 'wellbuilt-last-odometer';
 
@@ -62,6 +82,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
   const [preTripDone, setPreTripDone] = useState(false);
   const [vehicleOk, setVehicleOk] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [jsaMode, setJsaMode] = useState<JsaModeCanonical>('off');
 
   // Load all pre-fill data when modal opens
   useEffect(() => {
@@ -74,9 +95,13 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
 
     (async () => {
       try {
-        // Load packages
-        const pkgs = await fetchCompanyPackages(user?.companyId || '').catch(() => [
-          { id: 'water-hauling', name: 'Water Hauling' } as ShiftPackageOption,
+        // Load packages + company config (jsaMode for the explainer) in
+        // parallel. Both reads are cached, so revisits are instant.
+        const [pkgs, cfg] = await Promise.all([
+          fetchCompanyPackages(user?.companyId || '').catch(() => [
+            { id: 'water-hauling', name: 'Water Hauling' } as ShiftPackageOption,
+          ]),
+          fetchCompanyConfig(user?.companyId || '').catch(() => null),
         ]);
         setPackages(pkgs.length > 0 ? pkgs : [{ id: 'water-hauling', name: 'Water Hauling' }]);
         const defaultId = user?.defaultPackageId;
@@ -85,6 +110,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
         } else {
           setSelectedPkg(pkgs[0]?.id || 'water-hauling');
         }
+        setJsaMode(canonicalizeJsaMode(cfg?.jsaMode));
 
         // Load vehicle info
         const vehicle = await loadVehicleInfo(user?.passcodeHash || '');
@@ -147,6 +173,21 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
               <ActivityIndicator color={colors.brand.accent} style={{ marginVertical: 32 }} />
             ) : (
               <>
+                {/* ── JSA explainer (only when company has JSA enabled) ── */}
+                {(() => {
+                  const ex = jsaExplainer(jsaMode);
+                  if (!ex) return null;
+                  return (
+                    <View style={s.jsaCard}>
+                      <View style={s.jsaCardHeader}>
+                        <MaterialCommunityIcons name="shield-check" size={18} color={colors.brand.accent} />
+                        <Text style={s.jsaCardTitle}>{ex.title}</Text>
+                      </View>
+                      <Text style={s.jsaCardBody}>{ex.body}</Text>
+                    </View>
+                  );
+                })()}
+
                 {/* ── Job Package ── */}
                 <Text style={s.sectionLabel}>JOB PACKAGE</Text>
                 <View style={s.pkgList}>
@@ -311,6 +352,33 @@ const s = StyleSheet.create({
     letterSpacing: 1.2,
     marginTop: 16,
     marginBottom: 8,
+  },
+
+  // JSA explainer card — shown when company.jsaMode !== 'off'
+  jsaCard: {
+    backgroundColor: `${colors.brand.accent}10`,
+    borderWidth: 1,
+    borderColor: `${colors.brand.accent}40`,
+    borderRadius: radius.md,
+    padding: 12,
+    marginBottom: 4,
+  },
+  jsaCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  jsaCardTitle: {
+    color: colors.brand.accent,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  jsaCardBody: {
+    color: colors.text.secondary,
+    fontSize: 12,
+    lineHeight: 17,
   },
 
   // Package picker

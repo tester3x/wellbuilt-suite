@@ -44,7 +44,18 @@ export const TIER_ORDER: Tier[] = ['field-basics', 'full-field', 'suite'];
 
 // ── Company config interface ──────────────────────────────────
 
-export type JsaMode = 'off' | 'per_shift' | 'per_location' | 'per_load';
+// Current JSA modes. Legacy `per_load` and `per_location` are still
+// readable from existing Firestore docs (4/24/2026 rename) and map to
+// `per_job` behaviorally — kept in the union so we don't reject doc
+// reads, canonicalized via canonicalizeJsaMode below.
+export type JsaMode = 'off' | 'per_shift' | 'per_job' | 'per_location' | 'per_load';
+
+/** Map legacy modes to the current canonical set. */
+export function canonicalizeJsaMode(mode: string | undefined): 'off' | 'per_shift' | 'per_job' {
+  if (mode === 'per_load' || mode === 'per_location') return 'per_job';
+  if (mode === 'per_shift' || mode === 'per_job') return mode;
+  return 'off';
+}
 
 export interface CompanyConfig {
   tier: Tier;
@@ -132,7 +143,7 @@ export async function fetchCompanyConfig(companyId: string): Promise<CompanyConf
       enabledApps: explicitApps.length > 0 ? explicitApps : (TIER_APPS[tier] || TIER_APPS['suite']),
       name: parseStr(f.name),
       requiredApps: parseStrArray(f.requiredApps),
-      jsaMode: (['off', 'per_shift', 'per_location', 'per_load'].includes(jsaModeRaw) ? jsaModeRaw : 'off') as JsaMode,
+      jsaMode: (['off', 'per_shift', 'per_job', 'per_location', 'per_load'].includes(jsaModeRaw) ? jsaModeRaw : 'off') as JsaMode,
       logoUrl: parseStr(f.logoUrl) || undefined,
       primaryColor: parseStr(f.primaryColor) || undefined,
       phone: parseStr(f.phone) || undefined,
