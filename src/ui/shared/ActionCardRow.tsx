@@ -16,7 +16,6 @@ import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
-import JsaChoiceModal from './JsaChoiceModal';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -80,7 +79,6 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
-  const [showJsaChoice, setShowJsaChoice] = useState(false);
 
   // Tick shift timer while active
   useEffect(() => {
@@ -120,11 +118,11 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const handleStartConfirm = async (data: ShiftStartData) => {
     setShowStartModal(false);
     await onStartShift(data.packageId || undefined);
-    // Rule-driven: show JSA choice modal for shift_start_optional/new_location prompts.
-    // per_load (each_job) = no modal at shift start, WB T handles per-job.
-    if (jsaMode && jsaMode !== 'off' && jsaMode !== 'per_load' && onJsaLaunch) {
-      setTimeout(() => setShowJsaChoice(true), 500);
-    }
+    // 4/24/2026 — JsaChoiceModal at shift start retired. The per-job-close
+    // JSA gate in WB T now catches every driver who didn't pre-fill the
+    // JSA at the start of the shift, so a separate Now/Later prompt at
+    // shift start is redundant. Drivers who WANT to do their JSA up-front
+    // can still tap the JSA tile in the application grid.
   };
 
   // ── End shift: return to yard ──
@@ -213,32 +211,10 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         </Pressable>
       </View>
 
-      {/* ── JSA Required Banner ── */}
-      {active && jsaPending && jsaMode && jsaMode !== 'off' && (
-        <Pressable
-          onPress={onJsaLaunch}
-          style={s.jsaBanner}
-        >
-          <MaterialCommunityIcons name="shield-alert" size={20} color="#000" />
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={s.jsaBannerTitle}>JSA Required</Text>
-            <Text style={s.jsaBannerSub}>Complete your Job Safety Analysis to start working</Text>
-          </View>
-          <MaterialCommunityIcons name="chevron-right" size={22} color="#000" />
-        </Pressable>
-      )}
-
-      {/* ── JSA Choice Modal (after shift start) ── */}
-      <JsaChoiceModal
-        visible={showJsaChoice}
-        onCompleteNow={() => {
-          setShowJsaChoice(false);
-          if (onJsaLaunch) onJsaLaunch();
-        }}
-        onStartWorking={() => {
-          setShowJsaChoice(false);
-        }}
-      />
+      {/* JSA Required banner + JsaChoiceModal both removed (4/24/2026).
+          The per-job-close JSA gate in WB T owns the prompt; shift-start
+          + home-screen are silent. Drivers can still launch the JSA app
+          early via the application grid. */}
 
       {/* ── Enhanced Shift Start Modal ── */}
       <ShiftStartModal
