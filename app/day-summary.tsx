@@ -134,7 +134,7 @@ export default function DaySummaryScreen() {
     completed: boolean;
     completedAt: string | null;
     pdfUrl: string | null;
-    locationCount: number;
+    wellCount: number;
   } | null>(null);
   const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
   const [jsaGateLoaded, setJsaGateLoaded] = useState(false);
@@ -158,16 +158,31 @@ export default function DaySummaryScreen() {
     }
     if (!user) return;
     const driverName = user.legalName || user.displayName;
+    // jsa_day_status doc ids are keyed by UTC date (jsaTracking.ts uses
+    // toISOString().slice(0,10)). Past 6 PM Mountain (midnight UTC) the
+    // local-day driver is on shift, but `new Date().toISOString()` reports
+    // tomorrow's UTC date — so today's doc id misses by one. Same trap the
+    // WB T JSA banner had; same fallback: try today, then yesterday.
     const todayStr = new Date().toISOString().slice(0, 10);
-    const jsaDocId = `${user.driverId}_${todayStr}`;
+    const yesterdayStr = (() => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
+    })();
     const API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
     const BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
 
     // All 4 fetches in parallel — no sequential waits
     const invoicesP = fetchTodayInvoices(driverName, user.companyId).catch(() => [] as any[]);
     const shiftP = fetchTodayShift(user.driverId).catch(() => null);
-    const jsaP = fetch(`${BASE}/jsa_day_status/${jsaDocId}?key=${API_KEY}`)
-      .then(r => r.ok ? r.json() : null).catch(() => null);
+    const fetchJsaForDate = (dateStr: string) =>
+      fetch(`${BASE}/jsa_day_status/${user.driverId}_${dateStr}?key=${API_KEY}`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+    const jsaP = fetchJsaForDate(todayStr).then(async (doc) => {
+      if (doc) return doc;
+      // Today missed — try yesterday (UTC-rollover during a late shift).
+      return fetchJsaForDate(yesterdayStr);
+    });
     const companyP = user.companyId
       ? fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`)
           .then(r => r.ok ? r.json() : null).catch(() => null)
@@ -181,15 +196,18 @@ export default function DaySummaryScreen() {
       // JSA status
       if (jsaDoc) {
         const f = jsaDoc.fields;
-        const locs = f?.locations?.arrayValue?.values;
+        const wells = f?.wells?.arrayValue?.values;
+        const wellCount = Array.isArray(wells) ? wells.length : 0;
+        console.log(`[jsaFix] wells count = ${wellCount}`);
         setJsaStatus({
           completed: f?.jsaCompleted?.booleanValue === true,
           completedAt: f?.jsaCompletedAt?.timestampValue || null,
           pdfUrl: f?.pdfUrl?.stringValue || null,
-          locationCount: Array.isArray(locs) ? locs.length : 0,
+          wellCount,
         });
       } else {
-        setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, locationCount: 0 });
+        console.log('[jsaFix] wells count = 0');
+        setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, wellCount: 0 });
       }
 
       // JSA gate from company config
@@ -352,7 +370,7 @@ export default function DaySummaryScreen() {
                       <Text style={s.milesLabel}>completed</Text>
                     </View>
                     <View style={s.milesStat}>
-                      <Text style={s.milesValue}>{jsaStatus.locationCount}</Text>
+                      <Text style={s.milesValue}>{jsaStatus.wellCount}</Text>
                       <Text style={s.milesLabel}>locations</Text>
                     </View>
                   </View>
