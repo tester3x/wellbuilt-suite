@@ -171,50 +171,103 @@ export default function DaySummaryScreen() {
     const API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
     const BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
 
-    // JSA scope is per-shift now: jsa_day_status doc id = `{driverId}_{shiftId}`.
-    // shiftId was minted at Start Shift and persisted in AsyncStorage; it
-    // survives Close-but-stay-logged-in (only cleared on confirmArrival /
-    // logout). On the very first shift right after this rollout, the
-    // shiftId may not exist yet (older session) — fall back to today's
-    // UTC date so the screen still loads (legacy doc); going forward,
-    // every new shift mints an id so this fallback never fires for a
-    // post-rollout shift.
-    const shiftIdP = getCurrentShiftId().then(id => id || (() => {
-      // Fallback: legacy date-keyed doc id
-      return new Date().toISOString().slice(0, 10);
-    })());
+    // JSA scope is now per (shift, operator). A driver can work for two oil
+    // companies in one shift and each gets its own JSA. We query the
+    // jsa_day_status collection for ALL docs with the current shiftId, then
+    // collapse them: the gate is "complete" only if EVERY operator's doc
+    // is jsaCompleted=true. wellCount is summed across all operator docs.
+    const shiftIdP = getCurrentShiftId().then(id => id || new Date().toISOString().slice(0, 10));
 
     // All 4 fetches in parallel — no sequential waits
     const invoicesP = fetchTodayInvoices(driverName, user.companyId).catch(() => [] as any[]);
     const shiftP = fetchTodayShift(user.driverId).catch(() => null);
-    const jsaP = shiftIdP.then(scope =>
-      fetch(`${BASE}/jsa_day_status/${user.driverId}_${scope}?key=${API_KEY}`)
-        .then(r => r.ok ? r.json() : null).catch(() => null)
-    );
+    const jsaP = shiftIdP.then(async (scope) => {
+      // First try the legacy single-doc path: `{driverId}_{shiftId}` (also
+      // catches pre-rollout date-keyed docs).
+      const directDoc = await fetch(`${BASE}/jsa_day_status/${user.driverId}_${scope}?key=${API_KEY}`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+
+      // Then query the collection for any operator-scoped docs in this shift.
+      const queryBody = {
+        structuredQuery: {
+          from: [{ collectionId: 'jsa_day_status' }],
+          where: {
+            compositeFilter: {
+              op: 'AND',
+              filters: [
+                { fieldFilter: { field: { fieldPath: 'driverHash' }, op: 'EQUAL', value: { stringValue: user.driverId } } },
+                { fieldFilter: { field: { fieldPath: 'shiftId' }, op: 'EQUAL', value: { stringValue: scope } } },
+              ],
+            },
+          },
+          limit: 50,
+        },
+      };
+      const queryResults: any[] = await fetch(`${BASE}:runQuery?key=${API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(queryBody),
+      }).then(r => r.ok ? r.json() : []).catch(() => []);
+      const operatorDocs = queryResults
+        .filter((r: any) => r.document)
+        .map((r: any) => r.document);
+
+      return { directDoc, operatorDocs, scope };
+    });
     const companyP = user.companyId
       ? fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`)
           .then(r => r.ok ? r.json() : null).catch(() => null)
       : Promise.resolve(null);
 
-    Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoices, shift, jsaDoc, companyDoc]) => {
+    Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoices, shift, jsaResult, companyDoc]) => {
       // Summary data
       const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles);
       setSummary(result);
 
-      // JSA status
-      if (jsaDoc) {
-        const f = jsaDoc.fields;
-        const wells = f?.wells?.arrayValue?.values;
-        const wellCount = Array.isArray(wells) ? wells.length : 0;
-        console.log(`[jsaFix] wells count = ${wellCount}`);
+      // JSA status — collapse possibly-many operator-scoped docs into a
+      // single screen status. Completed = ALL operator docs are
+      // jsaCompleted=true (or, if no operator docs exist, fall back to the
+      // legacy single doc). wellCount is summed across operator docs.
+      const allDocs: any[] = [];
+      if (jsaResult?.directDoc) allDocs.push(jsaResult.directDoc);
+      if (Array.isArray(jsaResult?.operatorDocs)) {
+        // Dedup by doc name in case the direct lookup also surfaced via the query.
+        const seen = new Set(allDocs.map((d: any) => d?.name).filter(Boolean));
+        for (const d of jsaResult.operatorDocs) {
+          if (d?.name && !seen.has(d.name)) {
+            allDocs.push(d);
+            seen.add(d.name);
+          }
+        }
+      }
+      if (allDocs.length > 0) {
+        let wellCount = 0;
+        let allCompleted = true;
+        let mostRecentCompletedAt: string | null = null;
+        let pdfUrl: string | null = null;
+        for (const doc of allDocs) {
+          const f = doc.fields;
+          const wells = f?.wells?.arrayValue?.values;
+          if (Array.isArray(wells)) wellCount += wells.length;
+          if (f?.jsaCompleted?.booleanValue !== true) {
+            allCompleted = false;
+          } else {
+            const ts = f?.jsaCompletedAt?.timestampValue || null;
+            if (ts && (!mostRecentCompletedAt || ts > mostRecentCompletedAt)) {
+              mostRecentCompletedAt = ts;
+            }
+            if (!pdfUrl && f?.pdfUrl?.stringValue) pdfUrl = f.pdfUrl.stringValue;
+          }
+        }
+        console.log(`[jsaFix] operator docs=${allDocs.length} wells=${wellCount} allCompleted=${allCompleted}`);
         setJsaStatus({
-          completed: f?.jsaCompleted?.booleanValue === true,
-          completedAt: f?.jsaCompletedAt?.timestampValue || null,
-          pdfUrl: f?.pdfUrl?.stringValue || null,
+          completed: allCompleted,
+          completedAt: mostRecentCompletedAt,
+          pdfUrl,
           wellCount,
         });
       } else {
-        console.log('[jsaFix] wells count = 0');
+        console.log('[jsaFix] no JSA docs for shift');
         setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, wellCount: 0 });
       }
 
