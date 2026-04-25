@@ -168,7 +168,12 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         <ShiftArrivalModal
           visible={showArrivalModal}
           onClose={() => setShowArrivalModal(false)}
-          onConfirm={(miles) => { setShowArrivalModal(false); onArrived(miles); }}
+          onConfirm={async (miles) => {
+            // Hold the modal open with its busy spinner while end-of-shift
+            // work runs (GPS + Firestore commit + state updates). Closing
+            // eagerly made drivers think the tap missed.
+            try { await onArrived(miles); } finally { setShowArrivalModal(false); }
+          }}
           returnStartTime={returnStartTime}
         />
       </View>

@@ -44,15 +44,38 @@ async function captureGPS(): Promise<{ timestamp: string; lat: number; lng: numb
       console.warn('[shiftTracking] GPS permission denied');
       return null;
     }
-    const loc = await Promise.race([
+    // Last-known position is instant (OS cache). End-of-shift logout
+    // doesn't need a fresh fix — the driver is at the yard and will
+    // sit there for hours; an audit stamp from the last fix (typically
+    // <30s old when logging out at a known location) is plenty.
+    // Per CLAUDE.md gotcha: NEVER block driver actions on GPS.
+    // Pre-fix this was getCurrentPositionAsync with a 10s timeout —
+    // tapping End Shift sat there for the full 10s on a cold GPS,
+    // making drivers think the button didn't work.
+    const lastKnown = await Location.getLastKnownPositionAsync();
+    if (lastKnown?.coords) {
+      return {
+        timestamp: new Date(lastKnown.timestamp).toISOString(),
+        lat: lastKnown.coords.latitude,
+        lng: lastKnown.coords.longitude,
+      };
+    }
+    // Last-known unavailable — try a brief fresh fix capped at 1.5s.
+    // Worst case is an unstamped event in a truly GPS-dead environment
+    // vs. the prior 10-second freeze.
+    const fresh = await Promise.race([
       Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('GPS timeout')), 10000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
     ]);
-    return {
-      timestamp: new Date(loc.timestamp).toISOString(),
-      lat: loc.coords.latitude,
-      lng: loc.coords.longitude,
-    };
+    if (fresh && (fresh as any).coords) {
+      const f = fresh as any;
+      return {
+        timestamp: new Date(f.timestamp).toISOString(),
+        lat: f.coords.latitude,
+        lng: f.coords.longitude,
+      };
+    }
+    return null;
   } catch (err) {
     console.error('[shiftTracking] GPS capture failed:', err);
     return null;

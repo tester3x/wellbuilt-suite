@@ -13,6 +13,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -21,7 +22,8 @@ import { colors, radius } from '@/core/theme';
 interface ShiftArrivalModalProps {
   visible: boolean;
   onClose: () => void;
-  onConfirm: (odometerMiles?: number) => void;
+  /** Returning a Promise lets the modal hold its busy state until end-of-shift work resolves. */
+  onConfirm: (odometerMiles?: number) => void | Promise<void>;
   returnStartTime: string | null;
 }
 
@@ -53,6 +55,11 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
   const [totalMiles, setTotalMiles] = useState('');
   const [postTripDone, setPostTripDone] = useState(false);
   const [paperworkDone, setPaperworkDone] = useState(false);
+  // Busy = end-of-shift work in flight. Modal stays open with a spinner
+  // and disabled buttons so the driver doesn't double-tap thinking the
+  // first tap missed. Pre-fix the modal closed eagerly and the slow GPS
+  // fix made it look like nothing happened.
+  const [busy, setBusy] = useState(false);
 
   // Reset + load start odometer on open
   useEffect(() => {
@@ -61,6 +68,7 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
     setPaperworkDone(false);
     setEndOdometer('');
     setTotalMiles('');
+    setBusy(false);
     (async () => {
       const startOdo = await AsyncStorage.getItem('wellbuilt-shift-start-odometer').catch(() => null);
       setStartOdometer(startOdo || '');
@@ -83,18 +91,30 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
   const returnDrive = formatReturnDrive(returnStartTime);
 
   const handleConfirm = useCallback(async () => {
+    if (busy) return;
     Keyboard.dismiss();
-    // Save end odometer as next day's start pre-fill
-    if (endOdometer.trim()) {
-      await AsyncStorage.setItem('wellbuilt-last-odometer', endOdometer.trim()).catch(() => {});
+    setBusy(true);
+    try {
+      // Save end odometer as next day's start pre-fill
+      if (endOdometer.trim()) {
+        await AsyncStorage.setItem('wellbuilt-last-odometer', endOdometer.trim()).catch(() => {});
+      }
+      // Pass odometer miles to parent so it can write to Firestore shift
+      // doc. Awaiting onConfirm holds the modal open with the spinner
+      // until end-of-shift work resolves (recordShiftEvent + Firestore
+      // commits). Parent only closes the modal AFTER this returns.
+      const miles = totalMiles ? parseInt(totalMiles, 10) : undefined;
+      await Promise.resolve(onConfirm(miles));
+    } finally {
+      // Don't clear busy on success — the parent will close the modal,
+      // and the visible-effect will reset state on next open. Clearing
+      // here would let a second tap fire before the modal unmounts.
+      // On error (catch in parent), keep modal open so driver can retry.
     }
-    // Pass odometer miles to parent so it can write to Firestore shift doc
-    const miles = totalMiles ? parseInt(totalMiles, 10) : undefined;
-    onConfirm(miles);
-  }, [endOdometer, totalMiles, onConfirm]);
+  }, [busy, endOdometer, totalMiles, onConfirm]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={busy ? () => {} : onClose}>
       <KeyboardAvoidingView
         style={s.overlay}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -164,14 +184,27 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
           {/* Buttons */}
           <View style={s.buttons}>
             <Pressable
-              onPressIn={allChecked ? handleConfirm : undefined}
-              disabled={!allChecked}
-              style={[s.btn, s.btnConfirm, !allChecked && { opacity: 0.4 }]}
+              onPressIn={allChecked && !busy ? handleConfirm : undefined}
+              disabled={!allChecked || busy}
+              style={[s.btn, s.btnConfirm, (!allChecked || busy) && !busy && { opacity: 0.4 }, busy && { opacity: 0.85 }]}
             >
-              <MaterialCommunityIcons name="check-circle-outline" size={20} color="#000" />
-              <Text style={s.btnConfirmText}>End Shift</Text>
+              {busy ? (
+                <>
+                  <ActivityIndicator size="small" color="#000" />
+                  <Text style={s.btnConfirmText}>Ending Shift…</Text>
+                </>
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="check-circle-outline" size={20} color="#000" />
+                  <Text style={s.btnConfirmText}>End Shift</Text>
+                </>
+              )}
             </Pressable>
-            <Pressable onPressIn={onClose} style={[s.btn, s.btnCancel]}>
+            <Pressable
+              onPressIn={busy ? undefined : onClose}
+              disabled={busy}
+              style={[s.btn, s.btnCancel, busy && { opacity: 0.4 }]}
+            >
               <Text style={s.btnCancelText}>Cancel</Text>
             </Pressable>
           </View>
