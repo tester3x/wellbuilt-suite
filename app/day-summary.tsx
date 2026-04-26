@@ -247,8 +247,15 @@ export default function DaySummaryScreen() {
         let pdfUrl: string | null = null;
         for (const doc of allDocs) {
           const f = doc.fields;
+          // wellCount is rendered as "locations" in the summary card. Sum
+          // wells[] (pickup + dropoff stamps from WB T) AND locations[]
+          // (manually-typed locations from WB JSA signoff). Either path
+          // alone produced 0 in the field — both must be counted to match
+          // what the JSA review actually shows.
           const wells = f?.wells?.arrayValue?.values;
+          const locations = f?.locations?.arrayValue?.values;
           if (Array.isArray(wells)) wellCount += wells.length;
+          if (Array.isArray(locations)) wellCount += locations.length;
           if (f?.jsaCompleted?.booleanValue !== true) {
             allCompleted = false;
           } else {
