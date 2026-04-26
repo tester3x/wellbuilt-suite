@@ -240,22 +240,33 @@ export default function DaySummaryScreen() {
           }
         }
       }
+      // Verbose diagnostic line — shiftId, hash, doc ids, per-doc wells +
+      // locations counts, final summed count. Field-test post-mortems
+      // grep for `[jsaFix]` and reconstruct the full path from this one
+      // line. Per-doc breakdown follows.
+      const scopeUsed = jsaResult?.scope || '(unknown)';
+      const docIds = allDocs.map((d: any) => {
+        const parts = (d?.name || '').split('/');
+        return parts[parts.length - 1] || '?';
+      });
+      let totalWells = 0;
+      let totalLocations = 0;
+      const perDocBreakdown: string[] = [];
+      for (const doc of allDocs) {
+        const f = doc.fields;
+        const w = Array.isArray(f?.wells?.arrayValue?.values) ? f.wells.arrayValue.values.length : 0;
+        const l = Array.isArray(f?.locations?.arrayValue?.values) ? f.locations.arrayValue.values.length : 0;
+        const docName = (doc?.name || '').split('/').pop() || '?';
+        totalWells += w;
+        totalLocations += l;
+        perDocBreakdown.push(`${docName}:w=${w},l=${l}`);
+      }
       if (allDocs.length > 0) {
-        let wellCount = 0;
         let allCompleted = true;
         let mostRecentCompletedAt: string | null = null;
         let pdfUrl: string | null = null;
         for (const doc of allDocs) {
           const f = doc.fields;
-          // wellCount is rendered as "locations" in the summary card. Sum
-          // wells[] (pickup + dropoff stamps from WB T) AND locations[]
-          // (manually-typed locations from WB JSA signoff). Either path
-          // alone produced 0 in the field — both must be counted to match
-          // what the JSA review actually shows.
-          const wells = f?.wells?.arrayValue?.values;
-          const locations = f?.locations?.arrayValue?.values;
-          if (Array.isArray(wells)) wellCount += wells.length;
-          if (Array.isArray(locations)) wellCount += locations.length;
           if (f?.jsaCompleted?.booleanValue !== true) {
             allCompleted = false;
           } else {
@@ -266,15 +277,24 @@ export default function DaySummaryScreen() {
             if (!pdfUrl && f?.pdfUrl?.stringValue) pdfUrl = f.pdfUrl.stringValue;
           }
         }
-        console.log(`[jsaFix] operator docs=${allDocs.length} wells=${wellCount} allCompleted=${allCompleted}`);
+        const finalCount = totalWells + totalLocations;
+        console.log(
+          `[jsaFix] shiftId=${scopeUsed} driverHash=${user.driverId} docs=${allDocs.length} ` +
+          `docIds=[${docIds.join(',')}] wells=${totalWells} locations=${totalLocations} ` +
+          `final=${finalCount} allCompleted=${allCompleted}`,
+        );
+        console.log(`[jsaFix] perDoc=${perDocBreakdown.join(' | ')}`);
         setJsaStatus({
           completed: allCompleted,
           completedAt: mostRecentCompletedAt,
           pdfUrl,
-          wellCount,
+          wellCount: finalCount,
         });
       } else {
-        console.log('[jsaFix] no JSA docs for shift');
+        console.log(
+          `[jsaFix] shiftId=${scopeUsed} driverHash=${user.driverId} docs=0 ` +
+          `docIds=[] wells=0 locations=0 final=0 allCompleted=false`,
+        );
         setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, wellCount: 0 });
       }
 
@@ -475,6 +495,27 @@ export default function DaySummaryScreen() {
                   </Text>
                   <Text style={[s.cardTotal, { color: jsaStatus.completed ? '#22c55e' : '#f59e0b' }]}>
                     {jsaStatus.completed ? 'Completed' : 'Pending'}
+                  </Text>
+                </View>
+                {/* Shift-end checklist row — explicit visible status the
+                    driver can read at a glance. Auto-checked from
+                    jsaStatus.completed (which already reflects "all
+                    operator-scoped docs jsaCompleted=true"). Status
+                    visibility only — does not gate shift end here
+                    (the JSA shift-end gate modal handles blocking when
+                    rule.gateShiftEnd is true). */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <MaterialCommunityIcons
+                    name={jsaStatus.completed ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                    size={22}
+                    color={jsaStatus.completed ? '#22c55e' : '#f59e0b'}
+                  />
+                  <Text style={{
+                    fontSize: 14,
+                    fontWeight: '600',
+                    color: jsaStatus.completed ? '#22c55e' : '#f59e0b',
+                  }}>
+                    {jsaStatus.completed ? 'JSA completed' : 'JSA pending'}
                   </Text>
                 </View>
                 {jsaStatus.completed && jsaStatus.completedAt && (

@@ -280,9 +280,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Record logout GPS event (arrival at yard = shift end)
     // Must await so day-summary screen can read the shift end time
     await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
-    // Freeze the JSA for THIS shift — clear shiftId so any subsequent
-    // shift mints a new id (and therefore a new JSA scope).
-    clearCurrentShiftId().catch(() => {});
+    // NOTE: shiftId is intentionally NOT cleared here. Day Summary needs
+    // it to scope the JSA query (jsa_day_status WHERE shiftId == X).
+    // Clearing on confirmArrival caused getCurrentShiftId() to return
+    // null on the Day Summary screen, scope fell back to the date string,
+    // and the JSA wells/locations count rendered as 0 even when JSAs
+    // were signed. The next shift's startShift mints a fresh shiftId and
+    // overwrites this key — no risk of stale carryover. Real cleanup
+    // happens on full logout (logoutWithCascade / logout below).
     // Everything below is fire-and-forget — don't block navigation to Day Summary
     // Write odometer miles to shift doc
     if (odometerMiles != null && odometerMiles > 0) {
