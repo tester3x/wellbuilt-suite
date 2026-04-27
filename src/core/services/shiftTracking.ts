@@ -282,6 +282,17 @@ export async function recordShiftEvent(
       fields.currentShiftId = { stringValue: shiftId };
       fieldPaths.push('currentShiftId');
     }
+    // On logout, clear currentShiftId so WB JSA's refreshShiftIdFromServer
+    // doesn't inherit the previous shift's id on the next session start.
+    // Empty string falls through WB JSA's `stringValue || null` read into
+    // the no-shift branch (AsyncStorage cleared, scope falls back to date).
+    // (Audit 2026-04-27: stale field caused JSA to open into a closed shift.)
+    if (type === 'logout') {
+      fields.currentShiftId = { stringValue: '' };
+      if (!fieldPaths.includes('currentShiftId')) {
+        fieldPaths.push('currentShiftId');
+      }
+    }
 
     const body = {
       writes: [
