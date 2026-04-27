@@ -21,6 +21,7 @@ import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartT
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { cascadeLogoutToSSOApps, clearSSOLaunchedApps } from '../services/appLauncher';
+import { wbDiagLog } from '../services/wbDiagLog';
 
 export interface AuthUser {
   driverId: string;
@@ -242,6 +243,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // to WB T / WB JSA on launch (see appLauncher.ts).
     const shiftId = mintShiftId();
     setCurrentShiftId(shiftId).catch(() => {});
+    wbDiagLog({
+      area: 'shift',
+      event: 'shiftId.minted',
+      source: 'AuthContext.startShift',
+      result: 'ok',
+      reason: 'fresh shiftId minted at Start Shift',
+      driverHash: user.passcodeHash,
+      shiftId,
+      extra: {
+        startTime,
+        companyId: user.companyId || null,
+        packageId: packageId || user.defaultPackageId || null,
+      },
+    });
     // Set React state immediately so timer starts from the correct moment
     setShiftActive(true);
     setShiftStartTime(startTime);
@@ -321,6 +336,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('returnDepartTime');
     await SecureStore.deleteItemAsync('activePackageId');
     clearCurrentShiftId().catch(() => {});
+    wbDiagLog({
+      area: 'logout',
+      event: 'currentShiftId.cleared',
+      source: 'AuthContext.logoutWithCascade',
+      result: 'ok',
+      reason: 'logoutWithCascade — full cascade end-of-day path',
+      driverHash: user?.passcodeHash,
+      extra: { trigger: 'logoutWithCascade' },
+    });
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
@@ -344,6 +368,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('returnDepartTime');
     await SecureStore.deleteItemAsync('activePackageId');
     clearCurrentShiftId().catch(() => {});
+    wbDiagLog({
+      area: 'logout',
+      event: 'currentShiftId.cleared',
+      source: 'AuthContext.logout',
+      result: 'ok',
+      reason: 'logout — direct logout (no Day Summary)',
+      driverHash: user?.passcodeHash,
+      extra: { trigger: 'logout', shiftActiveAtLogout: shiftActive },
+    });
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);

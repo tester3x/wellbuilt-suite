@@ -28,6 +28,7 @@ import {
   type DaySummary,
 } from '@/core/services/daySummary';
 import { acknowledgeShiftJsa } from '@/core/services/jsaShiftAck';
+import { wbDiagLog } from '@/core/services/wbDiagLog';
 import { getCurrentShiftId } from '@/core/services/shiftTracking';
 import JsaCloseModal from '@/ui/shared/JsaCloseModal';
 
@@ -211,6 +212,21 @@ export default function DaySummaryScreen() {
       const operatorDocs = queryResults
         .filter((r: any) => r.document)
         .map((r: any) => r.document);
+
+      wbDiagLog({
+        area: 'jsa',
+        event: 'daySummary.jsaQuery',
+        source: 'day-summary.useEffect.jsaP',
+        result: 'ok',
+        reason: 'jsa_day_status query for shift-end gate',
+        driverHash: user.driverId,
+        shiftId: scope || undefined,
+        counts: {
+          directDoc: directDoc ? 1 : 0,
+          operatorDocs: operatorDocs.length,
+        },
+        extra: { scope, companyId: user.companyId || null },
+      });
 
       return { directDoc, operatorDocs, scope };
     });
