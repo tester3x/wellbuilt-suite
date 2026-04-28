@@ -40,13 +40,20 @@ export async function clearSSOLaunchedApps(): Promise<void> {
 
 /**
  * Send logout deep links to all apps that were SSO'd into this session.
- * Each target app checks its own authMethod — only SSO sessions will auto-logout.
+ *
+ * Cascade logout policy (4/27/2026): WB S is the global logout authority
+ * for the matching driverHash. The hash is forwarded in the URL query so
+ * target apps (WB T / WB JSA / WB eW) verify same-driver before honoring
+ * the signal. Manual sessions on a different driver are not affected.
+ * Targets that don't yet read the hash fall through to their existing
+ * accept-on-arrival behavior.
  */
-export async function cascadeLogoutToSSOApps(): Promise<void> {
+export async function cascadeLogoutToSSOApps(driverHash?: string): Promise<void> {
   const apps = await getSSOLaunchedApps();
+  const qs = driverHash ? `?hash=${encodeURIComponent(driverHash)}` : '';
   for (const scheme of apps) {
     try {
-      await Linking.openURL(`${scheme}://logout`);
+      await Linking.openURL(`${scheme}://logout${qs}`);
     } catch {
       // App not installed or can't be opened — RTDB signal is the backup
     }

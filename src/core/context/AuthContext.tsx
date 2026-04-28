@@ -328,8 +328,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logoutWithCascade = useCallback(async () => {
     if (user) {
-      // Write RTDB signal — SSO'd apps self-logout on next foreground
+      // Write RTDB signal — apps for the same driverHash self-logout on
+      // next foreground (manual + SSO both honor it as of 4/27/2026).
       await writeLogoutSignal(user.passcodeHash);
+      // Instant deep-link cascade to apps SSO'd from this WB S session.
+      // Hash forwarded in URL so target apps verify same-driver. Awaited
+      // so the queue completes before this WB S session is torn down.
+      await cascadeLogoutToSSOApps(user.passcodeHash).catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
@@ -358,10 +363,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (shiftActive && user) {
       recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
     }
-    // Write RTDB signal so other apps self-logout on next foreground (backup)
     if (user) {
+      // Write RTDB signal so other apps self-logout on next foreground (backup).
       writeLogoutSignal(user.passcodeHash).catch(() => {});
-      // Send instant deep link logout to apps that were SSO'd from WB S this session
+      // Send instant deep-link logout to apps SSO'd from WB S this session.
+      // Hash forwarded so target apps verify same-driver before honoring.
+      cascadeLogoutToSSOApps(user.passcodeHash).catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
