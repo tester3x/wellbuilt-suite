@@ -278,14 +278,19 @@ export default function DaySummaryScreen() {
         perDocBreakdown.push(`${docName}:w=${w},l=${l}`);
       }
       if (allDocs.length > 0) {
-        let allCompleted = true;
+        // Path D (2026-04-27): one signed JSA per shift = shift complete.
+        // Previous strict-AND gate required EVERY operator-scoped doc to
+        // have jsaCompleted=true, which blocked logout when WB T stamps
+        // had created multiple per-(shift, operator) docs but the driver
+        // only signed one. Now lenient: ANY doc completed = shift gate
+        // satisfied. Doesn't change the data model — only the gate.
+        let anyCompleted = false;
         let mostRecentCompletedAt: string | null = null;
         let pdfUrl: string | null = null;
         for (const doc of allDocs) {
           const f = doc.fields;
-          if (f?.jsaCompleted?.booleanValue !== true) {
-            allCompleted = false;
-          } else {
+          if (f?.jsaCompleted?.booleanValue === true) {
+            anyCompleted = true;
             const ts = f?.jsaCompletedAt?.timestampValue || null;
             if (ts && (!mostRecentCompletedAt || ts > mostRecentCompletedAt)) {
               mostRecentCompletedAt = ts;
@@ -297,11 +302,11 @@ export default function DaySummaryScreen() {
         console.log(
           `[jsaFix] shiftId=${scopeUsed} driverHash=${user.driverId} docs=${allDocs.length} ` +
           `docIds=[${docIds.join(',')}] wells=${totalWells} locations=${totalLocations} ` +
-          `final=${finalCount} allCompleted=${allCompleted}`,
+          `final=${finalCount} anyCompleted=${anyCompleted}`,
         );
         console.log(`[jsaFix] perDoc=${perDocBreakdown.join(' | ')}`);
         setJsaStatus({
-          completed: allCompleted,
+          completed: anyCompleted,
           completedAt: mostRecentCompletedAt,
           pdfUrl,
           wellCount: finalCount,
