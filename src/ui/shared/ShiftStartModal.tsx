@@ -21,6 +21,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -177,6 +178,25 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
                 {(() => {
                   const ex = jsaExplainer(jsaMode);
                   if (!ex) return null;
+                  const openJsa = async () => {
+                    try {
+                      const params = new URLSearchParams();
+                      if (user?.passcodeHash) params.append('hash', user.passcodeHash);
+                      const name = user?.legalName || user?.displayName || '';
+                      if (name) params.append('name', name);
+                      if (name) params.append('driverName', name);
+                      params.append('returnTo', 'wbs');
+                      const url = `jsaapp://start?${params.toString()}`;
+                      const canOpen = await Linking.canOpenURL(url);
+                      if (!canOpen) {
+                        console.warn('[ShiftStartModal] WB JSA scheme not handleable');
+                        return;
+                      }
+                      await Linking.openURL(url);
+                    } catch (err) {
+                      console.warn('[ShiftStartModal] JSA deep link failed:', err);
+                    }
+                  };
                   return (
                     <View style={s.jsaCard}>
                       <View style={s.jsaCardHeader}>
@@ -184,6 +204,10 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
                         <Text style={s.jsaCardTitle}>{ex.title}</Text>
                       </View>
                       <Text style={s.jsaCardBody}>{ex.body}</Text>
+                      <Pressable onPress={openJsa} style={s.jsaReadBtn}>
+                        <MaterialCommunityIcons name="open-in-new" size={14} color={colors.brand.accent} />
+                        <Text style={s.jsaReadBtnText}>Read JSA</Text>
+                      </Pressable>
                     </View>
                   );
                 })()}
@@ -379,6 +403,25 @@ const s = StyleSheet.create({
     color: colors.text.secondary,
     fontSize: 12,
     lineHeight: 17,
+  },
+  jsaReadBtn: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: `${colors.brand.accent}80`,
+    backgroundColor: `${colors.brand.accent}18`,
+  },
+  jsaReadBtnText: {
+    color: colors.brand.accent,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 
   // Package picker
