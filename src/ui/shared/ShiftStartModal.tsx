@@ -174,24 +174,46 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
               <ActivityIndicator color={colors.brand.accent} style={{ marginVertical: 32 }} />
             ) : (
               <>
-                {/* ── JSA explainer (only when company has JSA enabled) ── */}
+                {/* ── JSA explainer (only when company has JSA enabled) ──
+                    Field bug 2026-04-28: driver tapped "Read JSA" here BEFORE
+                    tapping Start Shift, deep-linked to WB JSA, returned —
+                    shift was never minted so the Start Shift card was still
+                    visible. Driver thought the shift failed. Fix: relabel to
+                    "Preview JSA", make it visually secondary to Start Shift
+                    (which remains the primary action below), explicitly
+                    state it does NOT start the shift, and drop a breadcrumb
+                    so the home screen can tell the driver "JSA viewed — tap
+                    Start Shift" when they return. */}
                 {(() => {
                   const ex = jsaExplainer(jsaMode);
                   if (!ex) return null;
                   const openJsa = async () => {
                     try {
+                      // Breadcrumb so the home screen banner can post the
+                      // "JSA viewed — tap Start Shift" hint after the
+                      // resume deep link lands. Stored as ISO timestamp
+                      // for staleness checking on the read side.
+                      const stamp = new Date().toISOString();
+                      await AsyncStorage.setItem('wellbuilt-jsa-previewed-pre-shift', stamp).catch(() => {});
+
                       const params = new URLSearchParams();
                       if (user?.passcodeHash) params.append('hash', user.passcodeHash);
                       const name = user?.legalName || user?.displayName || '';
                       if (name) params.append('name', name);
                       if (name) params.append('driverName', name);
                       params.append('returnTo', 'wbs');
+                      params.append('preview', '1');
                       const url = `jsaapp://start?${params.toString()}`;
                       const canOpen = await Linking.canOpenURL(url);
                       if (!canOpen) {
                         console.warn('[ShiftStartModal] WB JSA scheme not handleable');
                         return;
                       }
+                      console.log(JSON.stringify({
+                        tag: '[ShiftStartModal][jsa.preview.tap]',
+                        driverHash: user?.passcodeHash,
+                        stamp,
+                      }));
                       await Linking.openURL(url);
                     } catch (err) {
                       console.warn('[ShiftStartModal] JSA deep link failed:', err);
@@ -204,9 +226,14 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
                         <Text style={s.jsaCardTitle}>{ex.title}</Text>
                       </View>
                       <Text style={s.jsaCardBody}>{ex.body}</Text>
+                      <Text style={s.jsaPreviewHint}>
+                        Optional preview only — your shift won't start until you tap
+                        <Text style={s.jsaPreviewHintEmph}> Start Shift </Text>
+                        below.
+                      </Text>
                       <Pressable onPress={openJsa} style={s.jsaReadBtn}>
                         <MaterialCommunityIcons name="open-in-new" size={14} color={colors.brand.accent} />
-                        <Text style={s.jsaReadBtnText}>Read JSA</Text>
+                        <Text style={s.jsaReadBtnText}>Preview JSA</Text>
                       </Pressable>
                     </View>
                   );
@@ -405,23 +432,38 @@ const s = StyleSheet.create({
     lineHeight: 17,
   },
   jsaReadBtn: {
-    marginTop: 8,
+    marginTop: 10,
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: `${colors.brand.accent}80`,
-    backgroundColor: `${colors.brand.accent}18`,
+    borderColor: colors.brand.accent,
+    // Brighter than original (was `${accent}18`) so it's easy to see, but
+    // still a hollow/tinted button — never a solid filled accent. Solid
+    // accent is reserved for the Start Shift primary action below.
+    backgroundColor: `${colors.brand.accent}33`,
   },
   jsaReadBtnText: {
     color: colors.brand.accent,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+  jsaPreviewHint: {
+    color: colors.text.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 6,
+    fontStyle: 'italic',
+  },
+  jsaPreviewHintEmph: {
+    color: colors.brand.accent,
+    fontWeight: '700',
+    fontStyle: 'normal',
   },
 
   // Package picker

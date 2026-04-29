@@ -5,6 +5,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getDriverSession,
   revalidateDriverSession,
@@ -237,12 +238,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     // Capture timestamp FIRST — before any awaits steal seconds
     const startTime = new Date().toISOString();
+    // Local date used for driver_shifts/{driverHash}_{localDate} doc id.
+    // Computed here so the diagnostic log lets us match this Start Shift
+    // event to the WB JSA refresh log byte-for-byte.
+    const _now = new Date();
+    const localDate = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
     // Mint a fresh shiftId for the new shift. JSA is keyed by this id
     // across WB S / WB T / WB JSA — closing a shift "freezes" its JSA
     // because the next shift gets a new id. SSO deep links pass it down
     // to WB T / WB JSA on launch (see appLauncher.ts).
     const shiftId = mintShiftId();
-    setCurrentShiftId(shiftId).catch(() => {});
+    let asyncStorageWriteOk = false;
+    try {
+      await setCurrentShiftId(shiftId);
+      asyncStorageWriteOk = true;
+    } catch (err) {
+      console.warn('[startShift] setCurrentShiftId failed:', err);
+    }
+    // Clear the pre-shift JSA preview breadcrumb — once the shift is
+    // actually started, the home-screen "JSA viewed — tap Start Shift"
+    // banner is no longer relevant. Fire-and-forget.
+    AsyncStorage.removeItem('wellbuilt-jsa-previewed-pre-shift').catch(() => {});
     wbDiagLog({
       area: 'shift',
       event: 'shiftId.minted',
@@ -253,6 +269,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       shiftId,
       extra: {
         startTime,
+        localDate,
+        docId: `${user.driverId}_${localDate}`,
+        asyncStorageWriteOk,
         companyId: user.companyId || null,
         packageId: packageId || user.defaultPackageId || null,
       },

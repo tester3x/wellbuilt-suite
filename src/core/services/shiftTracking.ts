@@ -321,10 +321,35 @@ export async function recordShiftEvent(
     if (!resp.ok) {
       const text = await resp.text();
       console.error(`[shiftTracking] Firestore commit failed (${resp.status}):`, text);
+      // Persistent diagnostic — captures the case where the server doc
+      // never gets written (silent failure caused the 4/28 field-test bug
+      // where WB JSA's refresh saw "no doc" and wiped local AsyncStorage).
+      console.log(JSON.stringify({
+        tag: '[shiftTracking][shift.write]',
+        ok: false,
+        type,
+        driverHash: driverId,
+        localDate: date,
+        docId: `${driverId}_${date}`,
+        currentShiftIdValue: type === 'logout' ? '' : (shiftId || null),
+        httpStatus: resp.status,
+      }));
       return;
     }
 
     console.log(`[shiftTracking] Recorded ${type} at ${gps?.lat?.toFixed(4) ?? 0}, ${gps?.lng?.toFixed(4) ?? 0}`);
+    // Diagnostic — every successful write logs driverHash + localDate +
+    // docId + currentShiftId so a post-mortem against WB JSA's
+    // shiftId.refreshFromServer log can confirm the keys match exactly.
+    console.log(JSON.stringify({
+      tag: '[shiftTracking][shift.write]',
+      ok: true,
+      type,
+      driverHash: driverId,
+      localDate: date,
+      docId: `${driverId}_${date}`,
+      currentShiftIdValue: type === 'logout' ? '' : (shiftId || null),
+    }));
   } catch (err) {
     console.error(`[shiftTracking] Failed to record ${type}:`, err);
   }

@@ -5,10 +5,11 @@
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated, Linking } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Animated, Linking, AppState } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAppLauncher } from '@/core/hooks/useAppLauncher';
 import { type JsaMode } from '@/core/services/companyConfig';
@@ -16,6 +17,9 @@ import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
+
+const JSA_PREVIEW_KEY = 'wellbuilt-jsa-previewed-pre-shift';
+const JSA_PREVIEW_STALE_MS = 60 * 60 * 1000; // 1 hour
 
 interface ActionCardRowProps {
   active: boolean;
@@ -79,6 +83,52 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
+  // Pre-shift JSA preview breadcrumb. Set in ShiftStartModal when driver
+  // taps "Preview JSA" before starting their shift. We read it on mount,
+  // on AppState 'active' (driver returning from the JSA detour), and
+  // whenever the shift active state flips. Cleared in AuthContext.startShift
+  // once the shift is actually minted, and stale-protected by a 1-hour TTL
+  // so a forgotten breadcrumb from yesterday can't post a stale banner.
+  const [previewedPreShift, setPreviewedPreShift] = useState(false);
+
+  const checkPreviewBreadcrumb = useCallback(async () => {
+    try {
+      const v = await AsyncStorage.getItem(JSA_PREVIEW_KEY);
+      if (!v) {
+        setPreviewedPreShift(false);
+        return;
+      }
+      const ts = Date.parse(v);
+      if (!isNaN(ts) && Date.now() - ts > JSA_PREVIEW_STALE_MS) {
+        await AsyncStorage.removeItem(JSA_PREVIEW_KEY).catch(() => {});
+        setPreviewedPreShift(false);
+        return;
+      }
+      setPreviewedPreShift(true);
+    } catch {
+      setPreviewedPreShift(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkPreviewBreadcrumb();
+  }, [checkPreviewBreadcrumb, active]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') checkPreviewBreadcrumb();
+    });
+    return () => sub.remove();
+  }, [checkPreviewBreadcrumb]);
+
+  // When the shift becomes active, drop the local banner state. The
+  // AsyncStorage key is also cleared by AuthContext.startShift so the
+  // banner won't reappear on next mount.
+  useEffect(() => {
+    if (active && previewedPreShift) {
+      setPreviewedPreShift(false);
+    }
+  }, [active, previewedPreShift]);
 
   // Tick shift timer while active
   useEffect(() => {
@@ -182,6 +232,27 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
   return (
     <View>
+      {/* Pre-shift JSA preview return banner. Shown only when the driver
+          tapped "Preview JSA" in the Start Shift modal, returned from WB
+          JSA, and has NOT yet started the shift. Disambiguates the visible
+          Start Shift card so it doesn't look like the shift failed. */}
+      {!active && !returning && previewedPreShift && (
+        <Pressable
+          onPress={() => {
+            setPreviewedPreShift(false);
+            AsyncStorage.removeItem(JSA_PREVIEW_KEY).catch(() => {});
+            setShowStartModal(true);
+          }}
+          style={s.previewReturnBanner}
+        >
+          <MaterialCommunityIcons name="information-outline" size={18} color="#000" />
+          <View style={{ flex: 1 }}>
+            <Text style={s.previewReturnBannerTitle}>JSA viewed</Text>
+            <Text style={s.previewReturnBannerSub}>Tap Start Shift to begin your shift.</Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={20} color="#000" />
+        </Pressable>
+      )}
       <View style={s.row}>
         {/* Shift Card */}
         <Pressable
@@ -256,6 +327,31 @@ const s = StyleSheet.create({
   },
   jsaBannerSub: {
     color: 'rgba(0,0,0,0.6)',
+    fontSize: 12,
+    marginTop: 1,
+  },
+  // Pre-shift JSA preview return banner (driver came back from "Preview
+  // JSA" but hasn't tapped Start Shift yet). Same amber palette as the
+  // (retired) jsa-required banner so drivers don't have to learn a new
+  // signal — but copy + tap target are different (this one re-opens the
+  // Start Shift modal).
+  previewReturnBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#f59e0b',
+    borderRadius: radius.lg,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: spacing.md,
+  },
+  previewReturnBannerTitle: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  previewReturnBannerSub: {
+    color: 'rgba(0,0,0,0.7)',
     fontSize: 12,
     marginTop: 1,
   },
