@@ -44,8 +44,8 @@ export function Sidebar({ apps, companyName, userName, roleLabel, onAppPress, on
         <Pressable onPress={onSettings} style={styles.collapsedBottomBtn}>
           <MaterialCommunityIcons name="cog-outline" size={18} color={colors.text.muted} />
         </Pressable>
-        <Pressable onPress={onLogout} style={styles.collapsedBottomBtn}>
-          <MaterialCommunityIcons name="logout" size={18} color={colors.text.muted} />
+        <Pressable onPress={onLogout} style={[styles.collapsedBottomBtn, styles.collapsedLogoutBtn]}>
+          <MaterialCommunityIcons name="logout" size={18} color="#EF4444" />
         </Pressable>
       </View>
     );
@@ -91,9 +91,9 @@ export function Sidebar({ apps, companyName, userName, roleLabel, onAppPress, on
           <MaterialCommunityIcons name="cog-outline" size={18} color={colors.text.muted} />
           <Text style={styles.footerBtnText}>{t('settings.title')}</Text>
         </Pressable>
-        <Pressable onPress={onLogout} style={styles.footerBtn}>
-          <MaterialCommunityIcons name="logout" size={18} color={colors.text.muted} />
-          <Text style={styles.footerBtnText}>{t('settingsExtra.logOut')}</Text>
+        <Pressable onPress={onLogout} style={[styles.footerBtn, styles.footerLogoutBtn]}>
+          <MaterialCommunityIcons name="logout" size={18} color="#EF4444" />
+          <Text style={[styles.footerBtnText, styles.footerLogoutBtnText]}>{t('settingsExtra.logOut')}</Text>
         </Pressable>
       </View>
     </View>
@@ -120,6 +120,10 @@ const styles = StyleSheet.create({
   footer: { borderTopWidth: 1, borderTopColor: colors.border.subtle, padding: spacing.sm, gap: spacing.xs },
   footerBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radius.sm },
   footerBtnText: { ...typography.bodySmall, color: colors.text.muted },
+  // Red-tinted variant for the expanded sidebar's logout row — destructive
+  // action signaling, matches header buttons in the other layouts.
+  footerLogoutBtn: { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' },
+  footerLogoutBtnText: { color: '#EF4444', fontWeight: '600' },
   collapsedLogo: { marginVertical: spacing.md },
   collapsedLogoImage: { width: 28, height: 28 },
   collapsedApps: { flex: 1, marginTop: spacing.sm },
@@ -127,4 +131,13 @@ const styles = StyleSheet.create({
   collapsedAppBtnPressed: { opacity: 0.7 },
   collapsedAppIcon: { width: 36, height: 36, borderRadius: radius.sm, justifyContent: 'center', alignItems: 'center' },
   collapsedBottomBtn: { padding: spacing.sm },
+  // Red-tinted variant for collapsed sidebar's logout icon — same destructive
+  // signaling as the expanded variant + other layouts' header buttons.
+  collapsedLogoutBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderRadius: radius.sm,
+    margin: 4,
+  },
 });

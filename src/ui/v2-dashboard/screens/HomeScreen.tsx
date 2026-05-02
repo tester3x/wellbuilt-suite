@@ -75,6 +75,7 @@ export default function HomeScreen() {
         onSettings={() => router.push('/settings')}
         onAction={logout}
         actionIcon="logout"
+        actionDestructive
       />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>

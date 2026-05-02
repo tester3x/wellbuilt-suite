@@ -115,8 +115,8 @@ export default function HomeScreen() {
           <Pressable onPress={() => router.push('/settings')} style={styles.headerButton}>
             <MaterialCommunityIcons name="cog-outline" size={20} color={colors.text.muted} />
           </Pressable>
-          <Pressable onPress={logout} style={styles.headerButton}>
-            <MaterialCommunityIcons name="logout" size={20} color={colors.text.muted} />
+          <Pressable onPress={logout} style={[styles.headerButton, styles.logoutHeaderButton]}>
+            <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
           </Pressable>
         </View>
       </View>
@@ -206,6 +206,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border.subtle },
   headerRight: { flexDirection: 'row', gap: spacing.sm },
   headerButton: { width: 40, height: 40, borderRadius: radius.full, backgroundColor: colors.bg.card, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border.subtle },
+  // Red-tinted variant for the logout button — destructive action, should
+  // not blend into the header icon row. Matches WB T's #EF4444 convention.
+  logoutHeaderButton: { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)' },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
   welcomeSection: { marginBottom: spacing.lg },

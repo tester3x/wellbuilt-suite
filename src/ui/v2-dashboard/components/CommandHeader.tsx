@@ -10,9 +10,11 @@ interface CommandHeaderProps {
   onSettings?: () => void;
   onAction?: () => void;
   actionIcon?: string;
+  /** Red-tinted button + icon for destructive actions (e.g. logout). */
+  actionDestructive?: boolean;
 }
 
-export function CommandHeader({ title, subtitle, onSettings, onAction, actionIcon }: CommandHeaderProps) {
+export function CommandHeader({ title, subtitle, onSettings, onAction, actionIcon, actionDestructive }: CommandHeaderProps) {
   const { t } = useTranslation();
   return (
     <View style={styles.container}>
@@ -32,8 +34,12 @@ export function CommandHeader({ title, subtitle, onSettings, onAction, actionIco
             </Pressable>
           )}
           {onAction && (
-            <Pressable onPress={onAction} style={styles.actionBtn}>
-              <MaterialCommunityIcons name={(actionIcon || 'logout') as keyof typeof MaterialCommunityIcons.glyphMap} size={20} color={colors.text.muted} />
+            <Pressable onPress={onAction} style={[styles.actionBtn, actionDestructive && styles.actionBtnDestructive]}>
+              <MaterialCommunityIcons
+                name={(actionIcon || 'logout') as keyof typeof MaterialCommunityIcons.glyphMap}
+                size={20}
+                color={actionDestructive ? '#EF4444' : colors.text.muted}
+              />
             </Pressable>
           )}
         </View>
@@ -52,4 +58,5 @@ const styles = StyleSheet.create({
   subtitle: { ...typography.caption, color: colors.text.muted, marginTop: 2 },
   actions: { flexDirection: 'row', gap: spacing.sm },
   actionBtn: { width: 36, height: 36, borderRadius: radius.full, backgroundColor: colors.bg.card, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border.subtle },
+  actionBtnDestructive: { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)' },
 });

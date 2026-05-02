@@ -59,8 +59,8 @@ export default function HomeScreen() {
           <Pressable onPress={() => router.push('/settings')} style={styles.headerBtn}>
             <MaterialCommunityIcons name="cog-outline" size={20} color={colors.text.muted} />
           </Pressable>
-          <Pressable onPress={logout} style={styles.headerBtn}>
-            <MaterialCommunityIcons name="logout" size={20} color={colors.text.muted} />
+          <Pressable onPress={logout} style={[styles.headerBtn, styles.logoutHeaderBtn]}>
+            <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
           </Pressable>
         </View>
       </View>
@@ -117,6 +117,8 @@ const styles = StyleSheet.create({
   roleBadge: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.sm, backgroundColor: `${colors.brand.primary}15` },
   roleText: { ...typography.caption, color: colors.brand.primary, fontWeight: '700', fontSize: 9 },
   headerBtn: { width: 36, height: 36, borderRadius: radius.full, backgroundColor: colors.bg.card, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border.subtle },
+  // Red-tinted variant for the logout button — destructive action.
+  logoutHeaderBtn: { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)' },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
   footer: { alignItems: 'center', marginTop: spacing.xl, paddingTop: spacing.lg },
