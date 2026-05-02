@@ -89,17 +89,28 @@ export default function HomeScreen() {
             {companyApps.map(app => {
               // Build badge props for Tickets card
               const isTickets = app.id === 'water-ticket';
-              const badgeText = isTickets && dispatches.length > 0
+              const hasPending = isTickets && dispatches.length > 0;
+              const badgeText = hasPending
                 ? `${dispatches.length} pending`
                 : undefined;
-              const badgeDetailText = isTickets && dispatches.length > 0 && dispatches.length <= 3
+              const badgeDetailText = hasPending && dispatches.length <= 3
                 ? dispatches.map(d => d.wellName).join(', ')
+                : undefined;
+              // Pending-pulse accent for the Tickets card. Prefer per-customer
+              // accent when AuthUser eventually exposes it; today the cast
+              // resolves to undefined for every customer and we fall back to
+              // LG gold (colors.brand.primary). When customerAccentColor is
+              // wired through AuthContext later, no change needed here.
+              const ticketsAccent = hasPending
+                ? ((user as any)?.customerAccentColor || colors.brand.primary)
                 : undefined;
 
               return (
               <AppListItem key={app.id} app={app}
                 badge={badgeText}
                 badgeDetail={badgeDetailText}
+                accentColor={ticketsAccent}
+                pulse={hasPending}
                 onPress={() => {
                   if (hasLaunched(app.id)) {
                     launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
