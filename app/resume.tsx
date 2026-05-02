@@ -16,30 +16,25 @@ export default function ResumeScreen() {
       console.log('[WB S] JSA return — PDF URL received:', String(params.jsaPdfUrl).substring(0, 60));
     }
 
-    // Diagnostic — capture the post-JSA-return state so a field-test
-    // log can show whether the driver came back to an active shift or
-    // is still in the pre-shift "JSA viewed" state. The home-screen
-    // banner is driven by these same two values.
+    // Diagnostic — post-JSA-return state. Pre-shift "JSA viewed" branch
+    // retired 2026-05-01 (Preview-JSA launcher removed); the only valid
+    // states now are shift-active (driver came back from JSA mid-shift)
+    // or shift-not-started (driver opened JSA via the application grid
+    // before clocking in — unusual but allowed).
     (async () => {
       try {
-        const [shiftStarted, currentShiftId, previewedAt] = await Promise.all([
+        const [shiftStarted, currentShiftId] = await Promise.all([
           (await import('expo-secure-store')).getItemAsync('shiftStarted'),
           AsyncStorage.getItem('wellbuilt-current-shift-id'),
-          AsyncStorage.getItem('wellbuilt-jsa-previewed-pre-shift'),
         ]);
         const shiftActive = shiftStarted === 'true';
-        const willShowStartShiftCard = !shiftActive;
         console.log(JSON.stringify({
           tag: '[WB S][jsa.return]',
           currentShiftIdAsyncStorage: currentShiftId || null,
           shiftActive,
-          previewedPreShiftAt: previewedAt || null,
-          willShowStartShiftCard,
           reason: shiftActive
-            ? 'shift active — Start Shift card hidden, active timer shown'
-            : previewedAt
-              ? 'shift NOT started — banner: JSA viewed, tap Start Shift'
-              : 'shift NOT started, no preview breadcrumb — Start Shift card shown',
+            ? 'shift active — JSA mid-shift return'
+            : 'shift NOT started — driver opened JSA via app grid before clocking in',
           jsaPdfUrlReceived: !!params.jsaPdfUrl,
         }));
       } catch (err) {

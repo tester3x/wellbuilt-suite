@@ -96,6 +96,30 @@ function sessionToUser(session: DriverSession): AuthUser {
 }
 
 /**
+ * AsyncStorage keys tied to the current driver session or current shift.
+ * Wiped on logout so a fresh login (or the same driver re-logging in) doesn't
+ * inherit stale per-shift state. Mirrors WB T's LOGOUT_CLEAR_KEYS list.
+ *
+ * Intentionally NOT included:
+ *   - 'wellbuilt-last-odometer' — pre-fills the next shift's start odometer.
+ *     Belongs to the device + driver pairing, survives logout by design.
+ */
+const LOGOUT_ASYNCSTORAGE_KEYS: readonly string[] = [
+  // Pre-shift JSA preview breadcrumb. The Preview-JSA-from-Start-Shift
+  // launcher was retired 2026-05-01, but existing installs may still
+  // have a stale breadcrumb sitting in AsyncStorage. Clear on logout so
+  // the next session starts cold.
+  'wellbuilt-jsa-previewed-pre-shift',
+  // Per-shift odometer cache (set in ShiftStartModal). Per-shift state,
+  // not driver-survival state — wipe on logout.
+  'wellbuilt-shift-start-odometer',
+  // Mirror of SecureStore 'shiftStartTime' written by AppSwitcher.tsx
+  // for the floating-badge timer. The SecureStore copy is cleared above;
+  // the AsyncStorage copy was previously surviving logout.
+  'shiftStartTime',
+];
+
+/**
  * Write logoutAt signal to RTDB so other WB apps self-logout on next foreground.
  * Replaces the old deep link cascade which launched apps and polluted Android task stack.
  */
@@ -255,10 +279,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.warn('[startShift] setCurrentShiftId failed:', err);
     }
-    // Clear the pre-shift JSA preview breadcrumb — once the shift is
-    // actually started, the home-screen "JSA viewed — tap Start Shift"
-    // banner is no longer relevant. Fire-and-forget.
-    AsyncStorage.removeItem('wellbuilt-jsa-previewed-pre-shift').catch(() => {});
+    // (Pre-shift JSA preview breadcrumb cleanup removed — the Preview-JSA
+    // launcher was retired 2026-05-01. Logout now wipes any lingering
+    // breadcrumb on existing installs via LOGOUT_ASYNCSTORAGE_KEYS.)
     wbDiagLog({
       area: 'shift',
       event: 'shiftId.minted',
@@ -360,6 +383,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('returnDepartTime');
     await SecureStore.deleteItemAsync('activePackageId');
     clearCurrentShiftId().catch(() => {});
+    // Match logout()'s cleanup: wipe per-shift / per-session AsyncStorage.
+    await AsyncStorage.multiRemove([...LOGOUT_ASYNCSTORAGE_KEYS]).catch(() => {});
     wbDiagLog({
       area: 'logout',
       event: 'currentShiftId.cleared',
@@ -401,6 +426,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('returnDepartTime');
     await SecureStore.deleteItemAsync('activePackageId');
     clearCurrentShiftId().catch(() => {});
+    // Wipe per-shift / per-session AsyncStorage state so the next login
+    // starts cold. See LOGOUT_ASYNCSTORAGE_KEYS doc for what's included
+    // and what survives intentionally.
+    await AsyncStorage.multiRemove([...LOGOUT_ASYNCSTORAGE_KEYS]).catch(() => {});
     wbDiagLog({
       area: 'logout',
       event: 'currentShiftId.cleared',
