@@ -21,7 +21,7 @@ import {
 import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, clearCurrentShiftId, getCurrentShiftId } from '../services/shiftTracking';
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
-import { cascadeLogoutToSSOApps, clearSSOLaunchedApps } from '../services/appLauncher';
+import { clearSSOLaunchedApps } from '../services/appLauncher';
 import { wbDiagLog } from '../services/wbDiagLog';
 
 export interface AuthUser {
@@ -372,11 +372,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) {
       // Write RTDB signal — apps for the same driverHash self-logout on
       // next foreground (manual + SSO both honor it as of 4/27/2026).
+      // Deep-link cascade was retired here on 5/2/2026: launching WB T
+      // during logout pollutes Android's task stack and the prior SSO
+      // ${scheme}://login intent gets re-delivered, routing WB T to its
+      // SSOLogin screen which silently re-authenticates the driver.
+      // Field-confirmed regression. Each target app self-detects logoutAt
+      // on cold start + warm resume — no foreground-launch needed.
       await writeLogoutSignal(user.passcodeHash);
-      // Instant deep-link cascade to apps SSO'd from this WB S session.
-      // Hash forwarded in URL so target apps verify same-driver. Awaited
-      // so the queue completes before this WB S session is torn down.
-      await cascadeLogoutToSSOApps(user.passcodeHash).catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
@@ -403,10 +405,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   // Single logout function for all WB S logout buttons (4 home screens, etc.).
-  // Both writes are AWAITED so they land before this WB S session is torn down —
-  // critical for the cascade signal to reach WB T / WB M / WB eW. The previous
-  // fire-and-forget pattern dropped the RTDB write whenever WB S crashed or the
-  // process ended before the network call flushed (field-confirmed 2026-05-01).
+  // RTDB writeLogoutSignal is AWAITED so it lands before this WB S session is
+  // torn down — critical for the cascade signal to reach WB T / WB M / WB eW
+  // before they next foreground. The previous fire-and-forget pattern dropped
+  // the RTDB write whenever WB S crashed or the process ended before the
+  // network call flushed (field-confirmed 2026-05-01).
   const logout = useCallback(async () => {
     // If shift is still active, end it as safety net before logging out
     if (shiftActive && user) {
@@ -415,11 +418,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) {
       // Write RTDB signal — apps for the same driverHash self-logout on
       // next foreground. AWAITED so the PATCH lands before tear-down.
+      // Deep-link cascade was retired here on 5/2/2026: launching WB T
+      // during logout pollutes Android's task stack and the prior SSO
+      // ${scheme}://login intent gets re-delivered, routing WB T to its
+      // SSOLogin screen which silently re-authenticates the driver.
+      // Field-confirmed regression. Each target app self-detects logoutAt
+      // on cold start + warm resume — no foreground-launch needed.
       await writeLogoutSignal(user.passcodeHash);
-      // Instant deep-link cascade to apps SSO'd from this WB S session.
-      // Hash forwarded so target apps verify same-driver. AWAITED so the
-      // queue completes before this WB S session is torn down.
-      await cascadeLogoutToSSOApps(user.passcodeHash).catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
