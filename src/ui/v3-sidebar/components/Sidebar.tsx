@@ -93,7 +93,7 @@ export function Sidebar({ apps, companyName, userName, roleLabel, onAppPress, on
         </Pressable>
         <Pressable onPress={onLogout} style={styles.footerBtn}>
           <MaterialCommunityIcons name="logout" size={18} color={colors.text.muted} />
-          <Text style={styles.footerBtnText}>{t('common.done')}</Text>
+          <Text style={styles.footerBtnText}>{t('settingsExtra.logOut')}</Text>
         </Pressable>
       </View>
     </View>

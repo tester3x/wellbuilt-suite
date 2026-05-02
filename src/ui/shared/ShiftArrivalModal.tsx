@@ -181,10 +181,18 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
             />
           </ScrollView>
 
-          {/* Buttons */}
+          {/* Buttons.
+              IMPORTANT: use `onPress` (touch-UP), NOT `onPressIn` (touch-DOWN).
+              onPressIn fires the instant the finger lands and kicks off
+              confirmArrival, which flips shiftActive/returningToYard FALSE
+              before the user has lifted their finger. The arrival modal
+              then unmounts mid-gesture and the touch-UP event lands on
+              the shift card that's now rendered behind it — opening the
+              Start Shift modal on top of Day Summary. (Pic-2 bug,
+              field-confirmed 2026-05-01.) */}
           <View style={s.buttons}>
             <Pressable
-              onPressIn={allChecked && !busy ? handleConfirm : undefined}
+              onPress={allChecked && !busy ? handleConfirm : undefined}
               disabled={!allChecked || busy}
               style={[s.btn, s.btnConfirm, (!allChecked || busy) && !busy && { opacity: 0.4 }, busy && { opacity: 0.85 }]}
             >
@@ -201,7 +209,7 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
               )}
             </Pressable>
             <Pressable
-              onPressIn={busy ? undefined : onClose}
+              onPress={busy ? undefined : onClose}
               disabled={busy}
               style={[s.btn, s.btnCancel, busy && { opacity: 0.4 }]}
             >

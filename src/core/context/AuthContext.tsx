@@ -377,17 +377,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, [user]);
 
+  // Single logout function for all WB S logout buttons (4 home screens, etc.).
+  // Both writes are AWAITED so they land before this WB S session is torn down —
+  // critical for the cascade signal to reach WB T / WB M / WB eW. The previous
+  // fire-and-forget pattern dropped the RTDB write whenever WB S crashed or the
+  // process ended before the network call flushed (field-confirmed 2026-05-01).
   const logout = useCallback(async () => {
     // If shift is still active, end it as safety net before logging out
     if (shiftActive && user) {
       recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
     }
     if (user) {
-      // Write RTDB signal so other apps self-logout on next foreground (backup).
-      writeLogoutSignal(user.passcodeHash).catch(() => {});
-      // Send instant deep-link logout to apps SSO'd from WB S this session.
-      // Hash forwarded so target apps verify same-driver before honoring.
-      cascadeLogoutToSSOApps(user.passcodeHash).catch(() => {});
+      // Write RTDB signal — apps for the same driverHash self-logout on
+      // next foreground. AWAITED so the PATCH lands before tear-down.
+      await writeLogoutSignal(user.passcodeHash);
+      // Instant deep-link cascade to apps SSO'd from this WB S session.
+      // Hash forwarded so target apps verify same-driver. AWAITED so the
+      // queue completes before this WB S session is torn down.
+      await cascadeLogoutToSSOApps(user.passcodeHash).catch(() => {});
     }
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
@@ -399,7 +406,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       event: 'currentShiftId.cleared',
       source: 'AuthContext.logout',
       result: 'ok',
-      reason: 'logout — direct logout (no Day Summary)',
+      reason: 'logout — single awaited path (home screen Log Out button)',
       driverHash: user?.passcodeHash,
       extra: { trigger: 'logout', shiftActiveAtLogout: shiftActive },
     });

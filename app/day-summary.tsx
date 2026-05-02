@@ -1,6 +1,8 @@
 // app/day-summary.tsx — End-of-day shift summary screen
-// Shown after driver taps "Arrived" at yard. Displays daily stats
-// with Close (stay in app) and Log Out (RTDB cascade + clear session) buttons.
+// Shown after driver taps "Arrived" at yard. Displays daily stats with
+// Close as the only action. Log Out moved to the WB S home screen so
+// there is a single, awaited logout path (no Day Summary / Settings
+// divergence). Driver taps Close → home → Log Out.
 
 import React, { useEffect, useState } from 'react';
 import {
@@ -625,28 +627,16 @@ export default function DaySummaryScreen() {
         )}
       </ScrollView>
 
-      {/* Fixed Bottom Buttons */}
+      {/* Fixed Bottom Button — Close only. Log Out lives on the WB S home
+          screen now (single source of truth for the logout cascade). The
+          JSA shift-end gate that previously fired here will be re-attached
+          to the home-screen Log Out button in a follow-up. */}
       <View style={s.bottomButtons}>
-        <Pressable style={s.closeButton} onPress={handleClose}>
+        <Pressable style={s.closeButtonFull} onPress={handleClose}>
           <MaterialCommunityIcons name="check-circle-outline" size={20} color={colors.text.primary} />
           <Text style={s.closeButtonText}>{t('common.close')}</Text>
         </Pressable>
-        <Pressable style={[s.logoutButton, !jsaGateLoaded && { opacity: 0.4 }]} onPress={handleLogout} disabled={!jsaGateLoaded}>
-          <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
-          <Text style={s.logoutButtonText}>{t('daySummary.logOut')}</Text>
-        </Pressable>
       </View>
-
-      {/* JSA shift-end gate modal — same Read / Ack / Cancel UI as WB T */}
-      <JsaCloseModal
-        visible={showJsaModal}
-        allowAcknowledge={jsaAllowAcknowledge}
-        busy={jsaAcknowledging}
-        accent={colors.brand.accent}
-        onAcknowledge={handleJsaAcknowledge}
-        onRead={handleJsaRead}
-        onCancel={handleJsaCancel}
-      />
     </SafeAreaView>
   );
 }
@@ -790,7 +780,7 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border.subtle,
   },
-  closeButton: {
+  closeButtonFull: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -804,23 +794,6 @@ const s = StyleSheet.create({
   },
   closeButtonText: {
     color: colors.text.primary,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  logoutButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-  },
-  logoutButtonText: {
-    color: '#EF4444',
     fontSize: 16,
     fontWeight: '600',
   },

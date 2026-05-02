@@ -18,7 +18,6 @@ import {
   saveDriverProfile,
   loadVehicleInfo,
   saveVehicleInfo,
-  clearProfileCache,
   type DriverProfile,
   type VehicleInfo,
 } from '@/core/services/driverProfile';
@@ -26,7 +25,7 @@ import {
 export default function SettingsScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { currentLanguage, setLanguage, supportedLanguages } = useLanguage();
   const { skinId, setSkin, availableSkins } = useSkin();
 
@@ -155,20 +154,6 @@ export default function SettingsScreen() {
       setSaving(false);
     }
   }, [hash, saving, profileDirty, vehicleDirty, legalName, phone, cdl, truckNumber, trailerNumber]);
-
-  const handleLogout = useCallback(() => {
-    Alert.alert(t('settingsExtra.logOut'), t('settingsExtra.logOutConfirm'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('settingsExtra.logOut'),
-        style: 'destructive',
-        onPress: async () => {
-          await clearProfileCache();
-          await logout();
-        },
-      },
-    ]);
-  }, [logout]);
 
   const handleLanguageChange = useCallback((lang: string) => {
     setLanguage(lang);
@@ -414,13 +399,9 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* ── Account ── */}
-        <View style={[styles.section, { marginBottom: spacing.xxl }]}>
-          <Pressable onPress={handleLogout} style={styles.logoutButton}>
-            <MaterialCommunityIcons name="logout" size={18} color="#EF4444" />
-            <Text style={styles.logoutText}>{t('settingsExtra.logOut')}</Text>
-          </Pressable>
-        </View>
+        {/* Log Out moved to the home screen (single source of truth for the
+            logout cascade — see AuthContext.logout). Settings is profile +
+            preferences only now. */}
       </ScrollView>
       </KeyboardAvoidingView>
 
@@ -507,13 +488,4 @@ const styles = StyleSheet.create({
   optionText: { ...typography.body, color: colors.text.primary },
   optionTextActive: { color: colors.brand.primary, fontWeight: '600' },
   optionDescription: { ...typography.caption, color: colors.text.muted, marginTop: 2 },
-
-  // Account
-  logoutButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
-    backgroundColor: '#EF444410', borderRadius: radius.md,
-    borderWidth: 1, borderColor: '#EF444430',
-    paddingVertical: spacing.md,
-  },
-  logoutText: { ...typography.body, color: '#EF4444', fontWeight: '600' },
 });
