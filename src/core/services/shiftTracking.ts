@@ -68,6 +68,12 @@ export interface ShiftEvent {
   lng: number;
   source: 'wbt' | 'wbm' | 'wbs';
   synthetic?: boolean;  // true = auto-closed by system (driver forgot to log out)
+  // Additive event metadata (2026-06-11) — purely optional. Readers parse
+  // type/timestamp and ignore unknown fields, so omitting these is safe and
+  // existing docs without them keep working. displayName encodes the device
+  // (e.g. "Mike TabletS10 Burger"); driverHash is the identity behind the doc.
+  displayName?: string;
+  driverHash?: string;
 }
 
 /**
@@ -147,6 +153,12 @@ function eventToFirestoreMap(event: ShiftEvent) {
   };
   if (event.synthetic) {
     fields.synthetic = { booleanValue: true };
+  }
+  if (event.displayName) {
+    fields.displayName = { stringValue: event.displayName };
+  }
+  if (event.driverHash) {
+    fields.driverHash = { stringValue: event.driverHash };
   }
   return { mapValue: { fields } };
 }
@@ -230,6 +242,28 @@ async function autoCloseStaleShift(
 }
 
 /**
+ * Read the most recent shift-event type for a driver's day doc, to gate illegal
+ * transitions. Returns the last event's `type`, `null` when there's no doc / no
+ * events (no open shift), or `'UNKNOWN'` when the READ ITSELF failed — in which
+ * case the caller must FAIL OPEN (a transient read error must never skip a real
+ * logout and leave a shift hanging open).
+ */
+async function readLastEventType(path: string): Promise<string | null | 'UNKNOWN'> {
+  const getUrl = `https://firestore.googleapis.com/v1/${path}?key=${FIREBASE_API_KEY}`;
+  try {
+    const resp = await fetchSafe(getUrl);
+    if (resp.status === 404) return null;
+    if (!resp.ok) return 'UNKNOWN';
+    const doc = await resp.json();
+    const values = doc.fields?.events?.arrayValue?.values || [];
+    if (values.length === 0) return null;
+    return values[values.length - 1]?.mapValue?.fields?.type?.stringValue ?? null;
+  } catch {
+    return 'UNKNOWN';
+  }
+}
+
+/**
  * Record a shift bookend (login or logout) with GPS coordinates.
  * Fire-and-forget — never throws, never blocks auth flow.
  *
@@ -242,7 +276,7 @@ export async function recordShiftEvent(
   companyId?: string,
   source: 'wbt' | 'wbm' | 'wbs' = 'wbs',
   shiftId?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const gps = await captureGPS();
     if (!gps) {
@@ -257,12 +291,41 @@ export async function recordShiftEvent(
     const date = dateString(now); // YYYY-MM-DD in local time
     const path = docPath(driverId, date);
 
+    // ── Transition guard (safety net, 6/11/2026) ─────────────────────────────
+    // Reject illegal shift history regardless of caller. `login` always opens a
+    // new day/shift. `depart_return` and `logout` require an OPEN shift (last
+    // event = login or depart_return); they are SKIPPED when the last event is
+    // logout (already closed) or absent (no open shift) — the source of the
+    // "login -> depart_return -> logout -> depart_return -> logout" corruption.
+    // A skipped illegal event returns TRUE (safe: already closed / nothing to
+    // close) so the caller's logout + cleanup never blocks. FAIL OPEN on a read
+    // error so a transient GET never skips a real logout and leaves a shift open.
+    if (type !== 'login') {
+      const lastType = await readLastEventType(path);
+      const openShift = lastType === 'login' || lastType === 'depart_return';
+      if (lastType !== 'UNKNOWN' && !openShift) {
+        console.warn(`[shiftTracking] Skipping illegal ${type} append — last event = ${lastType ?? 'none'} (no open shift).`);
+        console.log(JSON.stringify({
+          tag: '[shiftTracking][shift.guard]',
+          skipped: true,
+          type,
+          lastEvent: lastType ?? 'none',
+          driverHash: driverId,
+          docId: `${driverId}_${date}`,
+        }));
+        return true;
+      }
+    }
+
     const event: ShiftEvent = {
       type,
       timestamp: gps?.timestamp || new Date().toISOString(),
       lat: gps?.lat || 0,
       lng: gps?.lng || 0,
       source,
+      // Additive metadata — see ShiftEvent. displayName encodes the device.
+      displayName,
+      driverHash: driverId,
     };
 
     const fields: Record<string, any> = {
@@ -312,18 +375,41 @@ export async function recordShiftEvent(
       ],
     };
 
-    const resp = await fetchSafe(commitUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    // Commit with ONE retry. A transient network blip on the logout write is
+    // the common cause of a "login with no logout" shift that then renders as a
+    // runaway open-shift duration on the dashboard. Each attempt is bounded by
+    // FETCH_TIMEOUT_MS, never throws, and we return a boolean so the caller can
+    // log a visible warning without ever blocking the user's logout.
+    const attemptCommit = async (): Promise<{ ok: boolean; status?: number; text?: string; timedOut?: boolean }> => {
+      try {
+        const resp = await fetchSafe(commitUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (resp.ok) return { ok: true };
+        const text = await resp.text().catch(() => '');
+        return { ok: false, status: resp.status, text };
+      } catch (e: any) {
+        return { ok: false, text: e?.message || String(e), timedOut: e?.name === 'AbortError' };
+      }
+    };
 
-    if (!resp.ok) {
-      const text = await resp.text();
-      console.error(`[shiftTracking] Firestore commit failed (${resp.status}):`, text);
-      // Persistent diagnostic — captures the case where the server doc
-      // never gets written (silent failure caused the 4/28 field-test bug
-      // where WB JSA's refresh saw "no doc" and wiped local AsyncStorage).
+    let result = await attemptCommit();
+    // Retry once — but NOT after a timeout/abort. A timeout already consumed the
+    // full FETCH_TIMEOUT_MS; retrying would just double the wait on a dead
+    // network and keep the driver waiting on logout. Retry only FAST failures
+    // (HTTP error / quick network error), which are the ones likely to succeed.
+    if (!result.ok && !result.timedOut) {
+      console.warn(`[shiftTracking] ${type} commit failed (status=${result.status ?? 'n/a'}) — retrying once: ${(result.text || '').slice(0, 200)}`);
+      await new Promise((r) => setTimeout(r, 500));
+      result = await attemptCommit();
+    }
+
+    if (!result.ok) {
+      console.error(`[shiftTracking] ${type} commit FAILED after retry (status=${result.status ?? 'n/a'}):`, (result.text || '').slice(0, 300));
+      // Persistent diagnostic — captures the silent-write case (same class as
+      // the 4/28 field-test bug where WB JSA saw "no doc" and wiped state).
       console.log(JSON.stringify({
         tag: '[shiftTracking][shift.write]',
         ok: false,
@@ -332,9 +418,10 @@ export async function recordShiftEvent(
         localDate: date,
         docId: `${driverId}_${date}`,
         currentShiftIdValue: type === 'logout' ? '' : (shiftId || null),
-        httpStatus: resp.status,
+        httpStatus: result.status ?? null,
+        retried: true,
       }));
-      return;
+      return false;
     }
 
     console.log(`[shiftTracking] Recorded ${type} at ${gps?.lat?.toFixed(4) ?? 0}, ${gps?.lng?.toFixed(4) ?? 0}`);
@@ -350,8 +437,10 @@ export async function recordShiftEvent(
       docId: `${driverId}_${date}`,
       currentShiftIdValue: type === 'logout' ? '' : (shiftId || null),
     }));
+    return true;
   } catch (err) {
     console.error(`[shiftTracking] Failed to record ${type}:`, err);
+    return false;
   }
 }
 

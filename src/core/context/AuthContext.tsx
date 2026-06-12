@@ -3,7 +3,7 @@
 // Replaces the old hardcoded demo auth with real Firebase RTDB auth
 // (same system as WB M — drivers/approved/{passcodeHash}).
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -321,22 +321,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log('[AuthContext] Shift started for:', user.displayName, 'package:', pkg || 'none');
   }, [user]);
 
+  // In-flight guards (6/11/2026) — block a double-tap from appending a duplicate
+  // depart_return / logout while the first invocation is still resolving. The
+  // record-layer transition guard is the ultimate safety net; these stop the bad
+  // UI action from even firing.
+  const returnInFlight = useRef(false);
+  const arrivalInFlight = useRef(false);
+
   const startReturn = useCallback(async () => {
     if (!user) return;
-    const now = new Date().toISOString();
-    // Record depart_return GPS event
-    recordShiftEvent('depart_return', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
-    await SecureStore.setItemAsync('returnDepartTime', now);
-    setReturningToYard(true);
-    setReturnDepartTime(now);
-    console.log('[AuthContext] Return to yard started for:', user.displayName);
-  }, [user]);
+    // Caller gate: Return-to-Yard is only valid during an OPEN shift, and not if
+    // already returning — prevents a stray/duplicate depart_return.
+    if (!shiftActive || returningToYard) return;
+    if (returnInFlight.current) return;
+    returnInFlight.current = true;
+    try {
+      const now = new Date().toISOString();
+      // Record depart_return GPS event
+      recordShiftEvent('depart_return', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+      await SecureStore.setItemAsync('returnDepartTime', now);
+      setReturningToYard(true);
+      setReturnDepartTime(now);
+      console.log('[AuthContext] Return to yard started for:', user.displayName);
+    } finally {
+      returnInFlight.current = false;
+    }
+  }, [user, shiftActive, returningToYard]);
 
   const confirmArrival = useCallback(async (odometerMiles?: number) => {
     if (!user) return;
+    // Caller gate: arrival ends an OPEN shift (active, or returning-to-yard). If
+    // there's no open shift there is nothing to close — skip the logout write
+    // (the record-layer guard would skip it anyway) and let navigation proceed.
+    // This blocks the spurious second confirmArrival that produced the
+    // "...logout -> depart_return -> logout" tail.
+    if (!shiftActive && !returningToYard) return;
+    if (arrivalInFlight.current) return;
+    arrivalInFlight.current = true;
+    try {
     // Record logout GPS event (arrival at yard = shift end)
-    // Must await so day-summary screen can read the shift end time
-    await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+    // Must await so day-summary screen can read the shift end time.
+    // recordShiftEvent now retries once internally and returns a success flag —
+    // observe it (was a swallowed .catch) so a failed shift-close is visible in
+    // the logs instead of silently leaving the shift open.
+    const shiftEndOk = await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => false);
+    if (!shiftEndOk) {
+      console.warn('[confirmArrival] logout shift event did not persist after retry — shift may show open until next-login auto-close');
+    }
     // NOTE: shiftId is intentionally NOT cleared here. Day Summary needs
     // it to scope the JSA query (jsa_day_status WHERE shiftId == X).
     // Clearing on confirmArrival caused getCurrentShiftId() to return
@@ -366,9 +397,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ]).catch(() => {});
     console.log('[AuthContext] Arrived at yard, shift ended for:', user.displayName);
     // No cascade here — day summary screen handles logout via logoutWithCascade
-  }, [user]);
+    } finally {
+      arrivalInFlight.current = false;
+    }
+  }, [user, shiftActive, returningToYard]);
 
   const logoutWithCascade = useCallback(async () => {
+    // Safety net: normally End Shift (confirmArrival) already closed the shift,
+    // so shiftActive is false here and this is skipped. If a shift is somehow
+    // still active when the full cascade logout runs, close the record first so
+    // it doesn't linger open. Awaited + observed; never blocks the cascade.
+    if (shiftActive && user) {
+      const shiftEndOk = await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => false);
+      if (!shiftEndOk) {
+        console.warn('[logoutWithCascade] logout shift event did not persist after retry — shift may show open until next-login auto-close');
+      }
+    }
     if (user) {
       // Write RTDB signal — apps for the same driverHash self-logout on
       // next foreground (manual + SSO both honor it as of 4/27/2026).
@@ -402,7 +446,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setActivePackageId(null);
     await clearDriverSession();
     setUser(null);
-  }, [user]);
+  }, [shiftActive, user]);
 
   // Single logout function for all WB S logout buttons (4 home screens, etc.).
   // RTDB writeLogoutSignal is AWAITED so it lands before this WB S session is
@@ -411,9 +455,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // the RTDB write whenever WB S crashed or the process ended before the
   // network call flushed (field-confirmed 2026-05-01).
   const logout = useCallback(async () => {
-    // If shift is still active, end it as safety net before logging out
+    // If shift is still active, end it as safety net before logging out.
+    // Awaited + observed (was fire-and-forget) so the shift record is closed
+    // before the cascade signal + cleanup. Bounded by recordShiftEvent's own
+    // timeouts; logout always proceeds even if this write ultimately fails.
     if (shiftActive && user) {
-      recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+      const shiftEndOk = await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => false);
+      if (!shiftEndOk) {
+        console.warn('[logout] logout shift event did not persist after retry — shift may show open until next-login auto-close');
+      }
     }
     if (user) {
       // Write RTDB signal — apps for the same driverHash self-logout on
