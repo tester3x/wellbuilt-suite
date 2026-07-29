@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   canLaunchApp,
   launchWBApp,
@@ -7,9 +7,19 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { loadVehicleInfo } from '../services/driverProfile';
 import { getCurrentShiftId } from '../services/shiftTracking';
+import {
+  createSuiteDvirGate,
+  isTicketsLaunch,
+  makeDvirSsoGetter,
+} from '../services/dvirGate';
 
 export function useAppLauncher() {
-  const { user, activePackageId, shiftStartTime } = useAuth();
+  const { user, activePackageId, shiftStartTime, shiftActive } = useAuth();
+
+  const dvirGate = useMemo(
+    () => createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) }),
+    [user],
+  );
 
   const checkCanLaunch = useCallback((scheme?: string) => {
     return canLaunchApp(scheme);
@@ -17,7 +27,19 @@ export function useAppLauncher() {
 
   // Auto-inject SSO params when launching WB ecosystem apps
   // so the target app can skip its login screen.
+  // Every Tickets launch path is gated on Pre-Trip for the active shift.
   const launchWB = useCallback(async (options: WBAppLaunchOptions) => {
+    if (isTicketsLaunch(options.scheme, (options as { id?: string }).id)) {
+      if (!shiftActive) {
+        // No active shift — still block Tickets until Start Shift + Pre-Trip
+        const gate = await dvirGate.ensurePreTripGate({ alertOnBlock: true });
+        if (!gate.allowed) return;
+      } else {
+        const gate = await dvirGate.ensurePreTripGate({ alertOnBlock: true });
+        if (!gate.allowed) return;
+      }
+    }
+
     let sso = user
       ? { hash: user.passcodeHash, name: user.displayName, companyId: user.companyId }
       : undefined;
@@ -36,10 +58,11 @@ export function useAppLauncher() {
     }
 
     return launchWBApp({ ...options, sso });
-  }, [user, activePackageId, shiftStartTime]);
+  }, [user, activePackageId, shiftStartTime, shiftActive, dvirGate]);
 
   return {
     canLaunchApp: checkCanLaunch,
     launchWBApp: launchWB,
+    dvirGate,
   };
 }

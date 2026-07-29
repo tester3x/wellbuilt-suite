@@ -1,24 +1,79 @@
-import React, { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import React, { useEffect, useRef } from 'react';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { AppState, Platform, View, StyleSheet } from 'react-native';
+import { AppState, Platform, View, StyleSheet, Linking } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import * as NavigationBar from 'expo-navigation-bar';
 import '@/core/localization/i18n';
 import { LanguageProvider } from '@/core/localization';
 import { SkinProvider } from '@/core/context/SkinContext';
-import { AuthProvider } from '@/core/context/AuthContext';
+import { AuthProvider, useAuth } from '@/core/context/AuthContext';
 
 import { FirstLaunchProvider } from '@/core/context/FirstLaunchContext';
 import { OfflineBanner } from '@/core/components/OfflineBanner';
-import AppSwitcher from '@/core/components/AppSwitcher';
 import { colors } from '@/core/theme';
 import { allSkins, defaultSkinId } from '@/ui/skins';
 import { startConnectivityMonitor, stopConnectivityMonitor } from '@/core/services/connectivity';
+import { createSuiteDvirGate, makeDvirSsoGetter } from '@/core/services/dvirGate';
 
 // Keep the native splash screen visible until we're ready
 // This prevents the black flicker between native splash and React render
 SplashScreen.preventAutoHideAsync();
+
+/**
+ * Ingest eQuipment → Suite DVIR completion receipts and resume end-shift
+ * when a pending Post-Trip gate is satisfied.
+ */
+function DvirReceiptListener() {
+  const { user, confirmArrival, shiftActive } = useAuth();
+  const handled = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+
+    const handleUrl = async (url: string | null) => {
+      if (!url || !url.includes('dvir-complete')) return;
+      if (handled.current.has(url)) return;
+      handled.current.add(url);
+
+      const result = await gate.ingestDvirCompletionUrl(url);
+      if (!result.ok) {
+        console.warn('[DvirReceipt] rejected:', result.reason);
+        return;
+      }
+      console.log(
+        '[DvirReceipt] saved',
+        result.receipt.phase,
+        result.receipt.shiftId,
+        result.created ? 'created' : 'idempotent',
+      );
+
+      // Resume end-shift if Post-Trip completed and pending flag set
+      if (result.receipt.phase === 'post_trip') {
+        const pending = await gate.consumePendingEndShiftIfReady();
+        if (pending.resume && shiftActive) {
+          try {
+            await confirmArrival(pending.odometerMiles);
+            router.replace('/day-summary');
+          } catch (err) {
+            console.warn('[DvirReceipt] resume confirmArrival failed:', err);
+          }
+        }
+      }
+    };
+
+    const sub = Linking.addEventListener('url', (e) => {
+      void handleUrl(e.url);
+    });
+    Linking.getInitialURL().then((url) => {
+      void handleUrl(url);
+    });
+
+    return () => sub.remove();
+  }, [user, confirmArrival, shiftActive]);
+
+  return null;
+}
 
 export default function RootLayout() {
   useEffect(() => {
@@ -48,7 +103,7 @@ export default function RootLayout() {
             <View style={styles.container}>
               <StatusBar style="light" />
               <OfflineBanner />
-              {/* AppSwitcher removed — WB S IS the hub, has all apps already */}
+              <DvirReceiptListener />
               <Stack
                 screenOptions={{
                   headerShown: false,

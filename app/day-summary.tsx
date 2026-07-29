@@ -347,7 +347,25 @@ export default function DaySummaryScreen() {
     router.replace('/home');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Post-Trip safety net: by policy Post-Trip runs before confirmArrival
+    // ends the shift. If a driver reaches Day Summary without a Post-Trip
+    // receipt (legacy path / race), block logout and launch eQuipment.
+    try {
+      const shiftId = await getCurrentShiftId();
+      if (shiftId) {
+        const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
+        const gate = createSuiteDvirGate();
+        const hasPost = await gate.isPostTripComplete(shiftId);
+        if (!hasPost) {
+          await gate.ensurePostTripGate({ alertOnBlock: true });
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[day-summary] Post-Trip gate check failed:', err);
+    }
+
     // JSA gate: only block logout if rule.gateShiftEnd is true (per_shift) and
     // jsaCompleted hasn't flipped to true today. The proper modal replaces
     // the Alert-based shortcut so drivers get the same Read/Ack experience

@@ -123,6 +123,19 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const handleStartConfirm = async (data: ShiftStartData) => {
     setShowStartModal(false);
     await onStartShift(data.packageId || undefined);
+    // Force Pre-Trip at the beginning of every shift (Suite durable gate).
+    // Tickets stay blocked until eQuipment returns a matching receipt.
+    try {
+      const { createSuiteDvirGate, makeDvirSsoGetter } = await import(
+        '@/core/services/dvirGate'
+      );
+      // SSO identity filled inside gate when user is available via createSuiteDvirGate
+      // from useAppLauncher paths; here use bare gate for launch after mint.
+      const gate = createSuiteDvirGate();
+      await gate.ensurePreTripGate({ alertOnBlock: true });
+    } catch (err) {
+      console.warn('[ActionCardRow] Pre-Trip gate launch failed:', err);
+    }
     // 4/24/2026 — JsaChoiceModal at shift start retired. The per-job-close
     // JSA gate in WB T now catches every driver who didn't pre-fill the
     // JSA at the start of the shift, so a separate Now/Later prompt at
@@ -177,7 +190,23 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
             // Hold the modal open with its busy spinner while end-of-shift
             // work runs (GPS + Firestore commit + state updates). Closing
             // eagerly made drivers think the tap missed.
-            try { await onArrived(miles); } finally { setShowArrivalModal(false); }
+            // Post-Trip gate: do NOT end shift until eQuipment receipt is durable.
+            try {
+              const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
+              const gate = createSuiteDvirGate();
+              const post = await gate.ensurePostTripGate({
+                odometerMiles: miles,
+                alertOnBlock: true,
+              });
+              if (!post.allowed) {
+                // Keep shift active; pending end-shift stored for resume after receipt.
+                setShowArrivalModal(false);
+                return;
+              }
+              await onArrived(miles);
+            } finally {
+              setShowArrivalModal(false);
+            }
           }}
           returnStartTime={returnStartTime}
         />

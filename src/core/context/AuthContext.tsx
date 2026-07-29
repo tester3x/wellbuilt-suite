@@ -403,6 +403,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user, shiftActive, returningToYard]);
 
   const logoutWithCascade = useCallback(async () => {
+    // Post-Trip gate: never complete logout while the active shift lacks
+    // a durable Post-Trip receipt. Launch eQuipment and abort cleanup.
+    if (shiftActive && user) {
+      try {
+        const shiftId = await getCurrentShiftId();
+        if (shiftId) {
+          const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
+          const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+          const post = await gate.ensurePostTripGate({ alertOnBlock: true });
+          if (!post.allowed) {
+            console.log('[logoutWithCascade] blocked — Post-Trip required for', shiftId);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[logoutWithCascade] Post-Trip gate error (blocking logout):', err);
+        return;
+      }
+    }
     // Safety net: normally End Shift (confirmArrival) already closed the shift,
     // so shiftActive is false here and this is skipped. If a shift is somehow
     // still active when the full cascade logout runs, close the record first so
@@ -455,6 +474,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // the RTDB write whenever WB S crashed or the process ended before the
   // network call flushed (field-confirmed 2026-05-01).
   const logout = useCallback(async () => {
+    // Post-Trip gate for home-screen Log Out while shift still active.
+    if (shiftActive && user) {
+      try {
+        const shiftId = await getCurrentShiftId();
+        if (shiftId) {
+          const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
+          const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+          const post = await gate.ensurePostTripGate({ alertOnBlock: true });
+          if (!post.allowed) {
+            console.log('[logout] blocked — Post-Trip required for', shiftId);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[logout] Post-Trip gate error (blocking logout):', err);
+        return;
+      }
+    }
     // If shift is still active, end it as safety net before logging out.
     // Awaited + observed (was fire-and-forget) so the shift record is closed
     // before the cascade signal + cleanup. Bounded by recordShiftEvent's own
