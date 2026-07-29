@@ -1,5 +1,5 @@
 // ActionCardRow — horizontal row of 3 medium action cards:
-// Shift (status-aware), Timesheet (nav link), eWallet (launch).
+// Shift (status-aware), Timesheet (nav link), WellBuilt eQuipment (launch).
 // On "Start Shift" tap, shows enhanced ShiftStartModal with vehicle info,
 // odometer, and pre-trip checklist.
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
@@ -206,18 +206,18 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           <Text style={[s.sub, { color: 'rgba(52, 211, 153, 0.6)' }]}>{t('actionCard.viewPay')}</Text>
         </Pressable>
 
-        {/* eWallet Card */}
+        {/* WellBuilt eQuipment — launches com.wellbuilt.equipment only (no eWallet fallback) */}
         <Pressable
           onPress={() => launchWBApp({
-            name: 'WB eWallet',
-            scheme: 'wbewallet',
-            androidPackage: 'com.wellbuilt.ewallet',
+            name: 'WellBuilt eQuipment',
+            scheme: 'wbequipment',
+            androidPackage: 'com.wellbuilt.equipment',
           })}
           style={[s.card, s.cardWallet]}
         >
-          <MaterialCommunityIcons name="wallet-outline" size={28} color={colors.brand.accent} />
-          <Text style={[s.label, { color: colors.brand.accent }]}>{t('actionCard.eWallet')}</Text>
-          <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.documents')}</Text>
+          <MaterialCommunityIcons name="truck" size={28} color={colors.brand.accent} />
+          <Text style={[s.label, { color: colors.brand.accent }]}>{t('actionCard.eEquipment')}</Text>
+          <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.equipmentSub')}</Text>
         </Pressable>
       </View>
 

@@ -235,7 +235,9 @@
   "actionCard": {
     "timesheet": "Nómina",
     "viewPay": "Ver su pago",
-    "eWallet": "eWallet",
+    "eWallet": "eQuipment",
+    "eEquipment": "eQuipment",
+    "equipmentSub": "DVIR y equipo",
     "documents": "Documentos"
   },
   "loginExtra": {

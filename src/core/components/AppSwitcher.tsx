@@ -99,7 +99,7 @@ const FALLBACK_APPS: AppEntry[] = [
   { id: 'wbm', name: 'WellBuilt Mobile', shortName: 'Mobile', iconUrl: '', deepLinkScheme: 'wellbuilt-mobile', requiredTier: 'free', sortOrder: 1, enabled: true },
   { id: 'wbt', name: 'WaterTicket', shortName: 'Tickets', iconUrl: '', deepLinkScheme: 'wellbuilt-tickets', requiredTier: 'field', sortOrder: 2, enabled: true },
   { id: 'wbjsa', name: 'WB JSA', shortName: 'JSA', iconUrl: '', deepLinkScheme: 'jsaapp', requiredTier: 'free', sortOrder: 3, enabled: true },
-  { id: 'wbew', name: 'WB eQuipment', shortName: 'eQuip', iconUrl: '', deepLinkScheme: 'wbewallet', requiredTier: 'field', sortOrder: 4, enabled: true },
+  { id: 'wbew', name: 'WellBuilt eQuipment', shortName: 'eQuip', iconUrl: '', deepLinkScheme: 'wbequipment', requiredTier: 'field', sortOrder: 4, enabled: true },
 ];
 
 export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getIdentity }: Props) {
