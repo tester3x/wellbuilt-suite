@@ -4,10 +4,12 @@ import { describe, it } from 'node:test';
 import {
   buildEquipmentDvirUrl,
   clearDvirRoutingAfterFinalization,
+  equipmentHandoffNotice,
   ensurePostTripGate,
   ensurePreTripGate,
   ingestDvirCompletionUrl,
   isTicketsLaunch,
+  SUITE_DVIR_RETURN_URL,
   type DvirGateDeps,
 } from './dvirGateService.js';
 import {
@@ -102,6 +104,42 @@ describe('Suite DVIR gate service', () => {
     assert.equal(r.launched, true);
     assert.ok(launched[0].includes('phase=pre_trip'));
     assert.ok(launched[0].includes('shiftId=2026-07-28_060000'));
+  });
+
+  it('pre-trip handoff notice names eQuipment and reason', () => {
+    const pre = equipmentHandoffNotice('pre_trip');
+    assert.match(pre.title, /WellBuilt eQuipment/i);
+    assert.match(pre.message, /pre-trip/i);
+    assert.match(pre.message, /WellBuilt Suite/i);
+    const post = equipmentHandoffNotice('post_trip');
+    assert.match(post.message, /post-trip/i);
+    assert.doesNotMatch(post.message, /pre-trip/i);
+  });
+
+  it('confirmLeaveForEquipment cancel does not launch eQuipment', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    const d: DvirGateDeps = {
+      ...deps(kv, 'shift_confirm', launched, true),
+      confirmLeaveForEquipment: async () => false,
+    };
+    const r = await ensurePreTripGate(d, { alertOnBlock: true });
+    assert.equal(r.allowed, false);
+    assert.equal(r.launched, false);
+    assert.equal(launched.length, 0);
+  });
+
+  it('Suite DVIR return URL uses dvir-complete path (receivable route)', () => {
+    assert.equal(SUITE_DVIR_RETURN_URL, 'wellbuilt-suite://dvir-complete');
+    const url = buildEquipmentDvirUrl({
+      shiftId: 's1',
+      phase: 'pre_trip',
+      hash: 'h',
+      name: 'Mike',
+    });
+    assert.match(url, /returnUrl=.*dvir-complete/);
+    assert.match(url, /hash=h/);
+    assert.match(url, /name=Mike/);
   });
 
   it('Tickets remains blocked before receipt; valid receipt unlocks', async () => {

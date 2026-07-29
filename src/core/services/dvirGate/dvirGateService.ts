@@ -81,8 +81,36 @@ export interface DvirGateDeps {
   nowMs?: () => number;
   /** Optional UI alert (no-op in tests). */
   alert?: (title: string, message: string) => void;
+  /**
+   * Confirm before leaving Suite for eQuipment (JSA-style handoff notice).
+   * Resolve true to open eQuipment, false to cancel. Tests default to true.
+   */
+  confirmLeaveForEquipment?: (opts: {
+    phase: DvirReceiptPhase;
+    title: string;
+    message: string;
+  }) => Promise<boolean>;
   /** When true, try Android package intent after scheme open fails. */
   tryAndroidIntent?: boolean;
+}
+
+/** Driver-facing handoff copy before Suite opens WellBuilt eQuipment. */
+export function equipmentHandoffNotice(phase: DvirReceiptPhase): {
+  title: string;
+  message: string;
+} {
+  if (phase === 'post_trip') {
+    return {
+      title: 'Opening WellBuilt eQuipment',
+      message:
+        'Your post-trip DVIR must be completed before ending your shift. You will return to WellBuilt Suite when it is finished.',
+    };
+  }
+  return {
+    title: 'Opening WellBuilt eQuipment',
+    message:
+      'Your pre-trip DVIR must be completed before using Tickets. You will return to WellBuilt Suite when it is finished.',
+  };
 }
 
 async function shiftIsActive(deps: DvirGateDeps): Promise<boolean> {
@@ -173,14 +201,35 @@ export async function ensurePreTripGate(
   if (await isPreTripCompleteForShift(deps, shiftId)) {
     return { allowed: true, launched: false, shiftId };
   }
+
+  const notice = equipmentHandoffNotice('pre_trip');
+  if (opts?.alertOnBlock !== false && deps.confirmLeaveForEquipment) {
+    const ok = await deps.confirmLeaveForEquipment({
+      phase: 'pre_trip',
+      title: notice.title,
+      message: notice.message,
+    });
+    if (!ok) {
+      return {
+        allowed: false,
+        launched: false,
+        shiftId,
+        reason: 'Driver cancelled Pre-Trip handoff',
+      };
+    }
+  }
+
   const { launched, error } = await launchEquipmentPhase(deps, 'pre_trip', shiftId);
-  if (opts?.alertOnBlock !== false) {
+  if (opts?.alertOnBlock !== false && !deps.confirmLeaveForEquipment) {
+    // Fallback notice after launch when no confirm API (tests / legacy)
     deps.alert?.(
-      'Pre-Trip Required',
+      notice.title,
       launched
-        ? 'Complete the Pre-Trip DVIR in WellBuilt eQuipment before using Tickets.'
+        ? notice.message
         : error || 'Pre-Trip DVIR is required before Tickets.',
     );
+  } else if (!launched && error) {
+    deps.alert?.('Could not open eQuipment', error);
   }
   return {
     allowed: false,
@@ -232,14 +281,34 @@ export async function ensurePostTripGate(
     createdAt: new Date().toISOString(),
   });
 
+  const notice = equipmentHandoffNotice('post_trip');
+  if (opts?.alertOnBlock !== false && deps.confirmLeaveForEquipment) {
+    const ok = await deps.confirmLeaveForEquipment({
+      phase: 'post_trip',
+      title: notice.title,
+      message: notice.message,
+    });
+    if (!ok) {
+      await clearPendingEndShift(deps.kv);
+      return {
+        allowed: false,
+        launched: false,
+        shiftId,
+        reason: 'Driver cancelled Post-Trip handoff',
+      };
+    }
+  }
+
   const { launched, error } = await launchEquipmentPhase(deps, 'post_trip', shiftId);
-  if (opts?.alertOnBlock !== false) {
+  if (opts?.alertOnBlock !== false && !deps.confirmLeaveForEquipment) {
     deps.alert?.(
-      'Post-Trip Required',
+      notice.title,
       launched
-        ? 'Complete the Post-Trip DVIR in WellBuilt eQuipment before ending your shift.'
+        ? notice.message
         : error || 'Post-Trip DVIR is required before ending shift.',
     );
+  } else if (!launched && error) {
+    deps.alert?.('Could not open eQuipment', error);
   }
   return {
     allowed: false,
