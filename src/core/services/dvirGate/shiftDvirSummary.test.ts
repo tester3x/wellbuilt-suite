@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { describe, it } from 'node:test';
+import {
+  buildShiftDvirSummary,
+  buildShiftDvirSummaryFromStore,
+  loadLastFinalizedDvirSummary,
+  loadShiftDvirSummary,
+  overallDvirLabel,
+  saveShiftDvirSummary,
+} from './shiftDvirSummary.js';
+import {
+  buildIntegrityPayload,
+  PHASE_RECEIPT_SCHEMA,
+  RECEIPT_VERSION,
+  type PhaseCompletionReceipt,
+} from './receiptTypes.js';
+import { saveReceiptIdempotent, type DvirReceiptKv } from './dvirReceiptStore.js';
+
+function memoryKv(): DvirReceiptKv {
+  const m = new Map<string, string>();
+  return {
+    getItem: async (k) => m.get(k) ?? null,
+    setItem: async (k, v) => {
+      m.set(k, v);
+    },
+    removeItem: async (k) => {
+      m.delete(k);
+    },
+  };
+}
+
+async function sha256Hex(s: string): Promise<string> {
+  return createHash('sha256').update(s, 'utf8').digest('hex');
+}
+
+async function receipt(
+  shiftId: string,
+  phase: 'pre_trip' | 'post_trip',
+  completedAt: string,
+): Promise<PhaseCompletionReceipt> {
+  const base = {
+    schemaVersion: PHASE_RECEIPT_SCHEMA,
+    receiptId: `rcpt_${phase}_${shiftId}`,
+    shiftId,
+    inspectionId: `dvir_shift_${shiftId}`,
+    phase,
+    completedAt,
+    version: RECEIPT_VERSION,
+    driverHash: 'drv',
+    integrity: '',
+  };
+  const integrity = await sha256Hex(
+    buildIntegrityPayload({
+      schemaVersion: base.schemaVersion,
+      receiptId: base.receiptId,
+      shiftId: base.shiftId,
+      inspectionId: base.inspectionId,
+      phase: base.phase,
+      completedAt: base.completedAt,
+      version: base.version,
+      driverHash: base.driverHash,
+    }),
+  );
+  return { ...base, integrity };
+}
+
+describe('Shift Complete DVIR summary', () => {
+  it('normal Pre + Post displays both actual receipt times', async () => {
+    const shiftId = '2026-07-28_normal';
+    const pre = await receipt(shiftId, 'pre_trip', '2026-07-28T11:14:00.000Z');
+    const post = await receipt(shiftId, 'post_trip', '2026-07-28T17:37:00.000Z');
+    const s = buildShiftDvirSummary({
+      shiftId,
+      preReceipt: pre,
+      postReceipt: post,
+      truckUnit: '247',
+      trailerUnit: 'T30',
+    });
+    assert.equal(s.overallStatus, 'completed');
+    assert.equal(overallDvirLabel(s.overallStatus), 'Completed');
+    assert.equal(s.preTrip.status, 'captured');
+    assert.equal(s.preTrip.completedAt, '2026-07-28T11:14:00.000Z');
+    assert.equal(s.postTrip.status, 'completed');
+    assert.equal(s.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
+    assert.equal(s.truckUnit, '247');
+    assert.equal(s.trailerUnit, 'T30');
+  });
+
+  it('legacy Post-only shows Pre not captured and actual Post time', async () => {
+    const shiftId = '2026-07-28_090534';
+    const post = await receipt(shiftId, 'post_trip', '2026-07-28T17:37:00.000Z');
+    const s = buildShiftDvirSummary({
+      shiftId,
+      preReceipt: null,
+      postReceipt: post,
+      truckUnit: '247',
+      trailerUnit: 'T30',
+    });
+    assert.equal(s.overallStatus, 'post_trip_completed');
+    assert.equal(overallDvirLabel(s.overallStatus), 'Post-Trip completed');
+    assert.equal(s.preTrip.status, 'not_captured');
+    assert.equal(s.preTrip.completedAt, null);
+    assert.equal(s.postTrip.status, 'completed');
+    assert.equal(s.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
+  });
+
+  it('missing data remains truthful (not available / missing)', () => {
+    const s = buildShiftDvirSummary({
+      shiftId: 'empty_shift',
+      preReceipt: null,
+      postReceipt: null,
+    });
+    assert.equal(s.overallStatus, 'not_available');
+    assert.equal(s.preTrip.status, 'missing');
+    assert.equal(s.postTrip.status, 'missing');
+    assert.equal(s.preTrip.completedAt, null);
+    assert.equal(s.postTrip.completedAt, null);
+  });
+
+  it('reopening Shift Complete preserves the DVIR summary', async () => {
+    const kv = memoryKv();
+    const shiftId = 'persist_shift';
+    const pre = await receipt(shiftId, 'pre_trip', '2026-07-28T10:00:00.000Z');
+    const post = await receipt(shiftId, 'post_trip', '2026-07-28T18:00:00.000Z');
+    await saveReceiptIdempotent(kv, pre);
+    await saveReceiptIdempotent(kv, post);
+    const built = await buildShiftDvirSummaryFromStore(kv, shiftId, {
+      truckUnit: '101',
+    });
+    await saveShiftDvirSummary(kv, built);
+
+    const reloaded = await loadShiftDvirSummary(kv, shiftId);
+    assert.ok(reloaded);
+    assert.equal(reloaded!.preTrip.completedAt, '2026-07-28T10:00:00.000Z');
+    assert.equal(reloaded!.postTrip.completedAt, '2026-07-28T18:00:00.000Z');
+
+    const last = await loadLastFinalizedDvirSummary(kv);
+    assert.ok(last);
+    assert.equal(last!.shiftId, shiftId);
+  });
+
+  it('one shift cannot display another shift receipts', async () => {
+    const kv = memoryKv();
+    const a = 'shift_A';
+    const b = 'shift_B';
+    const preA = await receipt(a, 'pre_trip', '2026-07-28T09:00:00.000Z');
+    const postB = await receipt(b, 'post_trip', '2026-07-28T19:00:00.000Z');
+    await saveReceiptIdempotent(kv, preA);
+    await saveReceiptIdempotent(kv, postB);
+
+    const forA = await buildShiftDvirSummaryFromStore(kv, a);
+    assert.equal(forA.preTrip.status, 'captured');
+    assert.equal(forA.postTrip.status, 'missing');
+    assert.notEqual(forA.postTrip.completedAt, '2026-07-28T19:00:00.000Z');
+
+    const forB = await buildShiftDvirSummaryFromStore(kv, b);
+    assert.equal(forB.preTrip.status, 'not_captured'); // post only
+    assert.equal(forB.postTrip.completedAt, '2026-07-28T19:00:00.000Z');
+    assert.notEqual(forB.preTrip.completedAt, '2026-07-28T09:00:00.000Z');
+  });
+
+  it('never uses shift clock times — only receipt completedAt', async () => {
+    const shiftId = 'clock_guard';
+    const post = await receipt(shiftId, 'post_trip', '2026-07-28T17:37:00.000Z');
+    const s = buildShiftDvirSummary({
+      shiftId,
+      preReceipt: null,
+      postReceipt: post,
+      nowIso: '2026-07-28T23:59:00.000Z', // assembly time ≠ inspection time
+    });
+    assert.equal(s.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
+    assert.notEqual(s.postTrip.completedAt, s.finalizedAt);
+  });
+});

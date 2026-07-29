@@ -33,6 +33,13 @@ import { acknowledgeShiftJsa } from '@/core/services/jsaShiftAck';
 import { wbDiagLog } from '@/core/services/wbDiagLog';
 import { getCurrentShiftId } from '@/core/services/shiftTracking';
 import JsaCloseModal from '@/ui/shared/JsaCloseModal';
+import type { ShiftDvirSummary } from '@/core/services/dvirGate';
+import {
+  loadLastFinalizedDvirSummary,
+  loadShiftDvirSummary,
+  overallDvirLabel,
+} from '@/core/services/dvirGate';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 function formatTime12h(iso: string | null): string {
   if (!iso) return '--:--';
@@ -151,6 +158,7 @@ export default function DaySummaryScreen() {
   // confirm Alert that already exists below.
   const [showJsaModal, setShowJsaModal] = useState(false);
   const [jsaAcknowledging, setJsaAcknowledging] = useState(false);
+  const [dvirSummary, setDvirSummary] = useState<ShiftDvirSummary | null>(null);
 
   // Android back button: go to WB S home, not back to WB T
   useEffect(() => {
@@ -160,6 +168,49 @@ export default function DaySummaryScreen() {
     });
     return () => backHandler.remove();
   }, [router]);
+
+  // Load durable DVIR summary for this shift (receipt-based; survives reopen)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const kv = {
+          getItem: (k: string) => AsyncStorage.getItem(k),
+          setItem: (k: string, v: string) => AsyncStorage.setItem(k, v),
+          removeItem: (k: string) => AsyncStorage.removeItem(k),
+        };
+        const shiftId = await getCurrentShiftId();
+        let loaded: ShiftDvirSummary | null = null;
+        if (shiftId) {
+          loaded = await loadShiftDvirSummary(kv, shiftId);
+          if (!loaded) {
+            // Build on the fly from receipts if finalize hasn't written yet
+            const { createSuiteDvirGate, makeDvirSsoGetter } = await import(
+              '@/core/services/dvirGate'
+            );
+            const gate = createSuiteDvirGate({
+              isShiftActive: () => false,
+              getSso: makeDvirSsoGetter(user ?? null),
+            });
+            loaded = await gate.finalizeShiftDvirSummary(shiftId);
+          }
+        }
+        if (!loaded) {
+          loaded = await loadLastFinalizedDvirSummary(kv);
+          // Only show last summary if it matches current shift scope
+          if (loaded && shiftId && loaded.shiftId !== shiftId) {
+            loaded = null;
+          }
+        }
+        if (!cancelled) setDvirSummary(loaded);
+      } catch {
+        if (!cancelled) setDvirSummary(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     // 🔴 DEBUG: Auto-load mock data when DEV_TEST is on
@@ -589,6 +640,138 @@ export default function DaySummaryScreen() {
               </View>
             )}
 
+            {/* ── DVIR card (Wells → JSA → DVIR → Miles) ─────────── */}
+            <View style={s.timeSection}>
+              <View style={s.cardHeader}>
+                <Text style={s.sectionTitle}>
+                  <MaterialCommunityIcons
+                    name="clipboard-check-outline"
+                    size={14}
+                    color={
+                      dvirSummary?.overallStatus === 'completed' ||
+                      dvirSummary?.overallStatus === 'post_trip_completed'
+                        ? '#22c55e'
+                        : colors.text.secondary
+                    }
+                  />{' '}
+                  DVIR
+                </Text>
+                <Text
+                  style={[
+                    s.cardTotal,
+                    {
+                      color:
+                        dvirSummary?.overallStatus === 'completed'
+                          ? '#22c55e'
+                          : dvirSummary?.overallStatus === 'post_trip_completed'
+                            ? '#22c55e'
+                            : dvirSummary
+                              ? '#f59e0b'
+                              : colors.text.muted,
+                    },
+                  ]}
+                >
+                  {dvirSummary
+                    ? overallDvirLabel(dvirSummary.overallStatus)
+                    : 'Not available'}
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {/* PRE-TRIP */}
+                <View style={s.dvirPhaseCol}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <MaterialCommunityIcons
+                      name={
+                        dvirSummary?.preTrip.status === 'captured'
+                          ? 'check-circle'
+                          : dvirSummary?.preTrip.status === 'not_captured'
+                            ? 'alert-circle'
+                            : 'help-circle-outline'
+                      }
+                      size={20}
+                      color={
+                        dvirSummary?.preTrip.status === 'captured'
+                          ? '#22c55e'
+                          : dvirSummary?.preTrip.status === 'not_captured'
+                            ? '#f59e0b'
+                            : colors.text.muted
+                      }
+                    />
+                    <Text style={s.dvirPhaseTitle}>PRE-TRIP</Text>
+                  </View>
+                  <Text
+                    style={[
+                      s.dvirPhaseTime,
+                      {
+                        color:
+                          dvirSummary?.preTrip.status === 'captured'
+                            ? '#22c55e'
+                            : dvirSummary?.preTrip.status === 'not_captured'
+                              ? '#f59e0b'
+                              : colors.text.muted,
+                      },
+                    ]}
+                  >
+                    {dvirSummary?.preTrip.status === 'captured' && dvirSummary.preTrip.completedAt
+                      ? formatTime12h(dvirSummary.preTrip.completedAt)
+                      : dvirSummary?.preTrip.status === 'not_captured'
+                        ? 'Not captured'
+                        : dvirSummary
+                          ? 'Not available'
+                          : 'Not available'}
+                  </Text>
+                </View>
+
+                {/* POST-TRIP */}
+                <View style={s.dvirPhaseCol}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <MaterialCommunityIcons
+                      name={
+                        dvirSummary?.postTrip.status === 'completed'
+                          ? 'check-circle'
+                          : 'help-circle-outline'
+                      }
+                      size={20}
+                      color={
+                        dvirSummary?.postTrip.status === 'completed'
+                          ? '#22c55e'
+                          : colors.text.muted
+                      }
+                    />
+                    <Text style={s.dvirPhaseTitle}>POST-TRIP</Text>
+                  </View>
+                  <Text
+                    style={[
+                      s.dvirPhaseTime,
+                      {
+                        color:
+                          dvirSummary?.postTrip.status === 'completed'
+                            ? '#22c55e'
+                            : colors.text.muted,
+                      },
+                    ]}
+                  >
+                    {dvirSummary?.postTrip.status === 'completed' &&
+                    dvirSummary.postTrip.completedAt
+                      ? formatTime12h(dvirSummary.postTrip.completedAt)
+                      : 'Not available'}
+                  </Text>
+                </View>
+              </View>
+
+              {(dvirSummary?.truckUnit || dvirSummary?.trailerUnit) && (
+                <Text style={s.dvirFooter}>
+                  {[
+                    dvirSummary.truckUnit ? `Truck ${dvirSummary.truckUnit}` : null,
+                    dvirSummary.trailerUnit ? `Trailer ${dvirSummary.trailerUnit}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join('  ·  ')}
+                </Text>
+              )}
+            </View>
+
             {/* ── Miles card ─────────────────────────────────────── */}
             {summary.driveMiles > 0 && (
               <View style={s.timeSection}>
@@ -728,6 +911,31 @@ const s = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: colors.border.subtle,
+  },
+  dvirPhaseCol: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    padding: 12,
+  },
+  dvirPhaseTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text.secondary,
+    letterSpacing: 0.4,
+  },
+  dvirPhaseTime: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  dvirFooter: {
+    marginTop: 12,
+    fontSize: 12,
+    color: colors.text.muted,
+    fontWeight: '500',
   },
   timeBarRow: {
     marginBottom: 12,

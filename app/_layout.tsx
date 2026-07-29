@@ -66,6 +66,10 @@ function DvirReceiptListener() {
         } else if (!shiftActiveRef.current) {
           // Already finalized — ensure pending flag cannot re-hijack module taps
           await gate.clearDvirRoutingAfterFinalization();
+          await gate.finalizeShiftDvirSummary(result.receipt.shiftId);
+        } else {
+          // Post-Trip complete while still active (arrival will finalize)
+          await gate.finalizeShiftDvirSummary(result.receipt.shiftId);
         }
       }
     };

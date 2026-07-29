@@ -17,6 +17,11 @@ import {
   clearDvirRoutingAfterFinalization,
 } from './dvirGateService';
 import type { DvirReceiptKv } from './dvirReceiptStore';
+import {
+  buildShiftDvirSummaryFromStore,
+  saveShiftDvirSummary,
+  type ShiftDvirSummary,
+} from './shiftDvirSummary';
 import { loadVehicleInfo } from '../driverProfile';
 
 const kv: DvirReceiptKv = {
@@ -53,6 +58,8 @@ export function createSuiteDvirGate(opts?: {
   ) => ReturnType<typeof launchEquipmentPhase>;
   consumePendingEndShiftIfReady: () => ReturnType<typeof consumePendingEndShiftIfReady>;
   clearDvirRoutingAfterFinalization: () => Promise<void>;
+  /** Build + persist Shift Complete DVIR summary from durable receipts. */
+  finalizeShiftDvirSummary: (shiftId: string) => Promise<ShiftDvirSummary | null>;
 } {
   const deps: DvirGateDeps = {
     kv,
@@ -77,6 +84,17 @@ export function createSuiteDvirGate(opts?: {
     launchPhase: (phase, shiftId) => launchEquipmentPhase(deps, phase, shiftId),
     consumePendingEndShiftIfReady: () => consumePendingEndShiftIfReady(deps),
     clearDvirRoutingAfterFinalization: () => clearDvirRoutingAfterFinalization(deps),
+    finalizeShiftDvirSummary: async (shiftId: string) => {
+      const id = shiftId?.trim();
+      if (!id) return null;
+      const sso = opts?.getSso ? await opts.getSso() : null;
+      const summary = await buildShiftDvirSummaryFromStore(kv, id, {
+        truckUnit: sso?.truck ?? null,
+        trailerUnit: sso?.trailer ?? null,
+      });
+      await saveShiftDvirSummary(kv, summary);
+      return summary;
+    },
   };
 }
 

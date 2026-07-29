@@ -397,13 +397,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
-    // Clear pending Post-Trip routing so module taps cannot re-open eQuipment
-    // for this finalized shift. Durable DVIR receipts are preserved.
-    import('../services/dvirGate')
-      .then(({ createSuiteDvirGate }) =>
-        createSuiteDvirGate({ isShiftActive: () => false }).clearDvirRoutingAfterFinalization(),
-      )
-      .catch(() => {});
+    // Clear pending Post-Trip routing + persist DVIR summary for Shift Complete.
+    // Durable receipts are preserved; summary is built from those receipts only.
+    (async () => {
+      try {
+        const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
+        const { getCurrentShiftId: getSid } = await import('../services/shiftTracking');
+        const gate = createSuiteDvirGate({
+          isShiftActive: () => false,
+          getSso: makeDvirSsoGetter(user),
+        });
+        await gate.clearDvirRoutingAfterFinalization();
+        const sid = await getSid();
+        if (sid) await gate.finalizeShiftDvirSummary(sid);
+      } catch {
+        /* non-blocking */
+      }
+    })();
     Promise.all([
       SecureStore.setItemAsync('shiftEnded', 'true'),
       SecureStore.deleteItemAsync('shiftStarted'),
