@@ -80,7 +80,8 @@
         "backgroundColor": "#E8E8E8"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.wellbuilt.suite"
+      "package": "com.wellbuilt.suite",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"
