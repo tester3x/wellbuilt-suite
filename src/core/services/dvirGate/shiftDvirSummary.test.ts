@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   buildShiftDvirSummary,
   buildShiftDvirSummaryFromStore,
+  hydrateShiftDvirSummaryIfMissing,
   loadLastFinalizedDvirSummary,
   loadShiftDvirSummary,
   overallDvirLabel,
@@ -171,5 +172,51 @@ describe('Shift Complete DVIR summary', () => {
     });
     assert.equal(s.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
     assert.notEqual(s.postTrip.completedAt, s.finalizedAt);
+  });
+
+  it('cold upgrade: finalized legacy shift + durable Post-Trip receipt + no summary', async () => {
+    // Physical: Post-Trip accepted before suite-dvir-summary existed.
+    // Durable receipt remains; shiftSummary/{shiftId} was never written.
+    const kv = memoryKv();
+    const shiftId = '2026-07-28_090534';
+    const post = await receipt(shiftId, 'post_trip', '2026-07-28T17:37:00.000Z');
+    await saveReceiptIdempotent(kv, post);
+
+    // Foreign-shift noise must not leak into hydration
+    const foreign = await receipt('other_shift', 'pre_trip', '2026-07-28T08:00:00.000Z');
+    await saveReceiptIdempotent(kv, foreign);
+
+    assert.equal(await loadShiftDvirSummary(kv, shiftId), null);
+    assert.equal(await loadLastFinalizedDvirSummary(kv), null);
+
+    const first = await hydrateShiftDvirSummaryIfMissing(kv, shiftId, {
+      truckUnit: '247',
+      trailerUnit: 'T30',
+    });
+    assert.ok(first);
+    assert.equal(first!.shiftId, shiftId);
+    assert.equal(first!.preTrip.status, 'not_captured');
+    assert.equal(first!.preTrip.completedAt, null);
+    assert.equal(first!.postTrip.status, 'completed');
+    assert.equal(first!.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
+    assert.equal(first!.overallStatus, 'post_trip_completed');
+    assert.equal(overallDvirLabel(first!.overallStatus), 'Post-Trip completed');
+    assert.equal(first!.truckUnit, '247');
+    assert.equal(first!.trailerUnit, 'T30');
+
+    // Persisted for reopen without re-finalization
+    const stored = await loadShiftDvirSummary(kv, shiftId);
+    assert.ok(stored);
+    assert.equal(stored!.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
+    assert.equal(stored!.preTrip.status, 'not_captured');
+
+    // Idempotent: second open returns same truth, does not invent Pre-Trip
+    const second = await hydrateShiftDvirSummaryIfMissing(kv, shiftId, {
+      truckUnit: '999', // must not rewrite existing summary
+    });
+    assert.ok(second);
+    assert.equal(second!.truckUnit, '247'); // first persist wins
+    assert.equal(second!.preTrip.status, 'not_captured');
+    assert.equal(second!.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
   });
 });

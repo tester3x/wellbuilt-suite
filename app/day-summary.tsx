@@ -35,11 +35,12 @@ import { getCurrentShiftId } from '@/core/services/shiftTracking';
 import JsaCloseModal from '@/ui/shared/JsaCloseModal';
 import type { ShiftDvirSummary } from '@/core/services/dvirGate';
 import {
+  hydrateShiftDvirSummaryIfMissing,
   loadLastFinalizedDvirSummary,
-  loadShiftDvirSummary,
   overallDvirLabel,
 } from '@/core/services/dvirGate';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loadVehicleInfo } from '@/core/services/driverProfile';
 
 function formatTime12h(iso: string | null): string {
   if (!iso) return '--:--';
@@ -169,7 +170,9 @@ export default function DaySummaryScreen() {
     return () => backHandler.remove();
   }, [router]);
 
-  // Load durable DVIR summary for this shift (receipt-based; survives reopen)
+  // Load durable DVIR summary for this shift (receipt-based; survives reopen).
+  // Cold upgrade: if receipts exist but shiftSummary was never written
+  // (finalized before suite-dvir-summary), hydrate from receipts once.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -182,18 +185,21 @@ export default function DaySummaryScreen() {
         const shiftId = await getCurrentShiftId();
         let loaded: ShiftDvirSummary | null = null;
         if (shiftId) {
-          loaded = await loadShiftDvirSummary(kv, shiftId);
-          if (!loaded) {
-            // Build on the fly from receipts if finalize hasn't written yet
-            const { createSuiteDvirGate, makeDvirSsoGetter } = await import(
-              '@/core/services/dvirGate'
-            );
-            const gate = createSuiteDvirGate({
-              isShiftActive: () => false,
-              getSso: makeDvirSsoGetter(user ?? null),
-            });
-            loaded = await gate.finalizeShiftDvirSummary(shiftId);
+          let truck: string | null = null;
+          let trailer: string | null = null;
+          if (user?.passcodeHash) {
+            try {
+              const v = await loadVehicleInfo(user.passcodeHash);
+              truck = v.truckNumber || null;
+              trailer = v.trailerNumber || null;
+            } catch {
+              /* optional identity */
+            }
           }
+          loaded = await hydrateShiftDvirSummaryIfMissing(kv, shiftId, {
+            truckUnit: truck,
+            trailerUnit: trailer,
+          });
         }
         if (!loaded) {
           loaded = await loadLastFinalizedDvirSummary(kv);

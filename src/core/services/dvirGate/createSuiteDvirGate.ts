@@ -19,6 +19,7 @@ import {
 import type { DvirReceiptKv } from './dvirReceiptStore';
 import {
   buildShiftDvirSummaryFromStore,
+  hydrateShiftDvirSummaryIfMissing,
   saveShiftDvirSummary,
   type ShiftDvirSummary,
 } from './shiftDvirSummary';
@@ -60,6 +61,8 @@ export function createSuiteDvirGate(opts?: {
   clearDvirRoutingAfterFinalization: () => Promise<void>;
   /** Build + persist Shift Complete DVIR summary from durable receipts. */
   finalizeShiftDvirSummary: (shiftId: string) => Promise<ShiftDvirSummary | null>;
+  /** Cold-upgrade: assemble from receipts only when summary is missing. */
+  hydrateShiftDvirSummaryIfMissing: (shiftId: string) => Promise<ShiftDvirSummary | null>;
 } {
   const deps: DvirGateDeps = {
     kv,
@@ -88,12 +91,24 @@ export function createSuiteDvirGate(opts?: {
       const id = shiftId?.trim();
       if (!id) return null;
       const sso = opts?.getSso ? await opts.getSso() : null;
+      // Always rebuild from durable receipts (completion path may add Post-Trip
+      // after a partial was never stored). Cold-open uses hydrateIfMissing.
       const summary = await buildShiftDvirSummaryFromStore(kv, id, {
         truckUnit: sso?.truck ?? null,
         trailerUnit: sso?.trailer ?? null,
       });
       await saveShiftDvirSummary(kv, summary);
       return summary;
+    },
+    /** Cold-upgrade: fill missing summary from receipts without requiring re-finalization. */
+    hydrateShiftDvirSummaryIfMissing: async (shiftId: string) => {
+      const id = shiftId?.trim();
+      if (!id) return null;
+      const sso = opts?.getSso ? await opts.getSso() : null;
+      return hydrateShiftDvirSummaryIfMissing(kv, id, {
+        truckUnit: sso?.truck ?? null,
+        trailerUnit: sso?.trailer ?? null,
+      });
     },
   };
 }

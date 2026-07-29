@@ -153,6 +153,30 @@ export async function buildShiftDvirSummaryFromStore(
   });
 }
 
+/**
+ * Cold-upgrade / first-open hydration for a finalized shift:
+ * - If suite-dvir-summary already exists for this shiftId, return it (idempotent).
+ * - Else assemble from durable receipts for that exact shiftId only, persist, return.
+ *
+ * Covers upgrades where receipts were accepted before shiftSummary existed —
+ * no second receipt or new shift required.
+ */
+export async function hydrateShiftDvirSummaryIfMissing(
+  kv: DvirReceiptKv,
+  shiftId: string,
+  opts?: { truckUnit?: string | null; trailerUnit?: string | null; nowIso?: string },
+): Promise<ShiftDvirSummary | null> {
+  const id = shiftId?.trim();
+  if (!id) return null;
+
+  const existing = await loadShiftDvirSummary(kv, id);
+  if (existing) return existing;
+
+  const built = await buildShiftDvirSummaryFromStore(kv, id, opts);
+  await saveShiftDvirSummary(kv, built);
+  return built;
+}
+
 export async function saveShiftDvirSummary(
   kv: DvirReceiptKv,
   summary: ShiftDvirSummary,
