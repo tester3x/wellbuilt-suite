@@ -279,6 +279,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.warn('[startShift] setCurrentShiftId failed:', err);
     }
+    // Drop any pending Post-Trip end-shift flag from a prior shift so the
+    // new shift cannot inherit prior-shift DVIR routing state.
+    import('../services/dvirGate')
+      .then(({ createSuiteDvirGate }) =>
+        createSuiteDvirGate({ isShiftActive: () => true }).clearDvirRoutingAfterFinalization(),
+      )
+      .catch(() => {});
     // (Pre-shift JSA preview breadcrumb cleanup removed — the Preview-JSA
     // launcher was retired 2026-05-01. Logout now wipes any lingering
     // breadcrumb on existing installs via LOGOUT_ASYNCSTORAGE_KEYS.)
@@ -390,6 +397,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
+    // Clear pending Post-Trip routing so module taps cannot re-open eQuipment
+    // for this finalized shift. Durable DVIR receipts are preserved.
+    import('../services/dvirGate')
+      .then(({ createSuiteDvirGate }) =>
+        createSuiteDvirGate({ isShiftActive: () => false }).clearDvirRoutingAfterFinalization(),
+      )
+      .catch(() => {});
     Promise.all([
       SecureStore.setItemAsync('shiftEnded', 'true'),
       SecureStore.deleteItemAsync('shiftStarted'),

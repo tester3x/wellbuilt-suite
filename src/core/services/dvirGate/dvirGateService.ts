@@ -63,6 +63,13 @@ export interface DvirGateDeps {
   /** Required in production (Linking.openURL). Tests inject. */
   openUrl: (url: string) => Promise<void>;
   getCurrentShiftId: () => Promise<string | null>;
+  /**
+   * Whether a shift is currently active (clocked in / returning).
+   * DVIR redirects require an active shift. Stale shiftId while off-shift
+   * must never launch Pre-Trip or Post-Trip. Defaults to true only when
+   * omitted (unit tests that model an active shift without the flag).
+   */
+  isShiftActive?: () => boolean | Promise<boolean>;
   /** Optional identity for SSO into eQuipment */
   getSso?: () => Promise<{
     hash?: string;
@@ -76,6 +83,11 @@ export interface DvirGateDeps {
   alert?: (title: string, message: string) => void;
   /** When true, try Android package intent after scheme open fails. */
   tryAndroidIntent?: boolean;
+}
+
+async function shiftIsActive(deps: DvirGateDeps): Promise<boolean> {
+  if (!deps.isShiftActive) return true;
+  return !!(await deps.isShiftActive());
 }
 
 export async function isPreTripCompleteForShift(
@@ -133,13 +145,22 @@ export async function launchEquipmentPhase(
 }
 
 /**
- * Ensure Pre-Trip for current shift. If missing, launch eQuipment.
- * Returns allowed=true only when a durable matching receipt exists.
+ * Ensure Pre-Trip for the *active* shift. If missing, launch eQuipment.
+ * Returns allowed=true only when a durable matching receipt exists —
+ * or when the driver is off-shift (no DVIR redirect; modules open normally).
  */
 export async function ensurePreTripGate(
   deps: DvirGateDeps,
   opts?: { shiftId?: string | null; alertOnBlock?: boolean },
 ): Promise<{ allowed: boolean; launched: boolean; shiftId: string | null; reason?: string }> {
+  if (!(await shiftIsActive(deps))) {
+    return {
+      allowed: true,
+      launched: false,
+      shiftId: null,
+      reason: 'Off shift — no Pre-Trip redirect',
+    };
+  }
   const shiftId = opts?.shiftId ?? (await deps.getCurrentShiftId());
   if (!shiftId) {
     return {
@@ -172,6 +193,7 @@ export async function ensurePreTripGate(
 /**
  * Ensure Post-Trip before ending shift. Does not end the shift.
  * Sets pendingEndShift so receipt ingestion can resume arrival/logout.
+ * Off-shift: never redirects (clears stale pending flag).
  */
 export async function ensurePostTripGate(
   deps: DvirGateDeps,
@@ -181,6 +203,15 @@ export async function ensurePostTripGate(
     alertOnBlock?: boolean;
   },
 ): Promise<{ allowed: boolean; launched: boolean; shiftId: string | null; reason?: string }> {
+  if (!(await shiftIsActive(deps))) {
+    await clearPendingEndShift(deps.kv);
+    return {
+      allowed: true,
+      launched: false,
+      shiftId: null,
+      reason: 'Off shift — no Post-Trip redirect',
+    };
+  }
   const shiftId = opts?.shiftId ?? (await deps.getCurrentShiftId());
   if (!shiftId) {
     return {
@@ -216,6 +247,17 @@ export async function ensurePostTripGate(
     shiftId,
     reason: 'Post-Trip completion receipt missing for this shift',
   };
+}
+
+/**
+ * After Post-Trip receipt acceptance and/or shift finalization:
+ * clear pending end-shift routing so module taps cannot re-open Post-Trip
+ * for a finished shift. Does not erase durable receipts or history.
+ */
+export async function clearDvirRoutingAfterFinalization(
+  deps: Pick<DvirGateDeps, 'kv'>,
+): Promise<void> {
+  await clearPendingEndShift(deps.kv);
 }
 
 /**
@@ -268,6 +310,19 @@ export async function ingestDvirCompletionUrl(
   }
 
   const result = await saveReceiptIdempotent(deps.kv, validated.receipt);
+  // Post-Trip receipt means the gate for this phase is satisfied — drop
+  // pending end-shift so off-shift / later taps cannot re-launch Post-Trip.
+  if (validated.receipt.phase === 'post_trip') {
+    const pending = await getPendingEndShift(deps.kv);
+    if (pending && pending.shiftId === validated.receipt.shiftId) {
+      // Leave pending until consumePendingEndShiftIfReady when still active;
+      // if post is complete, consume path will clear. Clear immediately when
+      // there is no active shift (finalized already).
+      if (!(await shiftIsActive(deps))) {
+        await clearPendingEndShift(deps.kv);
+      }
+    }
+  }
   return {
     ok: true,
     receipt: validated.receipt,

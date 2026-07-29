@@ -348,23 +348,10 @@ export default function DaySummaryScreen() {
   };
 
   const handleLogout = async () => {
-    // Post-Trip safety net: by policy Post-Trip runs before confirmArrival
-    // ends the shift. If a driver reaches Day Summary without a Post-Trip
-    // receipt (legacy path / race), block logout and launch eQuipment.
-    try {
-      const shiftId = await getCurrentShiftId();
-      if (shiftId) {
-        const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
-        const gate = createSuiteDvirGate();
-        const hasPost = await gate.isPostTripComplete(shiftId);
-        if (!hasPost) {
-          await gate.ensurePostTripGate({ alertOnBlock: true });
-          return;
-        }
-      }
-    } catch (err) {
-      console.warn('[day-summary] Post-Trip gate check failed:', err);
-    }
+    // Day Summary is only shown after shift finalization (off-shift).
+    // Never redirect to Post-Trip from here — that was the stale-routing
+    // failure mode when a prior shiftId lingered without an active shift.
+    // Post-Trip was already required at Arrival; receipts remain durable.
 
     // JSA gate: only block logout if rule.gateShiftEnd is true (per_shift) and
     // jsaCompleted hasn't flipped to true today. The proper modal replaces

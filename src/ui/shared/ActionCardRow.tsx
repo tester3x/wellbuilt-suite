@@ -131,7 +131,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       );
       // SSO identity filled inside gate when user is available via createSuiteDvirGate
       // from useAppLauncher paths; here use bare gate for launch after mint.
-      const gate = createSuiteDvirGate();
+      const gate = createSuiteDvirGate({ isShiftActive: () => true });
       await gate.ensurePreTripGate({ alertOnBlock: true });
     } catch (err) {
       console.warn('[ActionCardRow] Pre-Trip gate launch failed:', err);
@@ -193,7 +193,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
             // Post-Trip gate: do NOT end shift until eQuipment receipt is durable.
             try {
               const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
-              const gate = createSuiteDvirGate();
+              const gate = createSuiteDvirGate({ isShiftActive: () => true });
               const post = await gate.ensurePostTripGate({
                 odometerMiles: miles,
                 alertOnBlock: true,
@@ -204,6 +204,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
                 return;
               }
               await onArrived(miles);
+              // Arrival finalizes the shift — clear pending Post-Trip routing.
+              await gate.clearDvirRoutingAfterFinalization();
             } finally {
               setShowArrivalModal(false);
             }

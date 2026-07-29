@@ -27,9 +27,14 @@ SplashScreen.preventAutoHideAsync();
 function DvirReceiptListener() {
   const { user, confirmArrival, shiftActive } = useAuth();
   const handled = useRef<Set<string>>(new Set());
+  const shiftActiveRef = useRef(shiftActive);
+  shiftActiveRef.current = shiftActive;
 
   useEffect(() => {
-    const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+    const gate = createSuiteDvirGate({
+      getSso: makeDvirSsoGetter(user),
+      isShiftActive: () => shiftActiveRef.current,
+    });
 
     const handleUrl = async (url: string | null) => {
       if (!url || !url.includes('dvir-complete')) return;
@@ -51,13 +56,16 @@ function DvirReceiptListener() {
       // Resume end-shift if Post-Trip completed and pending flag set
       if (result.receipt.phase === 'post_trip') {
         const pending = await gate.consumePendingEndShiftIfReady();
-        if (pending.resume && shiftActive) {
+        if (pending.resume && shiftActiveRef.current) {
           try {
             await confirmArrival(pending.odometerMiles);
             router.replace('/day-summary');
           } catch (err) {
             console.warn('[DvirReceipt] resume confirmArrival failed:', err);
           }
+        } else if (!shiftActiveRef.current) {
+          // Already finalized — ensure pending flag cannot re-hijack module taps
+          await gate.clearDvirRoutingAfterFinalization();
         }
       }
     };
@@ -70,7 +78,7 @@ function DvirReceiptListener() {
     });
 
     return () => sub.remove();
-  }, [user, confirmArrival, shiftActive]);
+  }, [user, confirmArrival]);
 
   return null;
 }

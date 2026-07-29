@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   buildEquipmentDvirUrl,
+  clearDvirRoutingAfterFinalization,
   ensurePostTripGate,
   ensurePreTripGate,
   ingestDvirCompletionUrl,
@@ -16,7 +17,13 @@ import {
   type PhaseCompletionReceipt,
 } from './receiptTypes.js';
 import { encodeReceiptForDeepLink } from './validateReceipt.js';
-import { getReceipt, hasValidPhase, type DvirReceiptKv } from './dvirReceiptStore.js';
+import {
+  getPendingEndShift,
+  getReceipt,
+  hasValidPhase,
+  setPendingEndShift,
+  type DvirReceiptKv,
+} from './dvirReceiptStore.js';
 
 function memoryKv(): DvirReceiptKv {
   const m = new Map<string, string>();
@@ -71,11 +78,13 @@ function deps(
   kv: DvirReceiptKv,
   shiftId: string | null,
   launched: string[],
+  shiftActive = true,
 ): DvirGateDeps {
   return {
     kv,
     sha256Hex,
     getCurrentShiftId: async () => shiftId,
+    isShiftActive: () => shiftActive,
     openUrl: async (url) => {
       launched.push(url);
     },
@@ -268,5 +277,83 @@ describe('Suite DVIR gate service', () => {
     assert.match(url, /^wbequipment:\/\/dvir\?/);
     assert.match(url, /returnUrl=/);
     assert.match(url, /phase=pre_trip/);
+  });
+
+  it('off-shift never redirects Pre-Trip or Post-Trip even with stale shiftId', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    const staleId = '2026-07-28_090534';
+    const d = deps(kv, staleId, launched, false);
+
+    const pre = await ensurePreTripGate(d, { alertOnBlock: false });
+    assert.equal(pre.allowed, true);
+    assert.equal(pre.launched, false);
+
+    await setPendingEndShift(kv, {
+      shiftId: staleId,
+      createdAt: '2026-07-28T18:00:00.000Z',
+    });
+    const post = await ensurePostTripGate(d, { alertOnBlock: false });
+    assert.equal(post.allowed, true);
+    assert.equal(post.launched, false);
+    assert.equal(launched.length, 0);
+    assert.equal(await getPendingEndShift(kv), null);
+  });
+
+  it('stale pending Post-Trip flag while off-shift is cleared without launch', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    const d = deps(kv, 'prior_shift', launched, false);
+    await setPendingEndShift(kv, {
+      shiftId: 'prior_shift',
+      odometerMiles: 99,
+      createdAt: '2026-07-28T18:00:00.000Z',
+    });
+    await clearDvirRoutingAfterFinalization(d);
+    assert.equal(await getPendingEndShift(kv), null);
+    const post = await ensurePostTripGate(d, { alertOnBlock: false });
+    assert.equal(post.launched, false);
+    assert.equal(launched.length, 0);
+  });
+
+  it('completed receipt releases Pre-Trip gate on active shift', async () => {
+    const kv = memoryKv();
+    const shiftId = 'active_pre';
+    const d = deps(kv, shiftId, [], true);
+    assert.equal((await ensurePreTripGate(d, { alertOnBlock: false })).allowed, false);
+    const receipt = await makeReceipt({ shiftId, phase: 'pre_trip' });
+    await ingestDvirCompletionUrl(
+      d,
+      `wellbuilt-suite://dvir-complete?receipt=${encodeURIComponent(encodeReceiptForDeepLink(receipt))}`,
+    );
+    assert.equal((await ensurePreTripGate(d, { alertOnBlock: false })).allowed, true);
+  });
+
+  it('new shift cannot inherit prior pending Post-Trip routing', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    // Prior shift left a pending end-shift flag
+    await setPendingEndShift(kv, {
+      shiftId: 'old_shift',
+      createdAt: '2026-07-28T17:00:00.000Z',
+    });
+    // New shift active with different id — finalize routing on start
+    await clearDvirRoutingAfterFinalization({ kv });
+    assert.equal(await getPendingEndShift(kv), null);
+
+    const d = deps(kv, 'new_shift', launched, true);
+    // Pre-Trip still required for the new shift (no inheritance of completion)
+    const pre = await ensurePreTripGate(d, { alertOnBlock: false });
+    assert.equal(pre.allowed, false);
+    assert.equal(pre.launched, true);
+    assert.ok(launched[0].includes('phase=pre_trip'));
+    assert.ok(launched[0].includes('shiftId=new_shift'));
+    assert.ok(!launched.some((u) => u.includes('phase=post_trip')));
+  });
+
+  it('Tickets scheme remains Tickets (isTicketsLaunch unchanged)', () => {
+    assert.equal(isTicketsLaunch('wellbuilt-tickets'), true);
+    assert.equal(isTicketsLaunch('wellbuilt-tickets', 'water-ticket'), true);
+    assert.equal(isTicketsLaunch('wbequipment'), false);
   });
 });

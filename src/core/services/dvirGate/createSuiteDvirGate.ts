@@ -14,6 +14,7 @@ import {
   isPostTripCompleteForShift,
   launchEquipmentPhase,
   consumePendingEndShiftIfReady,
+  clearDvirRoutingAfterFinalization,
 } from './dvirGateService';
 import type { DvirReceiptKv } from './dvirReceiptStore';
 import { loadVehicleInfo } from '../driverProfile';
@@ -34,6 +35,8 @@ async function sha256Hex(input: string): Promise<string> {
 
 export function createSuiteDvirGate(opts?: {
   getSso?: DvirGateDeps['getSso'];
+  /** Live shiftActive from AuthContext — required to stop off-shift redirects. */
+  isShiftActive?: DvirGateDeps['isShiftActive'];
 }): DvirGateDeps & {
   ensurePreTripGate: (
     o?: Parameters<typeof ensurePreTripGate>[1],
@@ -49,12 +52,14 @@ export function createSuiteDvirGate(opts?: {
     shiftId: string,
   ) => ReturnType<typeof launchEquipmentPhase>;
   consumePendingEndShiftIfReady: () => ReturnType<typeof consumePendingEndShiftIfReady>;
+  clearDvirRoutingAfterFinalization: () => Promise<void>;
 } {
   const deps: DvirGateDeps = {
     kv,
     sha256Hex,
     getCurrentShiftId,
     getSso: opts?.getSso,
+    isShiftActive: opts?.isShiftActive,
     openUrl: (url) => Linking.openURL(url),
     alert: (title, message) => {
       Alert.alert(title, message);
@@ -71,6 +76,7 @@ export function createSuiteDvirGate(opts?: {
     isPostTripComplete: (shiftId) => isPostTripCompleteForShift(deps, shiftId),
     launchPhase: (phase, shiftId) => launchEquipmentPhase(deps, phase, shiftId),
     consumePendingEndShiftIfReady: () => consumePendingEndShiftIfReady(deps),
+    clearDvirRoutingAfterFinalization: () => clearDvirRoutingAfterFinalization(deps),
   };
 }
 
