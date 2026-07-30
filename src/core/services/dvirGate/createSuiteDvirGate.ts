@@ -24,6 +24,10 @@ import {
   type ShiftDvirSummary,
 } from './shiftDvirSummary';
 import { loadVehicleInfo } from '../driverProfile';
+import {
+  hasEquipmentHandoffConfirmHandler,
+  requestEquipmentHandoffConfirm,
+} from './equipmentHandoffConfirm';
 
 const kv: DvirReceiptKv = {
   getItem: (k) => AsyncStorage.getItem(k),
@@ -74,14 +78,18 @@ export function createSuiteDvirGate(opts?: {
     alert: (title, message) => {
       Alert.alert(title, message);
     },
-    // Confirm before leaving Suite for eQuipment (parity with clear JSA handoff UX)
-    confirmLeaveForEquipment: ({ title, message }) =>
-      new Promise((resolve) => {
+    // Branded modal via DvirHandoffHost; Alert only if host not mounted
+    confirmLeaveForEquipment: async ({ phase, title, message }) => {
+      if (hasEquipmentHandoffConfirmHandler()) {
+        return requestEquipmentHandoffConfirm({ phase, title, message });
+      }
+      return new Promise((resolve) => {
         Alert.alert(title, message, [
           { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
           { text: 'Continue', onPress: () => resolve(true) },
         ]);
-      }),
+      });
+    },
     tryAndroidIntent: Platform.OS === 'android',
   };
 

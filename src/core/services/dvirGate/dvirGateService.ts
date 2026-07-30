@@ -103,13 +103,13 @@ export function equipmentHandoffNotice(phase: DvirReceiptPhase): {
     return {
       title: 'Opening WellBuilt eQuipment',
       message:
-        'Your post-trip DVIR must be completed before ending your shift. You will return to WellBuilt Suite when it is finished.',
+        'Your Post-Trip DVIR is required before ending your shift. You will return to WellBuilt Suite when it is finished.',
     };
   }
   return {
     title: 'Opening WellBuilt eQuipment',
     message:
-      'Your pre-trip DVIR must be completed before using Tickets. You will return to WellBuilt Suite when it is finished.',
+      'Your Pre-Trip DVIR is required before using Tickets. You will return to WellBuilt Suite when it is finished.',
   };
 }
 

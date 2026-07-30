@@ -15,6 +15,7 @@ import { colors } from '@/core/theme';
 import { allSkins, defaultSkinId } from '@/ui/skins';
 import { startConnectivityMonitor, stopConnectivityMonitor } from '@/core/services/connectivity';
 import { createSuiteDvirGate, makeDvirSsoGetter } from '@/core/services/dvirGate';
+import DvirHandoffHost from '@/ui/shared/DvirHandoffHost';
 
 // Keep the native splash screen visible until we're ready
 // This prevents the black flicker between native splash and React render
@@ -116,6 +117,7 @@ export default function RootLayout() {
               <StatusBar style="light" />
               <OfflineBanner />
               <DvirReceiptListener />
+              <DvirHandoffHost />
               <Stack
                 screenOptions={{
                   headerShown: false,

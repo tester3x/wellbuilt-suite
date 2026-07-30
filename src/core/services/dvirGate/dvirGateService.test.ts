@@ -106,27 +106,60 @@ describe('Suite DVIR gate service', () => {
     assert.ok(launched[0].includes('shiftId=2026-07-28_060000'));
   });
 
-  it('pre-trip handoff notice names eQuipment and reason', () => {
+  it('pre-trip handoff notice names eQuipment and Pre-Trip DVIR reason', () => {
     const pre = equipmentHandoffNotice('pre_trip');
     assert.match(pre.title, /WellBuilt eQuipment/i);
-    assert.match(pre.message, /pre-trip/i);
+    assert.match(pre.message, /Pre-Trip DVIR/i);
     assert.match(pre.message, /WellBuilt Suite/i);
+    assert.doesNotMatch(pre.message, /Post-Trip/i);
+  });
+
+  it('post-trip handoff notice names eQuipment and Post-Trip DVIR reason', () => {
     const post = equipmentHandoffNotice('post_trip');
-    assert.match(post.message, /post-trip/i);
-    assert.doesNotMatch(post.message, /pre-trip/i);
+    assert.match(post.title, /WellBuilt eQuipment/i);
+    assert.match(post.message, /Post-Trip DVIR/i);
+    assert.match(post.message, /WellBuilt Suite/i);
+    assert.doesNotMatch(post.message, /Pre-Trip/i);
   });
 
   it('confirmLeaveForEquipment cancel does not launch eQuipment', async () => {
     const kv = memoryKv();
     const launched: string[] = [];
+    let confirmCalls = 0;
     const d: DvirGateDeps = {
       ...deps(kv, 'shift_confirm', launched, true),
-      confirmLeaveForEquipment: async () => false,
+      confirmLeaveForEquipment: async () => {
+        confirmCalls += 1;
+        return false;
+      },
     };
     const r = await ensurePreTripGate(d, { alertOnBlock: true });
     assert.equal(r.allowed, false);
     assert.equal(r.launched, false);
     assert.equal(launched.length, 0);
+    assert.equal(confirmCalls, 1);
+  });
+
+  it('confirmLeaveForEquipment continue launches eQuipment once', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    let confirmCalls = 0;
+    const d: DvirGateDeps = {
+      ...deps(kv, 'shift_confirm_once', launched, true),
+      confirmLeaveForEquipment: async (opts) => {
+        confirmCalls += 1;
+        assert.equal(opts.phase, 'pre_trip');
+        assert.match(opts.title, /WellBuilt eQuipment/i);
+        return true;
+      },
+    };
+    const r = await ensurePreTripGate(d, { alertOnBlock: true });
+    assert.equal(r.allowed, false);
+    assert.equal(r.launched, true);
+    assert.equal(launched.length, 1);
+    assert.equal(confirmCalls, 1);
+    assert.match(launched[0], /wbequipment:\/\/dvir/);
+    assert.match(launched[0], /returnUrl=.*dvir-complete/);
   });
 
   it('Suite DVIR return URL uses dvir-complete path (receivable route)', () => {
