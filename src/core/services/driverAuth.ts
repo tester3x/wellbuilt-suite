@@ -182,6 +182,25 @@ export const verifyLogin = async (
 }> => {
   console.log("[DriverAuth-Suite] Verifying login for:", displayName);
 
+  // Prefer server-enforced auth (scrypt + custom token). Falls through to
+  // legacy hash lookup only during dual-run while open rules still exist.
+  try {
+    const { secureLogin } = await import('./secureDriverAuth');
+    const secure = await secureLogin({ displayName, passcode });
+    if (secure.valid) {
+      console.log("[DriverAuth-Suite] Secure login OK for:", secure.displayName);
+      return secure;
+    }
+    // If server says passcode reset required or invalid, do not fall back to
+    // exposed legacy hashes when the error is explicit.
+    if (secure.error && /reset required|Too many login/i.test(secure.error)) {
+      return { valid: false, error: secure.error };
+    }
+    console.log("[DriverAuth-Suite] Secure login miss, trying legacy:", secure.error);
+  } catch (e) {
+    console.warn("[DriverAuth-Suite] Secure login unavailable, legacy fallback", e);
+  }
+
   try {
     const hash = await hashPasscode(passcode, displayName);
     console.log("[DriverAuth-Suite] Hash:", hash.slice(0, 8) + "...");
@@ -491,6 +510,36 @@ export const submitRegistration = async (params: {
 }): Promise<{ success: boolean; error?: string }> => {
   console.log("[DriverAuth-Suite] Submitting registration for:", params.displayName, "company:", params.companyName);
 
+  // Prefer secure callable (server scrypt + rate limit). No client write to pending.
+  try {
+    const { secureSubmitRegistration } = await import('./secureDriverAuth');
+    const secure = await secureSubmitRegistration({
+      ...params,
+      source: 'wbs',
+    });
+    if (secure.success) {
+      const hash = await hashPasscode(params.passcode, params.displayName);
+      await SecureStore.setItemAsync("pendingPasscodeHash", hash);
+      await SecureStore.setItemAsync("pendingDisplayName", params.displayName);
+      await SecureStore.setItemAsync("pendingRegistrationTime", Date.now().toString());
+      if (params.companyName) {
+        await SecureStore.setItemAsync("pendingCompanyName", params.companyName);
+      }
+      if (secure.pendingId) {
+        await SecureStore.setItemAsync("pendingSecureId", secure.pendingId);
+      }
+      console.log("[DriverAuth-Suite] Secure registration submitted");
+      return { success: true };
+    }
+    // If validation/rate-limit from server, surface it (do not silent-legacy spam)
+    if (secure.error && /too many|invalid|already/i.test(secure.error)) {
+      return { success: false, error: secure.error };
+    }
+    console.warn("[DriverAuth-Suite] Secure registration failed, legacy fallback:", secure.error);
+  } catch (e) {
+    console.warn("[DriverAuth-Suite] Secure registration unavailable, legacy fallback", e);
+  }
+
   try {
     const hash = await hashPasscode(params.passcode, params.displayName);
 
@@ -517,7 +566,7 @@ export const submitRegistration = async (params: {
       await SecureStore.setItemAsync("pendingCompanyName", params.companyName);
     }
 
-    console.log("[DriverAuth-Suite] Registration submitted successfully");
+    console.log("[DriverAuth-Suite] Registration submitted successfully (legacy)");
     return { success: true };
   } catch (error) {
     console.error("[DriverAuth-Suite] Error submitting registration:", error);
@@ -549,6 +598,16 @@ export const getPendingRegistration = async (): Promise<{
 export const checkRegistrationStatus = async (): Promise<
   "pending" | "approved" | "rejected" | "none"
 > => {
+  try {
+    const { secureCheckRegistrationStatus } = await import('./secureDriverAuth');
+    const secureStatus = await secureCheckRegistrationStatus();
+    if (secureStatus !== 'none') {
+      return secureStatus;
+    }
+  } catch {
+    /* fall through */
+  }
+
   const pending = await getPendingRegistration();
   if (!pending) {
     return "none";
