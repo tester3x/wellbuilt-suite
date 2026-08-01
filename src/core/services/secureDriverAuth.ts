@@ -105,7 +105,10 @@ export async function secureLogin(params: {
 }> {
   try {
     const data = await callCallable<{
-      customToken: string;
+      customToken?: string;
+      idToken?: string;
+      refreshToken?: string;
+      mintMethod?: string;
       driverId: string;
       displayName: string;
       legalName?: string;
@@ -119,14 +122,15 @@ export async function secureLogin(params: {
       displayName: params.displayName,
       passcode: params.passcode,
     });
-    if (data.idToken) {
-      // password-exchange fallback from server (no createCustomToken/signBlob)
+    // Prefer custom token (createCustomToken + signInWithCustomToken).
+    // idToken path is emergency password-exchange only (server flag off by default).
+    if (data.customToken) {
+      await exchangeCustomToken(data.customToken);
+    } else if (data.idToken) {
       await SecureStore.setItemAsync(ID_TOKEN_KEY, data.idToken);
       if (data.refreshToken) {
         await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, data.refreshToken);
       }
-    } else if (data.customToken) {
-      await exchangeCustomToken(data.customToken);
     }
     return {
       valid: true,

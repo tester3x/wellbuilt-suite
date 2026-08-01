@@ -48,3 +48,24 @@ export async function secureGetReferenceBundle(
     driverHash: opts?.driverHash,
   }, opts?.idToken);
 }
+
+/** Scoped Storage path mint (ticket/JSA/ewallet). Prefer over open bucket paths. */
+export async function secureRequestUploadPath(
+  params: {
+    kind: 'ticket_photo' | 'chat_photo' | 'jsa_pdf' | 'ewallet_doc';
+    companyId?: string;
+    invoiceId?: string;
+    threadId?: string;
+    docId?: string;
+    contentType?: string;
+    byteSize?: number;
+    driverHash?: string;
+  },
+  idToken?: string | null,
+) {
+  return callCallable<{ path: string; maxBytes: number }>(
+    'requestStorageUploadPath',
+    params,
+    idToken,
+  );
+}
