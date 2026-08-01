@@ -119,7 +119,13 @@ export async function secureLogin(params: {
       displayName: params.displayName,
       passcode: params.passcode,
     });
-    if (data.customToken) {
+    if (data.idToken) {
+      // password-exchange fallback from server (no createCustomToken/signBlob)
+      await SecureStore.setItemAsync(ID_TOKEN_KEY, data.idToken);
+      if (data.refreshToken) {
+        await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, data.refreshToken);
+      }
+    } else if (data.customToken) {
       await exchangeCustomToken(data.customToken);
     }
     return {
