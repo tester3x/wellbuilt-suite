@@ -219,4 +219,79 @@ describe('Shift Complete DVIR summary', () => {
     assert.equal(second!.preTrip.status, 'not_captured');
     assert.equal(second!.postTrip.completedAt, '2026-07-28T17:37:00.000Z');
   });
+
+  it('field defect: Pre-Trip Partial summary upgrades after durable Post-Trip receipt', async () => {
+    // Reproduce: Pre-Trip finalize wrote Partial → Post-Trip receipt accepted →
+    // day-summary hydrate must not freeze Partial / Post-Trip Not available.
+    const kv = memoryKv();
+    const shiftId = '2026-08-05_field_partial';
+    const pre = await receipt(shiftId, 'pre_trip', '2026-08-05T14:12:00.000Z'); // 9:12 AM local-ish
+    await saveReceiptIdempotent(kv, pre);
+
+    const partial = await buildShiftDvirSummaryFromStore(kv, shiftId, {
+      truckUnit: '102',
+      trailerUnit: 'T30',
+    });
+    assert.equal(partial.overallStatus, 'partial');
+    assert.equal(partial.postTrip.status, 'missing');
+    await saveShiftDvirSummary(kv, partial);
+
+    const post = await receipt(shiftId, 'post_trip', '2026-08-05T22:45:00.000Z');
+    await saveReceiptIdempotent(kv, post);
+
+    // Foreign shift noise must not leak
+    const foreign = await receipt('other_shift', 'post_trip', '2026-08-05T23:00:00.000Z');
+    await saveReceiptIdempotent(kv, foreign);
+
+    const opened = await hydrateShiftDvirSummaryIfMissing(kv, shiftId, {
+      truckUnit: '999',
+      trailerUnit: 'T99',
+    });
+    assert.ok(opened);
+    assert.equal(opened!.overallStatus, 'completed');
+    assert.equal(overallDvirLabel(opened!.overallStatus), 'Completed');
+    assert.equal(opened!.preTrip.status, 'captured');
+    assert.equal(opened!.preTrip.completedAt, '2026-08-05T14:12:00.000Z');
+    assert.equal(opened!.postTrip.status, 'completed');
+    assert.equal(opened!.postTrip.completedAt, '2026-08-05T22:45:00.000Z');
+    // Keep identity already on the Partial card when rebuilt truck is empty-overridden
+    assert.equal(opened!.truckUnit, '102');
+    assert.equal(opened!.trailerUnit, 'T30');
+
+    const stored = await loadShiftDvirSummary(kv, shiftId);
+    assert.equal(stored!.overallStatus, 'completed');
+    assert.equal(stored!.postTrip.completedAt, '2026-08-05T22:45:00.000Z');
+  });
+
+  it('stale foreign-shift post receipt does not complete current shift summary', async () => {
+    const kv = memoryKv();
+    const shiftId = 'shift_current';
+    const pre = await receipt(shiftId, 'pre_trip', '2026-08-05T12:00:00.000Z');
+    await saveReceiptIdempotent(kv, pre);
+    await saveShiftDvirSummary(
+      kv,
+      await buildShiftDvirSummaryFromStore(kv, shiftId, {
+        truckUnit: '102',
+        trailerUnit: 'T30',
+      }),
+    );
+    const other = await receipt('shift_other', 'post_trip', '2026-08-05T20:00:00.000Z');
+    await saveReceiptIdempotent(kv, other);
+
+    const s = await hydrateShiftDvirSummaryIfMissing(kv, shiftId);
+    assert.ok(s);
+    assert.equal(s!.overallStatus, 'partial');
+    assert.equal(s!.postTrip.status, 'missing');
+  });
+
+  it('pre-trip receipt alone cannot populate post-trip phase', async () => {
+    const kv = memoryKv();
+    const shiftId = 'shift_pre_only';
+    const pre = await receipt(shiftId, 'pre_trip', '2026-08-05T12:00:00.000Z');
+    await saveReceiptIdempotent(kv, pre);
+    const s = await buildShiftDvirSummaryFromStore(kv, shiftId);
+    assert.equal(s.postTrip.status, 'missing');
+    assert.equal(s.postTrip.completedAt, null);
+    assert.equal(s.overallStatus, 'partial');
+  });
 });

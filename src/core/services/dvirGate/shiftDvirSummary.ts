@@ -154,12 +154,62 @@ export async function buildShiftDvirSummaryFromStore(
 }
 
 /**
- * Cold-upgrade / first-open hydration for a finalized shift:
- * - If suite-dvir-summary already exists for this shiftId, return it (idempotent).
- * - Else assemble from durable receipts for that exact shiftId only, persist, return.
+ * True when durable receipts are strictly more complete than a stored summary.
+ * Used so a Partial (Pre-Trip only) summary cannot freeze out a later Post-Trip
+ * receipt — field defect: DVIR Partial + Post-Trip "Not available" after
+ * successful Post-Trip return.
  *
- * Covers upgrades where receipts were accepted before shiftSummary existed —
- * no second receipt or new shift required.
+ * Does not invent phases: only upgrades when the rebuilt receipt-based
+ * summary has evidence the stored one lacks.
+ */
+export function summaryNeedsReceiptUpgrade(
+  existing: ShiftDvirSummary,
+  builtFromReceipts: ShiftDvirSummary,
+): boolean {
+  if (existing.shiftId !== builtFromReceipts.shiftId) return false;
+  // Completed summaries are terminal — never downgrade or thrash.
+  if (existing.overallStatus === 'completed') return false;
+
+  if (builtFromReceipts.overallStatus === 'completed') {
+    return true;
+  }
+  if (
+    builtFromReceipts.postTrip.status === 'completed' &&
+    existing.postTrip.status !== 'completed'
+  ) {
+    return true;
+  }
+  if (
+    builtFromReceipts.preTrip.status === 'captured' &&
+    existing.preTrip.status !== 'captured' &&
+    existing.preTrip.status !== 'not_captured'
+  ) {
+    // Allow upgrade into captured Pre-Trip when stored said missing/not_available.
+    // Do not reverse legacy "not_captured" (post-only seal) without a real pre receipt.
+    return true;
+  }
+  if (builtFromReceipts.postTrip.completedAt && !existing.postTrip.completedAt) {
+    return true;
+  }
+  if (
+    builtFromReceipts.preTrip.completedAt &&
+    !existing.preTrip.completedAt &&
+    builtFromReceipts.preTrip.status === 'captured'
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Hydrate Shift Complete DVIR summary for a shift:
+ * - Assemble always from durable receipts for that shiftId only.
+ * - If no summary exists, persist and return.
+ * - If a summary exists but receipts are strictly more complete (e.g. Post-Trip
+ *   arrived after Pre-Trip-only Partial was saved), upgrade and persist.
+ * - Otherwise return the existing summary (idempotent; do not thrash truck units).
+ *
+ * Never marks complete from navigation alone — only from stored phase receipts.
  */
 export async function hydrateShiftDvirSummaryIfMissing(
   kv: DvirReceiptKv,
@@ -170,11 +220,25 @@ export async function hydrateShiftDvirSummaryIfMissing(
   if (!id) return null;
 
   const existing = await loadShiftDvirSummary(kv, id);
-  if (existing) return existing;
-
   const built = await buildShiftDvirSummaryFromStore(kv, id, opts);
-  await saveShiftDvirSummary(kv, built);
-  return built;
+
+  if (!existing) {
+    await saveShiftDvirSummary(kv, built);
+    return built;
+  }
+
+  if (summaryNeedsReceiptUpgrade(existing, built)) {
+    // Keep vehicle identity already shown on Partial; do not thrash from SSO re-read
+    const upgraded: ShiftDvirSummary = {
+      ...built,
+      truckUnit: existing.truckUnit || built.truckUnit || null,
+      trailerUnit: existing.trailerUnit || built.trailerUnit || null,
+    };
+    await saveShiftDvirSummary(kv, upgraded);
+    return upgraded;
+  }
+
+  return existing;
 }
 
 export async function saveShiftDvirSummary(
