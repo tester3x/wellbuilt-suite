@@ -29,6 +29,12 @@ export interface VerifiedIdentity {
   kind: string | null;
   driverId: string | null;
   companyId: string | null;
+  /**
+   * Per-session application audience, e.g. 'wbt'. Null for an unscoped
+   * session, which is what WB-S mints. Optional so existing constructors
+   * of this shape stay valid.
+   */
+  app?: string | null;
 }
 
 /** The identity an attempt believes it is authenticating. */

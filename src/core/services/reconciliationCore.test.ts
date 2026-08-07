@@ -136,6 +136,27 @@ describe('startup state matrix', () => {
       signedOut: true,
     },
     {
+      name: 'local present, SDK scoped to WB-T -> rejected',
+      localIdentity: local('driver-A'),
+      sdk: { uid: 'uid-A', kind: 'driver', driverId: 'driver-A', companyId: 'co-1', app: 'wbt' },
+      expected: 'rejected',
+      signedOut: true,
+    },
+    {
+      name: 'local present, SDK scoped to an unknown app -> rejected',
+      localIdentity: local('driver-A'),
+      sdk: { uid: 'uid-A', kind: 'driver', driverId: 'driver-A', companyId: 'co-1', app: 'other' },
+      expected: 'rejected',
+      signedOut: true,
+    },
+    {
+      name: 'local present, SDK unscoped (today\'s installs) -> verified',
+      localIdentity: local('driver-A'),
+      sdk: { uid: 'uid-A', kind: 'driver', driverId: 'driver-A', companyId: 'co-1', app: null },
+      expected: 'verified',
+      signedOut: false,
+    },
+    {
       name: 'local present, claims temporarily unreadable -> unavailable',
       localIdentity: local('driver-A'),
       sdk: driver('uid-A', 'driver-A'),

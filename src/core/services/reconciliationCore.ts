@@ -124,8 +124,21 @@ export function createReconciliationCore(ops: ReconciliationOps): Reconciliation
         return gen === generation ? state : 'rejected';
       }
 
+      // vc51.9K: a session scoped to ANOTHER app is not a WB-S session.
+      // WB-T sessions carry app:'wbt'; WB-S requests no audience at all,
+      // so any marker here means a foreign-scoped session was restored —
+      // device handover, a shared UID, or an abandoned switch. Handled as
+      // a mismatch through the SAME bounded cleanup, not a new failure
+      // mode, so protected WB-S operations simply stay unavailable.
+      //
+      // Deliberately NOT requiring app:'wbs'. Every existing install has
+      // a session with no audience at all, and demanding one would sign
+      // out every current driver.
+      const foreignAudience = typeof identity.app === 'string' && identity.app.length > 0;
+
       const matches =
         identity.kind === 'driver'
+        && !foreignAudience
         && !!identity.driverId
         && identity.driverId === local!.driverId
         && (!local!.companyId || identity.companyId === local!.companyId);
