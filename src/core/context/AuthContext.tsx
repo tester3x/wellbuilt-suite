@@ -142,6 +142,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [returningToYard, setReturningToYard] = useState(false);
   const [returnDepartTime, setReturnDepartTime] = useState<string | null>(null);
   const [activePackageId, setActivePackageId] = useState<string | null>(null);
+  // Guards startup reconciliation to once per mounted session epoch, so a
+  // re-render or Fast Refresh cannot re-run it against a changed session.
+  const reconciledRef = useRef(false);
 
   // On mount: check SecureStore for existing session
   // OPTIMISTIC AUTH: If local session exists, trust it immediately and revalidate
@@ -156,6 +159,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(sessionToUser(session));
           setLoading(false);
 
+          // VC51.9I-RECOVERY5A: reconcile the persisted SDK Auth session
+          // against the local identity just restored. Deliberately NOT
+          // awaited — ordinary app entry is offline-capable and must not
+          // become network-dependent. Its result only decides whether
+          // VERIFIED cloud operations may run; local entry proceeds either
+          // way, and 'unavailable' (offline) is not a logout.
+          if (!reconciledRef.current) {
+            reconciledRef.current = true;
+            void import('../services/authReconciliation')
+              .then((m) => m.reconcileRestoredSession({
+                driverId: session.driverId,
+                companyId: session.companyId || null,
+              }))
+              .catch(() => {});
+          }
 
           // Check if shift was explicitly started (and not ended)
           const shiftStarted = await SecureStore.getItemAsync('shiftStarted');

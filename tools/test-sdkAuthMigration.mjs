@@ -230,6 +230,30 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
     !/signInWithCustomTokenOwned|initializePersistentAuth|getOwnedVerifiedIdentity/.test(legacy));
 }
 
+// ── CORRECTION3 item 1: startup reconciliation is actually wired ────────
+{
+  const ctx = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
+  check('bootstrap invokes reconcileRestoredSession', /reconcileRestoredSession\(/.test(ctx));
+  const boot = ctx.split('const session = await getDriverSession')[1] || '';
+  check('reconciliation runs inside the session-restore path', /reconcileRestoredSession/.test(boot));
+  check('reconciliation is NOT awaited (offline entry stays non-blocking)',
+    !/await\s+[^;]*reconcileRestoredSession/.test(ctx));
+  check('reconciliation is guarded to once per mounted epoch',
+    /reconciledRef\.current = true/.test(ctx) && /!reconciledRef\.current/.test(ctx));
+  check('reconciliation failure cannot break app entry',
+    /reconcileRestoredSession[\s\S]{0,300}?\.catch\(/.test(ctx));
+  check('the restored local identity is passed in rather than re-read blindly',
+    /reconcileRestoredSession\(\{[\s\S]{0,140}driverId/.test(ctx));
+
+  const rec = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'authReconciliation.ts'), 'utf8'));
+  check('offline claim-read failure is unavailable, never rejected',
+    /identity === undefined[\s\S]{0,90}set\('unavailable'\)/.test(rec));
+  check('an unavailable reconciliation never signs the driver out',
+    !/identity === undefined[\s\S]{0,120}signOutOwned/.test(rec));
+  check('isVerifiedReady re-reads state rather than returning a stored flag',
+    /isVerifiedReady[\s\S]{0,130}return current === 'verified'/.test(rec));
+}
+
 // ── CORRECTION3 item 2: cleanup failure is never swallowed ──────────────
 {
   const s = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8'));
