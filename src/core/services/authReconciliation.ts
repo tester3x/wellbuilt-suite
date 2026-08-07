@@ -1,5 +1,5 @@
 /**
- * Restored-session reconciliation.
+ * Restored-session reconciliation — the wiring.
  *
  * On cold launch WB-S restores a durable LOCAL identity with no network,
  * and that must keep working — ordinary app entry is offline-capable and
@@ -9,12 +9,11 @@
  * switch that failed midway, a stale session from a previous install).
  *
  * Verified cloud operations must run only when BOTH exist and agree.
- * Everything here is about establishing that agreement explicitly rather
- * than assuming it.
  *
- * Nothing in this module authorizes anything by itself: callers ask for
- * the current state at the moment they need it, so no cached boolean can
- * become durable authority.
+ * The decision logic lives in reconciliationCore so the startup state
+ * matrix and the identity-generation ownership rules can be proven under
+ * `tsx --test`; this file only supplies the real boundary operations and
+ * reads local identity from storage.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirebaseApp } from './firebaseApp';
@@ -24,52 +23,32 @@ import {
   signOutOwned,
   waitForAuthReady,
 } from './firebaseAuthBoundary';
+import {
+  createReconciliationCore,
+  type AuthReconciliationState,
+  type LocalIdentity,
+} from './reconciliationCore';
 
-/**
- * Reconciliation outcome.
- *
- * - `local-only`      restored local identity, no SDK session. Ordinary
- *                     offline entry proceeds; verified operations are
- *                     unavailable.
- * - `verifying`       reconciliation has not completed yet.
- * - `verified`        local and SDK identities exist and agree.
- * - `rejected`        they disagree, or claims are malformed/not a driver.
- *                     The SDK session has been signed out.
- * - `unavailable`     claims could not be read (offline, refresh failed).
- *                     Local identity is preserved untouched; verified
- *                     operations stay unavailable until it can be retried.
- */
-export type AuthReconciliationState =
-  | 'local-only'
-  | 'verifying'
-  | 'verified'
-  | 'rejected'
-  | 'unavailable';
+export type { AuthReconciliationState, LocalIdentity };
 
-export interface LocalIdentity {
-  driverId: string | null;
-  companyId: string | null;
-}
-
-let current: AuthReconciliationState = 'verifying';
-const listeners = new Set<(s: AuthReconciliationState) => void>();
-
-function set(next: AuthReconciliationState): void {
-  if (current === next) return;
-  current = next;
-  for (const l of listeners) l(next);
-}
+const core = createReconciliationCore({
+  initializePersistentAuth: () => {
+    initializePersistentAuth(getFirebaseApp(), AsyncStorage);
+  },
+  waitForAuthReady: () => waitForAuthReady(getFirebaseApp()),
+  getVerifiedIdentity: () => getOwnedVerifiedIdentity(getFirebaseApp()),
+  signOut: () => signOutOwned(getFirebaseApp()),
+});
 
 /** Current state. Read at the point of use — never cached by callers. */
 export function getAuthReconciliationState(): AuthReconciliationState {
-  return current;
+  return core.getState();
 }
 
 export function onAuthReconciliationChange(
   cb: (s: AuthReconciliationState) => void,
 ): () => void {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
+  return core.subscribe(cb);
 }
 
 /**
@@ -79,7 +58,7 @@ export function onAuthReconciliationChange(
  * session that is later rejected cannot leave a stale `true` behind.
  */
 export function isVerifiedReady(): boolean {
-  return current === 'verified';
+  return core.isVerifiedReady();
 }
 
 /** Read the restored local identity. Local storage only — never network. */
@@ -94,77 +73,22 @@ export async function readLocalIdentity(): Promise<LocalIdentity> {
 /**
  * Reconcile the persisted SDK session against restored local identity.
  *
+ * Pass `null` for "no durable local identity was restored" — that case
+ * still has to run, because an SDK user with nothing to bind it to is an
+ * orphan that must be signed out. Never fabricate a local identity to
+ * stand in for it.
+ *
  * Safe to call during startup: it initializes the owned boundary and
  * awaits readiness, but callers must not await it before rendering —
  * ordinary offline entry does not depend on the result.
  */
-export async function reconcileRestoredSession(
-  local?: LocalIdentity,
+export function reconcileRestoredSession(
+  local: LocalIdentity | null,
 ): Promise<AuthReconciliationState> {
-  set('verifying');
-  const app = getFirebaseApp();
-
-  try {
-    initializePersistentAuth(app, AsyncStorage);
-    await waitForAuthReady(app);
-  } catch {
-    // The boundary could not establish ownership (foreign instance, or a
-    // missing capability). Local identity is untouched; nothing verified.
-    set('unavailable');
-    return current;
-  }
-
-  const identity = await (async () => {
-    try {
-      return await getOwnedVerifiedIdentity(app);
-    } catch {
-      return undefined; // distinguish "read failed" from "no user"
-    }
-  })();
-
-  // Claims unreadable — offline or refresh failure. Preserve local
-  // identity; do NOT sign out, and do NOT treat it as a mismatch.
-  if (identity === undefined) {
-    set('unavailable');
-    return current;
-  }
-
-  const localIdentity = local ?? (await readLocalIdentity());
-  const hasLocal = !!localIdentity.driverId;
-
-  // No SDK user: ordinary offline entry continues, verified unavailable.
-  if (identity === null) {
-    set(hasLocal ? 'local-only' : 'local-only');
-    return current;
-  }
-
-  // SDK user with no local identity — a session with nothing to bind it
-  // to. Sign out rather than leave an orphan authenticated.
-  if (!hasLocal) {
-    await signOutOwned(app).catch(() => {});
-    set('rejected');
-    return current;
-  }
-
-  // Both exist: they must agree, and the claims must be a driver session.
-  const matches =
-    identity.kind === 'driver'
-    && !!identity.driverId
-    && identity.driverId === localIdentity.driverId
-    && (!localIdentity.companyId || identity.companyId === localIdentity.companyId);
-
-  if (!matches) {
-    await signOutOwned(app).catch(() => {});
-    set('rejected');
-    return current;
-  }
-
-  set('verified');
-  return current;
+  return core.reconcile(local);
 }
 
 /** Test-only: restore the initial state between cases. */
 export function __resetReconciliationForTests(): void {
-  current = 'verifying';
-  listeners.clear();
+  core.reset();
 }

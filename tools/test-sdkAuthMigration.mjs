@@ -187,28 +187,37 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
 // ── 9. Restored-session reconciliation ──────────────────────────────────
 {
   const rec = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'authReconciliation.ts'), 'utf8'));
+  const recCoreSrc = readFileSync(join(root, 'src', 'core', 'services', 'reconciliationCore.ts'), 'utf8');
+  const recCore = stripComments(recCoreSrc);
   for (const st of ['local-only', 'verifying', 'verified', 'rejected', 'unavailable']) {
-    check(`reconciliation models the '${st}' state`, rec.includes(`'${st}'`));
+    check(`reconciliation models the '${st}' state`, recCore.includes(`'${st}'`));
   }
+  // The behavioral matrix itself is proven in reconciliationCore.test.ts;
+  // these pin the structural invariants that tests cannot express.
   check('an unreadable-claims failure is distinguished from "no user"',
-    /identity === undefined/.test(rec) && /identity === null/.test(rec));
+    /catch \{[\s\S]{0,200}publish\('unavailable'\)/.test(recCore)
+    && /identity === null/.test(recCore));
   check('unreadable claims preserve local identity (no sign-out)',
-    /if \(identity === undefined\)[\s\S]{0,120}set\('unavailable'\)/.test(rec)
-    && !/if \(identity === undefined\)[\s\S]{0,120}signOutOwned/.test(rec));
+    !/catch \{[\s\S]{0,200}signOutQuietly/.test(recCore));
   check('no SDK user leaves ordinary offline entry intact',
-    /if \(identity === null\)[\s\S]{0,160}local-only/.test(rec));
+    /if \(identity === null\)[\s\S]{0,120}local-only/.test(recCore));
   check('an SDK user with no local identity is signed out',
-    /if \(!hasLocal\)[\s\S]{0,120}signOutOwned/.test(rec));
+    /if \(!hasLocal\)[\s\S]{0,120}signOutQuietly/.test(recCore));
   check('driver AND company must match, and kind must be driver',
-    /identity\.kind === 'driver'/.test(rec)
-    && /identity\.driverId === localIdentity\.driverId/.test(rec)
-    && /identity\.companyId === localIdentity\.companyId/.test(rec));
+    /identity\.kind === 'driver'/.test(recCore)
+    && /identity\.driverId === local!\.driverId/.test(recCore)
+    && /identity\.companyId === local!\.companyId/.test(recCore));
   check('a mismatch signs out and fails closed',
-    /if \(!matches\)[\s\S]{0,120}signOutOwned[\s\S]{0,80}set\('rejected'\)/.test(rec));
+    /if \(!matches\)[\s\S]{0,120}signOutQuietly[\s\S]{0,80}publish\('rejected'\)/.test(recCore));
   check('local identity is read from storage only, never the network',
     /AsyncStorage\.getItem\('driverId'\)/.test(rec) && !/\bfetch\s*\(/.test(rec));
+  check('the reconciliation core stays free of SDK/storage imports',
+    !/from '(firebase|react-native|expo|@react-native)/.test(recCore)
+    && !/AsyncStorage|SecureStore/.test(recCore));
   check('the protected gate re-reads state rather than caching a boolean',
-    /export function isVerifiedReady\(\): boolean \{[\s\S]{0,60}return current === 'verified';/.test(rec));
+    /isVerifiedReady\(\) \{[\s\S]{0,60}return state === 'verified';/.test(recCore));
+  check('"no local identity" is an explicit input, never fabricated',
+    /reconcile\(local: LocalIdentity \| null\)/.test(recCore));
 }
 
 // ── 10. authVerified must never become persisted authority ──────────────
@@ -244,23 +253,31 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   const ctx = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
   check('bootstrap invokes reconcileRestoredSession', /reconcileRestoredSession\(/.test(ctx));
   const boot = ctx.split('const session = await getDriverSession')[1] || '';
-  check('reconciliation runs inside the session-restore path', /reconcileRestoredSession/.test(boot));
+  check('reconciliation runs on the bootstrap path', /reconcileForIdentity\(/.test(boot));
+  check('reconciliation is NOT confined to the local-session branch',
+    boot.indexOf('reconcileForIdentity(') < boot.indexOf('if (session) {'),
+    'an SDK-only orphan must still be reconciled');
+  check('the SDK-only case passes null rather than a fabricated identity',
+    /reconcileForIdentity\(\s*\n?\s*session \? \{[^}]*\} : null,?\s*\n?\s*\)/.test(boot));
   check('reconciliation is NOT awaited (offline entry stays non-blocking)',
-    !/await\s+[^;]*reconcileRestoredSession/.test(ctx));
-  check('reconciliation is guarded to once per mounted epoch',
-    /reconciledRef\.current = true/.test(ctx) && /!reconciledRef\.current/.test(ctx));
-  check('reconciliation failure cannot break app entry',
-    /reconcileRestoredSession[\s\S]{0,300}?\.catch\(/.test(ctx));
+    !/await\s+[^;]*reconcileRestoredSession/.test(ctx)
+    && !/await\s+[^;]*reconcileForIdentity/.test(ctx));
+  check('reconciliation is guarded against repeat runs',
+    /reconciledRef\.current = true/.test(ctx));
+  check('reconciliation rejection is observed, not unhandled',
+    /reconcileRestoredSession\(local\)\)[\s\S]{0,300}?\.catch\(\(err\) => \{/.test(ctx));
   check('the restored local identity is passed in rather than re-read blindly',
-    /reconcileRestoredSession\(\{[\s\S]{0,140}driverId/.test(ctx));
+    /driverId: session\.driverId, companyId: session\.companyId \|\| null/.test(ctx));
 
-  const rec = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'authReconciliation.ts'), 'utf8'));
+  const rc = stripComments(
+    readFileSync(join(root, 'src', 'core', 'services', 'reconciliationCore.ts'), 'utf8'),
+  );
   check('offline claim-read failure is unavailable, never rejected',
-    /identity === undefined[\s\S]{0,90}set\('unavailable'\)/.test(rec));
+    /catch \{[\s\S]{0,200}publish\('unavailable'\)/.test(rc));
   check('an unavailable reconciliation never signs the driver out',
-    !/identity === undefined[\s\S]{0,120}signOutOwned/.test(rec));
+    !/catch \{[\s\S]{0,200}signOutQuietly/.test(rc));
   check('isVerifiedReady re-reads state rather than returning a stored flag',
-    /isVerifiedReady[\s\S]{0,130}return current === 'verified'/.test(rec));
+    /isVerifiedReady\(\) \{[\s\S]{0,60}return state === 'verified'/.test(rc));
 }
 
 // ── CORRECTION3 item 2: cleanup failure is never swallowed ──────────────
