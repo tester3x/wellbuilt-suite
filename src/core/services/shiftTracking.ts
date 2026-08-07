@@ -164,13 +164,42 @@ function eventToFirestoreMap(event: ShiftEvent) {
 }
 
 /**
- * Auto-close any stale open shift from a previous day.
- * Checks up to 3 days back (covers weekend gaps).
+ * LEGACY DOT-hygiene sweep: auto-close a stale open shift from a
+ * previous calendar day (up to 3 days back, covering weekend gaps) by
+ * appending a synthetic `{date}T23:59:59.000Z` logout event.
+ *
+ * vc51.9C — ENFORCEMENT-GATED. This is a CALENDAR-BOUNDARY closure: it
+ * fires purely because a day elapsed, so under active canonical
+ * enforcement it would end a legitimate overnight or long-running
+ * period that the driver never logged out of (and would falsify the DOT
+ * event record, since it does not — and must not — clear
+ * `currentShiftId`). An enforced explicit period is owned by the genuine
+ * sign-in/Start Shift → logout lifecycle ONLY; midnight, elapsed hours,
+ * and day boundaries never end it, and crossing midnight never creates a
+ * replacement shift.
+ *
+ * For legacy/unenforced companies the established behavior is preserved
+ * verbatim — there is no canonical authority to consult there.
  */
 async function autoCloseStaleShift(
   driverId: string,
   source: 'wbt' | 'wbm' | 'wbs',
+  companyId?: string,
 ): Promise<void> {
+  try {
+    const [{ canonicalEnforcementActive, enforcementAllowsSyntheticClose }, { fetchCompanyConfig }] =
+      await Promise.all([
+        import('./workPeriodAuthority/suiteShiftAuthority'),
+        import('./companyConfig'),
+      ]);
+    const { enforcement } = await canonicalEnforcementActive(companyId, (id) => fetchCompanyConfig(id));
+    if (!enforcementAllowsSyntheticClose(enforcement)) {
+      console.log('[shiftTracking] canonical enforcement active — skipping calendar-boundary synthetic close');
+      return;
+    }
+  } catch {
+    // Enforcement unknown → legacy behavior (established sweep).
+  }
   for (let daysBack = 1; daysBack <= 3; daysBack++) {
     const checkDate = dateString(new Date(), -daysBack);
     const path = docPath(driverId, checkDate);
@@ -284,7 +313,7 @@ export async function recordShiftEvent(
     }
 
     if (type === 'login') {
-      autoCloseStaleShift(driverId, source).catch(() => {});
+      autoCloseStaleShift(driverId, source, companyId).catch(() => {});
     }
 
     const now = new Date();
@@ -579,7 +608,7 @@ export async function checkShiftOnResume(
   cachedShiftId?: string | null,
 ): Promise<void> {
   try {
-    await autoCloseStaleShift(driverId, source);
+    await autoCloseStaleShift(driverId, source, companyId);
 
     const today = dateString(new Date());
     const path = docPath(driverId, today);

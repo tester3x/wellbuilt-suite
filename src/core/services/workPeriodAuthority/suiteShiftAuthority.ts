@@ -94,8 +94,13 @@ export async function verifyCachedShiftAgainstAuthority(deps: {
   let cachedOriginDay: DayDoc | null = null;
   const cached = deps.cachedShiftId;
   const originDate = cached && /^\d{4}-\d{2}-\d{2}/.test(cached) ? cached.slice(0, 10) : null;
-  if (cached && originDate && originDate !== deps.localDate) {
-    cachedOriginDay = await deps.fetchDayDoc(originDate);
+  if (cached && originDate) {
+    // The cached id's ORIGIN day is where its authoritative open/closed
+    // state lives. When that day IS today we reuse the document already
+    // fetched — omitting it would make a genuine same-day logout resolve
+    // as UNVERIFIED instead of CLOSED (caught red-first by the duration
+    // matrix: "resume after a genuine logout").
+    cachedOriginDay = originDate === deps.localDate ? today : await deps.fetchDayDoc(originDate);
   }
   const resolution = resolveWorkPeriod({
     contractVersion: CONTRACT_VERSION,
@@ -139,4 +144,39 @@ export async function verifyCachedShiftAgainstAuthority(deps: {
  */
 export function mayUseDateFallback(enforcement: SuiteEnforcement): boolean {
   return enforcement.state === 'legacy' || enforcement.state === 'inert';
+}
+
+/**
+ * vc51.9C clarification 1 — may a CALENDAR-BOUNDARY synthetic logout be
+ * written? Only outside active enforcement.
+ *
+ * An enforced explicit period is owned by the genuine sign-in/Start
+ * Shift → logout lifecycle: elapsed hours, midnight, and day boundaries
+ * never end it, and crossing midnight never creates a replacement. For
+ * legacy/unenforced companies the established DOT-hygiene behavior is
+ * preserved unchanged (no canonical authority exists there to consult).
+ */
+export function enforcementAllowsSyntheticClose(enforcement: SuiteEnforcement): boolean {
+  return enforcement.state === 'legacy' || enforcement.state === 'inert';
+}
+
+/**
+ * Resolve the company's enforcement boundary for the app-side gates.
+ * `loadCompanyDoc` is injected so this stays node-testable and so the
+ * caller owns caching. An UNREADABLE company config is never an
+ * activation signal — it resolves legacy (established behavior).
+ */
+export async function canonicalEnforcementActive(
+  companyId: string | null | undefined,
+  loadCompanyDoc: (id: string) => Promise<unknown>,
+): Promise<{ enforcement: SuiteEnforcement; active: boolean }> {
+  if (!companyId) return { enforcement: { state: 'legacy' }, active: false };
+  let raw: unknown;
+  try {
+    raw = await loadCompanyDoc(companyId);
+  } catch {
+    return { enforcement: { state: 'legacy' }, active: false };
+  }
+  const enforcement = parseSuiteEnforcement(raw ?? undefined);
+  return { enforcement, active: enforcement.state === 'active' || enforcement.state === 'invalid' };
 }
