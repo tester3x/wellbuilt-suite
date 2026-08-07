@@ -4,6 +4,15 @@
  * Dual-run: call this first; legacy REST remains until rule enforcement.
  */
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getFirebaseApp } from './firebaseApp';
+import {
+  getOwnedIdToken,
+  initializePersistentAuth,
+  signInWithCustomTokenOwned,
+  signOutOwned,
+  waitForAuthReady,
+} from './firebaseAuthBoundary';
 
 const PROJECT_ID = 'wellbuilt-sync';
 const REGION = 'us-central1';
@@ -32,19 +41,21 @@ async function callCallable<T>(name: string, data: Record<string, unknown>): Pro
   return body.result as T;
 }
 
-async function exchangeCustomToken(customToken: string): Promise<void> {
-  const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: customToken, returnSecureToken: true }),
-  });
-  const body = await resp.json();
-  if (!resp.ok) {
-    throw new Error(body?.error?.message || 'Custom token exchange failed');
-  }
-  if (body.idToken) await SecureStore.setItemAsync(ID_TOKEN_KEY, body.idToken);
-  if (body.refreshToken) await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, body.refreshToken);
+/**
+ * Establish the SDK-owned session from the server-minted custom token.
+ *
+ * Replaces a raw Identity Toolkit POST that stored idToken/refreshToken in
+ * SecureStore and never refreshed them — Firebase ID tokens live one hour,
+ * so that 'verified identity' went stale and stayed stale. The SDK now owns
+ * persistence and refresh, so getCurrentIdToken() is always current.
+ *
+ * The custom token is consumed exactly once and never persisted or logged.
+ */
+async function establishSdkSession(customToken: string): Promise<void> {
+  const app = getFirebaseApp();
+  initializePersistentAuth(app, AsyncStorage);
+  await signInWithCustomTokenOwned(app, customToken);
+  await waitForAuthReady(app);
 }
 
 export async function secureSubmitRegistration(params: {
@@ -124,13 +135,16 @@ export async function secureLogin(params: {
     });
     // Prefer custom token (createCustomToken + signInWithCustomToken).
     // idToken path is emergency password-exchange only (server flag off by default).
+    // Only the custom-token path can establish an SDK session. The legacy
+    // idToken path was an emergency password-exchange escape hatch (server
+    // flag off by default) whose token had no refresh path; it no longer
+    // establishes a session rather than creating one that silently expires.
     if (data.customToken) {
-      await exchangeCustomToken(data.customToken);
-    } else if (data.idToken) {
-      await SecureStore.setItemAsync(ID_TOKEN_KEY, data.idToken);
-      if (data.refreshToken) {
-        await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, data.refreshToken);
-      }
+      await establishSdkSession(data.customToken);
+      // Legacy material is removed only AFTER the SDK session exists.
+      await clearLegacyTokenMaterial();
+    } else {
+      throw new Error('Server did not return a session token');
     }
     return {
       valid: true,
@@ -152,10 +166,36 @@ export async function secureLogin(params: {
 }
 
 export async function secureSignOut(): Promise<void> {
+  // End the verified session first; local cleanup follows even if it fails,
+  // so a driver can never be left signed in with local state cleared.
+  try {
+    await signOutOwned(getFirebaseApp());
+  } catch {
+    // Unowned or already signed out — legacy cleanup still proceeds.
+  }
+  await clearLegacyTokenMaterial();
+}
+
+/**
+ * Remove the pre-SDK token material. Called only AFTER an SDK session is
+ * established, or as part of a completed sign-out — never before, so a
+ * failed sign-in leaves the prior local state untouched. Values are
+ * deleted, never read or logged.
+ */
+export async function clearLegacyTokenMaterial(): Promise<void> {
   await SecureStore.deleteItemAsync(ID_TOKEN_KEY);
   await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
 }
 
+/**
+ * Current ID token from the SDK-owned session.
+ *
+ * Compatibility-named: it previously returned whatever string sat in
+ * SecureStore, with no expiry check and no refresh, so after an hour it
+ * was a stale token presented as identity. It now asks the owned Auth
+ * session, which owns refresh. Returns null when no verified session
+ * exists so callers fail closed rather than sending a dead credential.
+ */
 export async function getSecureIdToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(ID_TOKEN_KEY);
+  return getOwnedIdToken(getFirebaseApp());
 }
