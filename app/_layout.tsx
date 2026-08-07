@@ -75,11 +75,22 @@ function DvirReceiptListener() {
       }
     };
 
+    // vc51.9J: SSO routes are owned by one adapter and parsed only by
+    // the canonical strict parser. Both the warm listener and the
+    // cold-start initial URL go through it first; it de-duplicates the
+    // same URL arriving on both paths.
+    const route = async (url: string | null | undefined) => {
+      if (!url) return;
+      const { dispatchSsoUrl } = await import('../src/core/services/ssoRuntime');
+      if (await dispatchSsoUrl(url)) return;
+      void handleUrl(url);
+    };
+
     const sub = Linking.addEventListener('url', (e) => {
-      void handleUrl(e.url);
+      void route(e.url);
     });
     Linking.getInitialURL().then((url) => {
-      void handleUrl(url);
+      void route(url);
     });
 
     return () => sub.remove();

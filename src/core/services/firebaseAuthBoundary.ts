@@ -263,15 +263,24 @@ export async function getOwnedIdToken(app: FirebaseApp, forceRefresh = false): P
  * caller compares these server-issued values against the identity it
  * expects, and fails closed on mismatch.
  */
-export async function getOwnedVerifiedIdentity(app: FirebaseApp): Promise<{
+export async function getOwnedVerifiedIdentity(
+  app: FirebaseApp,
+  /**
+   * Force a server round trip. SSO needs it: verification must see what
+   * was ACTUALLY minted, not a cached view. Mirrors WB-T.
+   */
+  forceRefresh = false,
+): Promise<{
   uid: string;
   kind: string | null;
   driverId: string | null;
   companyId: string | null;
+  /** Per-session application marker; 'wbt' for an SSO-established session. */
+  app: string | null;
 } | null> {
   const user = getOwnedAuth(app)?.currentUser;
   if (!user) return null;
-  const result = await user.getIdTokenResult();
+  const result = await user.getIdTokenResult(forceRefresh);
   const claims = result.claims;
   const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
   return {
@@ -279,6 +288,7 @@ export async function getOwnedVerifiedIdentity(app: FirebaseApp): Promise<{
     kind: str(claims.kind),
     driverId: str(claims.driverId),
     companyId: str(claims.companyId),
+    app: str(claims.app),
   };
 }
 
