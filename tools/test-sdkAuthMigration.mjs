@@ -34,6 +34,8 @@ const appSrc = stripComments(readFileSync(join(root, 'src', 'core', 'services', 
 // boundary. Pins follow the code to whichever file now owns it.
 const coreSrc = readFileSync(join(root, 'src', 'core', 'services', 'authSessionCore.ts'), 'utf8');
 const core = stripComments(coreSrc);
+const tokSrc = readFileSync(join(root, 'src', 'core', 'services', 'attemptToken.ts'), 'utf8');
+const tok = stripComments(tokSrc);
 
 // ── 1. The raw REST auth plane is gone ──────────────────────────────────
 check('no Identity Toolkit token exchange remains', !/identitytoolkit/.test(auth));
@@ -122,11 +124,11 @@ check('the current ID token comes from the SDK session, not storage',
   check('logout can cancel an in-flight login',
     /export function invalidateAuthEpoch\(\)/.test(auth));
   check('the single-flight key includes the normalized display name',
-    /displayName\.trim\(\)\.toLowerCase\(\)/.test(auth));
+    /displayName\.trim\(\)\.toLowerCase\(\)/.test(tok));
   check('the key material is random per process and never persisted',
-    /let attemptKeyMaterial: string \| null = null/.test(auth)
-    && /getRandomBytesAsync\(32\)/.test(auth)
-    && !/(setItemAsync|AsyncStorage\.setItem)\([^)]*(attemptKeyMaterial|processKey)/.test(auth));
+    /let processKey: Promise<string> \| null = null/.test(tok)
+    && /randomBytes\(PROCESS_KEY_BYTES\)/.test(tok)
+    && !/(setItemAsync|AsyncStorage\.setItem)/.test(tok));
   check('the passcode is never logged or stored as a key',
     !/console\.(log|warn|error)\([^)]*passcode/.test(auth)
     && !/setItemAsync\([^)]*passcode/.test(auth));
@@ -360,16 +362,23 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
 {
   const raw = readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8');
   const s = stripComments(raw);
-  check('the process key is 256 random bits', /getRandomBytesAsync\(32\)/.test(s));
+  check('the process key is 256 random bits',
+    /const PROCESS_KEY_BYTES = 32;/.test(tok) && /getRandomBytesAsync/.test(s));
   check('the token is a KEYED digest (the process key is an input)',
-    /digestStringAsync\([\s\S]{0,140}await processKey\(\)/.test(s));
+    /ops\.sha256\(\s*\n?\s*frame\(await key\(\)\)/.test(tok));
+  check('concurrent first use shares ONE key generation (promise, not value)',
+    /let processKey: Promise<string> \| null = null/.test(tok)
+    && /processKey = ops\.randomBytes/.test(tok));
+  check('variable-length inputs are framed so tuples cannot collide',
+    /function frame\(value: string\): string \{[\s\S]{0,120}\$\{value\.length\}:\$\{value\}/.test(tok)
+    && /frame\(normalizedName\) \+ frame\(passcode\)/.test(tok));
   check('SHA-256, not a 32-bit non-cryptographic hash', /CryptoDigestAlgorithm\.SHA256/.test(s));
   check('the old Math.imul construction is gone', !/Math\.imul/.test(s));
   check('the process key is never persisted',
     !/(SecureStore\.setItemAsync|AsyncStorage\.setItem)\([^)]*(attemptKeyMaterial|processKey)/.test(s));
   check('nothing is described as "non-reversible"', !/non-reversible/i.test(raw));
   check('the docs state it is keyed rather than a plain salted digest',
-    /KEYED digest, not a plain salted/.test(raw));
+    /KEYED digest, not a plain salted/.test(tokSrc));
   check('neither the token nor the key is logged',
     !/console\.[a-z]+\([^)]*(attemptKeyMaterial|processKey\(|\bkey\b)/.test(s));
   check('the token feeds only the single-flight slot',

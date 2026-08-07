@@ -21,6 +21,7 @@ import {
   SupersededAttemptError,
   UnresolvedAuthStateError,
 } from './authSessionCore';
+import { createAttemptTokenizer } from './attemptToken';
 
 const PROJECT_ID = 'wellbuilt-sync';
 const REGION = 'us-central1';
@@ -136,49 +137,18 @@ export async function secureCheckRegistrationStatus(
  * server-supplied outputs of the attempt, not inputs to it.
  */
 /**
- * Random 256-bit process key. Generated once per app process, held only
- * in memory, never persisted, never logged, never transmitted. It dies
- * with the process, so an equality token from one run means nothing in
- * another.
+ * The one production tokenizer, wired to expo-crypto.
+ *
+ * See attemptToken.ts for the construction and why the process key is
+ * held as a promise rather than a value.
  */
-let attemptKeyMaterial: string | null = null;
+const attemptTokenizer = createAttemptTokenizer({
+  randomBytes: (count) => Crypto.getRandomBytesAsync(count),
+  sha256: (input) => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, input),
+});
 
-async function processKey(): Promise<string> {
-  if (attemptKeyMaterial === null) {
-    const bytes = await Crypto.getRandomBytesAsync(32);
-    attemptKeyMaterial = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  }
-  return attemptKeyMaterial;
-}
-
-/**
- * Keyed equality token for one submission.
- *
- * SHA-256 over (random 256-bit process key, normalized name, credential)
- * — a KEYED digest, not a plain salted one. The distinction is the whole
- * point: a passcode is low entropy, so a salted digest with a knowable
- * salt would be trivially brute-forceable. Keyed under a secret random
- * value that never leaves memory, it is not. (An earlier version used a
- * 32-bit non-cryptographic hash over a timestamp salt, and its comment
- * overstated the guarantee: it was neither keyed nor hard to invert.)
- *
- * It exists ONLY to answer "is this the same submission as the one in
- * flight?" It is never persisted, never logged, never transmitted, and is
- * never used as a password hash or as authority for anything.
- *
- * The normalized name is kept in the clear as a prefix deliberately: the
- * server resolves identity through driver_name_index/{nameNorm} to a
- * single driverId, so the normalized name IS the account identifier and
- * is already stored in local identity. The credential component only
- * separates a duplicate tap from a corrected retry.
- */
-async function attemptKey(displayName: string, passcode: string): Promise<string> {
-  const normalizedName = displayName.trim().toLowerCase();
-  const token = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    [await processKey(), normalizedName, passcode].join('\u0001'),
-  );
-  return `${normalizedName}#${token}`;
+function attemptKey(displayName: string, passcode: string): Promise<string> {
+  return attemptTokenizer.token(displayName, passcode);
 }
 
 

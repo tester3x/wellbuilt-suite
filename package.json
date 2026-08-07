@@ -9,8 +9,8 @@
     "web": "expo start --web",
     "test": "tsx --test src/core/services/dvirGate/**/*.test.ts",
     "test:dvir-gate": "tsx --test src/core/services/dvirGate/**/*.test.ts",
-    "test:auth-core": "tsx --test src/core/services/authSessionCore.test.ts src/core/services/reconciliationCore.test.ts",
-    "test:auth": "node tools/test-sdkAuthMigration.mjs && node tools/test-firebaseAuthBoundary.mjs && tsx --test src/core/services/authSessionCore.test.ts src/core/services/reconciliationCore.test.ts"
+    "test:auth-core": "tsx --test src/core/services/authSessionCore.test.ts src/core/services/reconciliationCore.test.ts src/core/services/attemptToken.test.ts",
+    "test:auth": "node tools/test-sdkAuthMigration.mjs && node tools/test-firebaseAuthBoundary.mjs && tsx --test src/core/services/authSessionCore.test.ts src/core/services/reconciliationCore.test.ts src/core/services/attemptToken.test.ts"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
