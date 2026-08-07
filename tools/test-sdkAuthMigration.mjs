@@ -82,8 +82,15 @@ check('the current ID token comes from the SDK session, not storage',
     /identity\.kind !== 'driver'/.test(auth)
     && /identity\.driverId !== expected\.driverId/.test(auth)
     && /identity\.companyId !== expected\.companyId/.test(auth));
-  check('verification happens after readiness',
-    auth.indexOf('waitForAuthReady(app)') < auth.indexOf('getOwnedVerifiedIdentity(app)'));
+  // Within establishSdkSession specifically: readiness is awaited before
+  // claims are read. (File-wide indexOf is meaningless now that helpers
+  // above the function also reference getOwnedVerifiedIdentity.)
+  {
+    const body = auth.slice(auth.indexOf('async function establishSdkSession'));
+    const ready = body.indexOf('await waitForAuthReady(app)');
+    const claims = body.indexOf('await getOwnedVerifiedIdentity(app)');
+    check('verification happens after readiness', ready !== -1 && claims !== -1 && ready < claims);
+  }
   check('authVerified is only set on the verified path', /authVerified: true/.test(auth));
   check('the legacy fallback never claims authVerified',
     !/authVerified/.test(dAuth.split('trying legacy')[1] || ''));
@@ -91,9 +98,25 @@ check('the current ID token comes from the SDK session, not storage',
     /authVerified\?: boolean/.test(dAuth));
 
   // Duplicate submissions share one exchange.
-  check('duplicate logins share a single in-flight exchange',
-    /if \(inFlightLogin\) return inFlightLogin;/.test(auth)
-    && /\.finally\(\(\) => \{\s*inFlightLogin = null;\s*\}\)/.test(auth));
+  // ── Single-flight is keyed by attempt identity ────────────────────────
+  check('identical submissions coalesce onto one exchange',
+    /if \(inFlightLogin && inFlightKey === key\) return inFlightLogin;/.test(auth));
+  check('a DIFFERENT concurrent attempt is rejected, not given this result',
+    /if \(inFlightLogin\) \{[\s\S]{0,200}Another sign-in is already in progress/.test(auth));
+  check('the in-flight slot always clears on settle',
+    /\.finally\(\(\) => \{[\s\S]{0,220}inFlightLogin = null;[\s\S]{0,60}inFlightKey = null;/.test(auth));
+  check('a late settle cannot undo a cancellation',
+    /if \(inFlightKey === key\) \{/.test(auth));
+  check('logout can cancel an in-flight login',
+    /export function cancelInFlightLogin\(\)/.test(auth));
+  check('the single-flight key includes the normalized display name',
+    /displayName\.trim\(\)\.toLowerCase\(\)/.test(auth));
+  check('the key material is salted per process and never persisted',
+    /const ATTEMPT_SALT/.test(auth)
+    && !/setItemAsync\([^)]*ATTEMPT|AsyncStorage\.setItem\([^)]*attemptKey/.test(auth));
+  check('the passcode is never logged or stored as a key',
+    !/console\.(log|warn|error)\([^)]*passcode/.test(auth)
+    && !/setItemAsync\([^)]*passcode/.test(auth));
 }
 
 // ── 4. No silently-expiring session is created ──────────────────────────
@@ -145,6 +168,62 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
     /secureSignOut\(\)[\s\S]{0,80}await clearDriverSession\(\);/.test(ctx));
   check('a failed sign-out cannot block logout completion',
     /secureSignOut\(\)\.catch\(\(\) => \{\}\)/.test(ctx));
+}
+
+
+// ── 9. Restored-session reconciliation ──────────────────────────────────
+{
+  const rec = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'authReconciliation.ts'), 'utf8'));
+  for (const st of ['local-only', 'verifying', 'verified', 'rejected', 'unavailable']) {
+    check(`reconciliation models the '${st}' state`, rec.includes(`'${st}'`));
+  }
+  check('an unreadable-claims failure is distinguished from "no user"',
+    /identity === undefined/.test(rec) && /identity === null/.test(rec));
+  check('unreadable claims preserve local identity (no sign-out)',
+    /if \(identity === undefined\)[\s\S]{0,120}set\('unavailable'\)/.test(rec)
+    && !/if \(identity === undefined\)[\s\S]{0,120}signOutOwned/.test(rec));
+  check('no SDK user leaves ordinary offline entry intact',
+    /if \(identity === null\)[\s\S]{0,160}local-only/.test(rec));
+  check('an SDK user with no local identity is signed out',
+    /if \(!hasLocal\)[\s\S]{0,120}signOutOwned/.test(rec));
+  check('driver AND company must match, and kind must be driver',
+    /identity\.kind === 'driver'/.test(rec)
+    && /identity\.driverId === localIdentity\.driverId/.test(rec)
+    && /identity\.companyId === localIdentity\.companyId/.test(rec));
+  check('a mismatch signs out and fails closed',
+    /if \(!matches\)[\s\S]{0,120}signOutOwned[\s\S]{0,80}set\('rejected'\)/.test(rec));
+  check('local identity is read from storage only, never the network',
+    /AsyncStorage\.getItem\('driverId'\)/.test(rec) && !/\bfetch\s*\(/.test(rec));
+  check('the protected gate re-reads state rather than caching a boolean',
+    /export function isVerifiedReady\(\): boolean \{[\s\S]{0,60}return current === 'verified';/.test(rec));
+}
+
+// ── 10. authVerified must never become persisted authority ──────────────
+{
+  const files = execSync('git ls-files "*.ts" "*.tsx"', { cwd: root, encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean);
+  const persisted = [];
+  for (const f of files) {
+    let t;
+    try { t = stripComments(readFileSync(join(root, f), 'utf8')); } catch { continue; }
+    // Any write of authVerified into durable storage or the saved session.
+    if (/(setItemAsync|AsyncStorage\.setItem|saveDriverSession)\([^)]*authVerified/.test(t)) persisted.push(f);
+    if (/JSON\.stringify\([^)]*authVerified/.test(t)) persisted.push(f);
+  }
+  check('authVerified is never persisted as durable authority', persisted.length === 0, persisted.join(', '));
+  const ctx3 = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
+  check('AuthContext does not store authVerified in the session', !/authVerified/.test(ctx3));
+  check('protected readiness comes from reconciliation, not the login result',
+    /isVerifiedReady/.test(readFileSync(join(root, 'src', 'core', 'services', 'authReconciliation.ts'), 'utf8')));
+}
+
+// ── 11. Legacy fallback stays local-only ────────────────────────────────
+{
+  const dA = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'driverAuth.ts'), 'utf8'));
+  const legacy = dA.split('trying legacy')[1] || '';
+  check('the legacy path never sets authVerified', !/authVerified/.test(legacy));
+  check('the legacy path never touches the Auth boundary',
+    !/signInWithCustomTokenOwned|initializePersistentAuth|getOwnedVerifiedIdentity/.test(legacy));
 }
 
 console.log(`
