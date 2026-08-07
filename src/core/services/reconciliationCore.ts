@@ -54,8 +54,12 @@ export interface ReconciliationCore {
    * mismatch against a driver who is not there.
    */
   reconcile(local: LocalIdentity | null): Promise<AuthReconciliationState>;
-  /** Reset to the initial state. */
-  reset(): void;
+  /**
+   * Take reconciliation ownership. Logout and every identity transition
+   * call this, so an in-flight reconciliation for the previous driver can
+   * no longer publish state or sign anything out.
+   */
+  invalidate(): void;
   getState(): AuthReconciliationState;
   subscribe(cb: (s: AuthReconciliationState) => void): () => void;
   /** The single gate protected cloud operations pass. Never a cached flag. */
@@ -64,9 +68,13 @@ export interface ReconciliationCore {
 
 export function createReconciliationCore(ops: ReconciliationOps): ReconciliationCore {
   let state: AuthReconciliationState = 'verifying';
+  let generation = 0;
   const listeners = new Set<(s: AuthReconciliationState) => void>();
 
-  function publish(next: AuthReconciliationState): void {
+  function publish(next: AuthReconciliationState, gen: number): void {
+    // A reconciliation that no longer owns the generation publishes
+    // nothing: driver A's late result must not overwrite driver B's.
+    if (gen !== generation) return;
     if (state === next) return;
     state = next;
     for (const listener of listeners) listener(next);
@@ -74,7 +82,8 @@ export function createReconciliationCore(ops: ReconciliationOps): Reconciliation
 
   return {
     async reconcile(local) {
-      publish('verifying');
+      const gen = generation;
+      publish('verifying', gen);
 
       try {
         ops.initializePersistentAuth();
@@ -82,9 +91,10 @@ export function createReconciliationCore(ops: ReconciliationOps): Reconciliation
       } catch {
         // Ownership could not be established (foreign instance, missing
         // capability). Local identity untouched; nothing verified.
-        publish('unavailable');
-        return 'unavailable';
+        publish('unavailable', gen);
+        return gen === generation ? state : 'unavailable';
       }
+      if (gen !== generation) return state;
 
       let identity: VerifiedIdentity | null;
       try {
@@ -92,25 +102,26 @@ export function createReconciliationCore(ops: ReconciliationOps): Reconciliation
       } catch {
         // Claims unreadable — offline or refresh failure. Preserve local
         // identity, do NOT sign out, and do NOT call it a mismatch.
-        publish('unavailable');
-        return 'unavailable';
+        publish('unavailable', gen);
+        return gen === generation ? state : 'unavailable';
       }
+      if (gen !== generation) return state;
 
       const hasLocal = !!local?.driverId;
 
       // No SDK user: ordinary entry continues, verified unavailable.
       if (identity === null) {
-        publish('local-only');
-        return 'local-only';
+        publish('local-only', gen);
+        return gen === generation ? state : 'local-only';
       }
 
       // An SDK user with no local identity to bind it to is an orphan —
       // a session from a previous install or an abandoned driver switch.
       // Sign it out rather than leave it authenticated.
       if (!hasLocal) {
-        await signOutQuietly();
-        publish('rejected');
-        return 'rejected';
+        await signOutQuietly(gen);
+        publish('rejected', gen);
+        return gen === generation ? state : 'rejected';
       }
 
       const matches =
@@ -120,15 +131,16 @@ export function createReconciliationCore(ops: ReconciliationOps): Reconciliation
         && (!local!.companyId || identity.companyId === local!.companyId);
 
       if (!matches) {
-        await signOutQuietly();
-        publish('rejected');
-        return 'rejected';
+        await signOutQuietly(gen);
+        publish('rejected', gen);
+        return gen === generation ? state : 'rejected';
       }
 
-      publish('verified');
-      return 'verified';
+      publish('verified', gen);
+      return gen === generation ? state : 'verified';
     },
-    reset() {
+    invalidate() {
+      generation += 1;
       state = 'verifying';
     },
     getState() {
@@ -145,8 +157,13 @@ export function createReconciliationCore(ops: ReconciliationOps): Reconciliation
     },
   };
 
-  /** Sign out an unwanted session; the published state already says "not verified". */
-  async function signOutQuietly(): Promise<void> {
+  /**
+   * Sign out an unwanted session, but only while we still own the
+   * generation — a stale reconciliation must never sign out the session
+   * belonging to a newer driver.
+   */
+  async function signOutQuietly(gen: number): Promise<void> {
+    if (gen !== generation) return;
     try {
       await ops.signOut();
     } catch {

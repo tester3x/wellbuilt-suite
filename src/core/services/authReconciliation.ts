@@ -61,6 +61,15 @@ export function isVerifiedReady(): boolean {
   return core.isVerifiedReady();
 }
 
+/**
+ * Take reconciliation ownership. Logout and every identity transition
+ * call this so an in-flight reconciliation for the previous driver can no
+ * longer publish state or sign the new driver out.
+ */
+export function invalidateReconciliation(): void {
+  core.invalidate();
+}
+
 /** Read the restored local identity. Local storage only — never network. */
 export async function readLocalIdentity(): Promise<LocalIdentity> {
   const [driverId, companyId] = await Promise.all([
@@ -88,7 +97,7 @@ export function reconcileRestoredSession(
   return core.reconcile(local);
 }
 
-/** Test-only: restore the initial state between cases. */
+/** Test-only: take a fresh generation between cases. */
 export function __resetReconciliationForTests(): void {
-  core.reset();
+  core.invalidate();
 }

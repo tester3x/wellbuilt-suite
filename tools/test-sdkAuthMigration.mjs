@@ -195,7 +195,7 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   // The behavioral matrix itself is proven in reconciliationCore.test.ts;
   // these pin the structural invariants that tests cannot express.
   check('an unreadable-claims failure is distinguished from "no user"',
-    /catch \{[\s\S]{0,200}publish\('unavailable'\)/.test(recCore)
+    /catch \{[\s\S]{0,200}publish\('unavailable', gen\)/.test(recCore)
     && /identity === null/.test(recCore));
   check('unreadable claims preserve local identity (no sign-out)',
     !/catch \{[\s\S]{0,200}signOutQuietly/.test(recCore));
@@ -208,7 +208,13 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
     && /identity\.driverId === local!\.driverId/.test(recCore)
     && /identity\.companyId === local!\.companyId/.test(recCore));
   check('a mismatch signs out and fails closed',
-    /if \(!matches\)[\s\S]{0,120}signOutQuietly[\s\S]{0,80}publish\('rejected'\)/.test(recCore));
+    /if \(!matches\)[\s\S]{0,140}signOutQuietly\(gen\)[\s\S]{0,80}publish\('rejected', gen\)/.test(recCore));
+  check('a superseded reconciliation publishes nothing',
+    /if \(gen !== generation\) return;/.test(recCore));
+  check('a stale reconciliation cannot sign out a newer driver',
+    /async function signOutQuietly\(gen: number\)[\s\S]{0,140}if \(gen !== generation\) return;/.test(recCore));
+  check('taking ownership bumps the generation',
+    /invalidate\(\) \{[\s\S]{0,80}generation \+= 1;/.test(recCore));
   check('local identity is read from storage only, never the network',
     /AsyncStorage\.getItem\('driverId'\)/.test(rec) && !/\bfetch\s*\(/.test(rec));
   check('the reconciliation core stays free of SDK/storage imports',
@@ -262,10 +268,22 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   check('reconciliation is NOT awaited (offline entry stays non-blocking)',
     !/await\s+[^;]*reconcileRestoredSession/.test(ctx)
     && !/await\s+[^;]*reconcileForIdentity/.test(ctx));
-  check('reconciliation is guarded against repeat runs',
-    /reconciledRef\.current = true/.test(ctx));
+  check('the reconciliation guard is identity-keyed, not once-per-mount',
+    /reconciledForRef\.current === key/.test(ctx)
+    && /reconciledForRef\.current = key/.test(ctx)
+    && !/reconciledRef\.current = true/.test(ctx));
+  check('the guard key distinguishes "no identity" from a driver',
+    /: '<none>'/.test(ctx));
+  check('every identity transition takes reconciliation ownership first',
+    /m\.invalidateReconciliation\(\)/.test(ctx));
+  check('both logout paths reset reconciliation ownership',
+    (ctx.match(/reconcileForIdentity\(null\)/g) || []).length >= 2);
+  check('a successful login reconciles for the NEW identity',
+    /reconcileForIdentity\(\{[\s\S]{0,120}result\.driverId/.test(ctx));
+  check('an SSO session refresh is treated as an identity transition',
+    /reconcileForIdentity\(\{[\s\S]{0,120}session\.driverId/.test(ctx));
   check('reconciliation rejection is observed, not unhandled',
-    /reconcileRestoredSession\(local\)\)[\s\S]{0,300}?\.catch\(\(err\) => \{/.test(ctx));
+    /reconcileRestoredSession\(local\);[\s\S]{0,300}?\.catch\(\(err\) => \{/.test(ctx));
   check('the restored local identity is passed in rather than re-read blindly',
     /driverId: session\.driverId, companyId: session\.companyId \|\| null/.test(ctx));
 
@@ -273,7 +291,7 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
     readFileSync(join(root, 'src', 'core', 'services', 'reconciliationCore.ts'), 'utf8'),
   );
   check('offline claim-read failure is unavailable, never rejected',
-    /catch \{[\s\S]{0,200}publish\('unavailable'\)/.test(rc));
+    /catch \{[\s\S]{0,200}publish\('unavailable', gen\)/.test(rc));
   check('an unavailable reconciliation never signs the driver out',
     !/catch \{[\s\S]{0,200}signOutQuietly/.test(rc));
   check('isVerifiedReady re-reads state rather than returning a stored flag',

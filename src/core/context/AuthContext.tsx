@@ -142,16 +142,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [returningToYard, setReturningToYard] = useState(false);
   const [returnDepartTime, setReturnDepartTime] = useState<string | null>(null);
   const [activePackageId, setActivePackageId] = useState<string | null>(null);
-  // Guards startup reconciliation to once per mounted provider.
-  const reconciledRef = useRef(false);
+  /**
+   * The identity the last reconciliation was started for.
+   *
+   * NOT a boolean "already done" flag. AuthProvider sits above the router in
+   * app/_layout.tsx and never unmounts: logout is setUser(null), so
+   * driver A logging out and driver B logging in happens inside one
+   * provider lifetime. A boolean would stay true and driver B would never
+   * be reconciled at all. refreshSession (SSO deep link) can likewise
+   * change the durable identity while mounted. Keying on the identity
+   * makes the guard deduplicate repeats without ever suppressing a
+   * genuine change — including a change back to "no identity".
+   */
+  const reconciledForRef = useRef<string | null>(null);
 
-  /** Start reconciliation for `local`. Non-blocking; rejection observed. */
+  /**
+   * Start reconciliation for `local`, at most once per identity.
+   *
+   * Every transition first takes reconciliation ownership, so an in-flight
+   * reconciliation for the previous driver can no longer publish state or
+   * sign the new driver out.
+   */
   const reconcileForIdentity = useCallback((local: { driverId: string; companyId: string | null } | null) => {
-    if (reconciledRef.current) return;
-    reconciledRef.current = true;
+    const key = local ? `${local.driverId}|${local.companyId ?? ''}` : '<none>';
+    if (reconciledForRef.current === key) return;
+    reconciledForRef.current = key;
     void import('../services/authReconciliation')
-      .then((m) => m.reconcileRestoredSession(local))
-      // Observed, not ignored: a reconciliation failure must never surface
+      .then((m) => {
+        m.invalidateReconciliation();
+        return m.reconcileRestoredSession(local);
+      })
+      // Observed, not ignored: reconciliation failing must never surface
       // as an unhandled rejection, and must never block app entry.
       .catch((err) => {
         console.warn('[AuthContext] reconciliation failed:', err);
@@ -290,6 +311,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.assignedRoutes,
         result.defaultPackageId
       );
+      // The identity changed: reconcile for the new driver. The login
+      // itself already established and verified the SDK session, but this
+      // keeps reconciliation state owned by the current identity rather
+      // than whatever the previous driver left behind.
+      reconcileForIdentity({
+        driverId: result.driverId,
+        companyId: result.companyId || null,
+      });
+
       // Pre-load profile + vehicle info from Firebase (fire-and-forget)
       // So truck/trailer/signature are ready for SSO deep links + shift start
       loadDriverProfile(result.passcodeHash).catch(() => {});
@@ -560,6 +590,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // logging out. Then end the verified session before local cleanup.
       const secure = await import('../services/secureDriverAuth');
       secure.invalidateAuthEpoch();
+      // Take reconciliation ownership too: an in-flight reconciliation
+      // for this driver must not publish state, or sign anything out,
+      // after the next driver logs in.
+      reconcileForIdentity(null);
       await secure.secureSignOut().catch(() => {});
     }
     await clearDriverSession();
@@ -644,6 +678,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // logging out. Then end the verified session before local cleanup.
       const secure = await import('../services/secureDriverAuth');
       secure.invalidateAuthEpoch();
+      // Take reconciliation ownership too: an in-flight reconciliation
+      // for this driver must not publish state, or sign anything out,
+      // after the next driver logs in.
+      reconcileForIdentity(null);
       await secure.secureSignOut().catch(() => {});
     }
     await clearDriverSession();
@@ -674,8 +712,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const session = await getDriverSession();
     if (session) {
       setUser(sessionToUser(session));
+      // An SSO deep link can install a DIFFERENT driver session while
+      // the provider stays mounted, so this is an identity transition too.
+      reconcileForIdentity({
+        driverId: session.driverId,
+        companyId: session.companyId || null,
+      });
     }
-  }, []);
+  }, [reconcileForIdentity]);
 
   return (
     <AuthContext.Provider value={{

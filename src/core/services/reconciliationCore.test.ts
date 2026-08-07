@@ -18,6 +18,14 @@ interface Deferred {
   promise: Promise<void>;
   resolve: () => void;
 }
+function deferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+const flush = () => new Promise<void>((r) => setImmediate(r));
 
 class FakeBoundary {
   /** The persisted SDK user, or null when signed out. */
@@ -193,11 +201,115 @@ describe('startup state matrix', () => {
     await core.reconcile(local('driver-A'));
     assert.equal(core.isVerifiedReady(), true);
 
-    core.reset();
+    core.invalidate();
     fake.identity = driver('uid-B', 'driver-B');
     await core.reconcile(local('driver-A'));
 
     assert.equal(core.isVerifiedReady(), false, 'no stale true may survive');
     assert.equal(core.getState(), 'rejected');
+  });
+});
+
+describe('identity-generation ownership within one provider lifetime', () => {
+  it('A -> logout -> B: B is reconciled, not suppressed', async () => {
+    const { fake, core } = harness();
+    fake.identity = driver('uid-A', 'driver-A');
+    await core.reconcile(local('driver-A'));
+    assert.equal(core.getState(), 'verified');
+
+    // Logout, then driver B logs in. The provider never unmounted.
+    core.invalidate();
+    fake.identity = driver('uid-B', 'driver-B');
+    const result = await core.reconcile(local('driver-B'));
+
+    assert.equal(result, 'verified', 'B must be reconciled on its own terms');
+    assert.equal(core.isVerifiedReady(), true);
+  });
+
+  it("A's late reconciliation cannot publish over B's state", async () => {
+    const { fake, core } = harness();
+    const gate = deferred();
+    fake.identityGate = gate;
+    fake.identity = driver('uid-A', 'driver-A');
+
+    // A's reconciliation parks on the claims read.
+    const reconcileA = core.reconcile(local('driver-A'));
+    await flush();
+
+    // Logout + B logs in and reconciles to completion.
+    core.invalidate();
+    fake.identityGate = null;
+    fake.identity = driver('uid-B', 'driver-B');
+    await core.reconcile(local('driver-B'));
+    assert.equal(core.getState(), 'verified');
+
+    // A now finishes. It must publish nothing.
+    fake.identityGate = null;
+    gate.resolve();
+    await reconcileA;
+
+    assert.equal(core.getState(), 'verified', "A must not overwrite B's state");
+    assert.equal(core.isVerifiedReady(), true);
+  });
+
+  it("A's late reconciliation cannot sign out B", async () => {
+    const { fake, core } = harness();
+    const gate = deferred();
+    fake.identityGate = gate;
+    // A will see driver-B's session and would normally call it a mismatch.
+    fake.identity = driver('uid-A', 'driver-A');
+
+    const reconcileA = core.reconcile(local('driver-A'));
+    await flush();
+
+    core.invalidate();
+    fake.identityGate = null;
+    fake.identity = driver('uid-B', 'driver-B');
+    await core.reconcile(local('driver-B'));
+
+    // Release A: it reads B's identity, which mismatches driver-A.
+    gate.resolve();
+    await reconcileA;
+
+    assert.deepEqual(fake.signOuts, [], "a stale reconciliation must not sign out B");
+    assert.deepEqual(fake.identity, driver('uid-B', 'driver-B'));
+    assert.equal(core.getState(), 'verified');
+  });
+
+  it('a stale subscriber notification is not emitted after invalidation', async () => {
+    const { fake, core } = harness();
+    const seen: AuthReconciliationState[] = [];
+    core.subscribe((s) => seen.push(s));
+
+    const gate = deferred();
+    fake.identityGate = gate;
+    fake.identity = null;
+    const reconcileA = core.reconcile(local('driver-A'));
+    await flush();
+
+    core.invalidate();
+    gate.resolve();
+    await reconcileA;
+
+    assert.ok(
+      !seen.includes('local-only'),
+      `a superseded reconciliation must publish nothing (saw ${seen.join(',')})`,
+    );
+  });
+
+  it('logout then no login reconciles the "no identity" case', async () => {
+    const { fake, core } = harness();
+    fake.identity = driver('uid-A', 'driver-A');
+    await core.reconcile(local('driver-A'));
+    assert.equal(core.getState(), 'verified');
+
+    // Logout leaves an SDK session behind; reconciling with no local
+    // identity must sign that orphan out.
+    core.invalidate();
+    const result = await core.reconcile(null);
+
+    assert.equal(result, 'rejected');
+    assert.deepEqual(fake.signOuts, ['uid-A']);
+    assert.equal(fake.identity, null);
   });
 });
