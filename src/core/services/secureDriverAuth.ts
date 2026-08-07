@@ -16,6 +16,11 @@ import {
   waitForAuthReady,
   getOwnedVerifiedIdentity,
 } from './firebaseAuthBoundary';
+import {
+  createAuthSessionCore,
+  SupersededAttemptError,
+  UnresolvedAuthStateError,
+} from './authSessionCore';
 
 const PROJECT_ID = 'wellbuilt-sync';
 const REGION = 'us-central1';
@@ -45,177 +50,29 @@ async function callCallable<T>(name: string, data: Record<string, unknown>): Pro
 }
 
 /**
- * Auth ownership epoch.
+ * The one production Auth session instance.
  *
- * Clearing a promise reference does NOT cancel an in-flight Firebase
- * operation — signInWithCustomToken, readiness and the claims read all
- * keep running and can still resolve after a logout. An epoch makes that
- * safe: logout and identity transitions bump it, and every attempt
- * re-checks ownership after each awaited step. A superseded attempt
- * publishes nothing and cleans up only the session it created itself.
+ * Constructed unconditionally with the real boundary operations. The
+ * ordering-critical logic lives in authSessionCore so it can be driven by
+ * deferred fakes in tests; nothing here is switchable at runtime.
  */
-let authEpoch = 0;
+const authSession = createAuthSessionCore({
+  initializePersistentAuth: () => {
+    initializePersistentAuth(getFirebaseApp(), AsyncStorage);
+  },
+  signInWithCustomToken: (customToken) =>
+    signInWithCustomTokenOwned(getFirebaseApp(), customToken),
+  waitForAuthReady: () => waitForAuthReady(getFirebaseApp()),
+  getVerifiedIdentity: () => getOwnedVerifiedIdentity(getFirebaseApp()),
+  getCurrentUserId: () => getOwnedUserId(getFirebaseApp()),
+  signOut: () => signOutOwned(getFirebaseApp()),
+});
 
 /** Invalidate every in-flight attempt. Called on logout and identity change. */
 export function invalidateAuthEpoch(): void {
-  authEpoch += 1;
+  authSession.invalidateEpoch();
   inFlightLogin = null;
   inFlightKey = null;
-}
-
-/** Raised when an attempt is superseded mid-flight. */
-export class SupersededAttemptError extends Error {
-  constructor() {
-    super('Sign-in was superseded by a logout or a newer identity');
-    this.name = 'SupersededAttemptError';
-  }
-}
-
-/**
- * Raised when unwanted Auth state could NOT be confirmed removed.
- *
- * This is the difference between "cleanup attempted and confirmed" and
- * "cleanup failed or unconfirmable". The caller must not treat the
- * second as an ordinary secure-login failure, because a mismatched or
- * partially verified SDK user may still be current — so the legacy
- * fallback must not report success for that attempt either.
- */
-export class UnresolvedAuthStateError extends Error {
-  constructor(public readonly cause: string) {
-    super(
-      'Sign-in failed and the resulting Auth state could not be confirmed clean. '
-      + 'Refusing to continue: an unverified session may still be present.',
-    );
-    this.name = 'UnresolvedAuthStateError';
-  }
-}
-
-/**
- * Sign out ONLY the session this attempt established.
- *
- * UID-scoped so a stale attempt finishing late cannot sign out a newer,
- * valid session that replaced it. Returns whether removal was confirmed;
- * the caller decides the security outcome — cleanup failure is never
- * silently discarded.
- */
-async function signOutOwnedUid(
-  app: ReturnType<typeof getFirebaseApp>,
-  uid: string | null,
-): Promise<'confirmed' | 'not-ours' | 'failed'> {
-  try {
-    const now = await getOwnedVerifiedIdentity(app);
-    if (now === null) return 'confirmed';        // already gone
-    if (uid && now.uid !== uid) return 'not-ours'; // a newer session — leave it
-    await signOutOwned(app);
-    const after = await getOwnedVerifiedIdentity(app);
-    return after === null ? 'confirmed' : 'failed';
-  } catch {
-    return 'failed';
-  }
-}
-
-/** Claims match the driver we believe we are authenticating. */
-function claimsMatch(
-  identity: { kind: string | null; driverId: string | null; companyId: string | null } | null,
-  expected: { driverId?: string; companyId?: string },
-): boolean {
-  if (!identity) return false;
-  if (identity.kind !== 'driver') return false;
-  if (expected.driverId && identity.driverId !== expected.driverId) return false;
-  if (expected.companyId && identity.companyId !== expected.companyId) return false;
-  return true;
-}
-
-/** Claims read that never throws — a transient failure reads as "unknown". */
-async function readIdentityQuietly(app: ReturnType<typeof getFirebaseApp>) {
-  try {
-    return await getOwnedVerifiedIdentity(app);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Establish a VERIFIED owned session, transactionally.
- *
- * Previously, a sign-in that succeeded but failed claim verification left
- * the new user signed in: establishSdkSession threw, secureLogin caught,
- * and verifyLogin fell through to the legacy hash path and reported an
- * ordinary local login — while a persistent SDK session for the WRONG
- * driver survived. getSecureIdToken() would then hand out that identity.
- *
- * Now every post-sign-in failure rolls the session back, and a
- * pre-existing mismatched session is signed out before another identity
- * is accepted. A transient failure BEFORE sign-in leaves any prior valid
- * matching session untouched — a redundant login attempt that merely
- * loses connectivity must not destroy a good session.
- */
-async function establishSdkSession(
-  customToken: string,
-  expected: { driverId?: string; companyId?: string },
-  epoch: number,
-): Promise<void> {
-  const app = getFirebaseApp();
-  initializePersistentAuth(app, AsyncStorage);
-  const superseded = () => authEpoch !== epoch;
-
-  // 1. Snapshot the pre-existing owned session, if any.
-  const prior = await readIdentityQuietly(app);
-  if (superseded()) throw new SupersededAttemptError();
-  const priorMatched = claimsMatch(prior, expected);
-
-  // A pre-existing MISMATCHED session must never survive into this
-  // attempt — and if it cannot be confirmed gone, we must not proceed and
-  // must not let the caller fall back to a "successful" local login.
-  if (prior && !priorMatched) {
-    const removed = await signOutOwnedUid(app, prior.uid);
-    if (removed === 'failed') throw new UnresolvedAuthStateError('prior-mismatch-not-removed');
-  }
-
-  // 2-5. Sign in, await readiness, read and validate claims, re-checking
-  // ownership after every awaited step so a logout mid-flight can never be
-  // overtaken by this attempt publishing success.
-  let establishedUid: string | null = null;
-  try {
-    await signInWithCustomTokenOwned(app, customToken);
-    // Claim the uid SYNCHRONOUSLY, before the supersession check. Firebase
-    // sign-in has already taken effect by the time it resolves, so if the
-    // epoch changed during that await the session exists and MUST be
-    // rolled back. Recording the uid only after the next await would leave
-    // establishedUid null on that path and let a logged-out driver's
-    // session survive — the resurrection this guard exists to prevent.
-    establishedUid = getOwnedUserId(app);
-    if (superseded()) throw new SupersededAttemptError();
-
-    await waitForAuthReady(app);
-    if (superseded()) throw new SupersededAttemptError();
-
-    const identity = await getOwnedVerifiedIdentity(app);
-    establishedUid = identity?.uid ?? establishedUid;
-    if (superseded()) throw new SupersededAttemptError();
-
-    if (!identity) throw new Error('Auth session did not establish');
-    if (identity.kind !== 'driver') throw new Error('Auth session is not a driver session');
-    if (expected.driverId && identity.driverId !== expected.driverId) {
-      throw new Error('Authenticated identity does not match the signed-in driver');
-    }
-    if (expected.companyId && identity.companyId !== expected.companyId) {
-      throw new Error('Authenticated identity does not match the driver company');
-    }
-  } catch (err) {
-    // 6. Roll back only the session THIS attempt created, scoped by uid so
-    // a stale attempt finishing late cannot sign out a newer valid
-    // session. If sign-in never succeeded there is nothing of ours to
-    // remove and any prior session is left exactly as it was.
-    if (establishedUid !== null) {
-      const removed = await signOutOwnedUid(app, establishedUid);
-      // Cleanup failure is a DIFFERENT, more severe outcome than the
-      // verification failure: an unverified user may still be current, so
-      // the caller must refuse to continue rather than fall back.
-      if (removed === 'failed') throw new UnresolvedAuthStateError('rollback-failed');
-    }
-    throw err;
-  }
 }
 
 export async function secureSubmitRegistration(params: {
@@ -393,7 +250,7 @@ async function runSecureLogin(params: {
   displayName: string;
   passcode: string;
 }): Promise<SecureLoginResult> {
-  const epoch = authEpoch;
+  const epoch = authSession.captureEpoch();
   try {
     const data = await callCallable<{
       customToken?: string;
@@ -420,12 +277,12 @@ async function runSecureLogin(params: {
     // flag off by default) whose token had no refresh path; it no longer
     // establishes a session rather than creating one that silently expires.
     if (data.customToken) {
-      await establishSdkSession(
+      await authSession.establish(
         data.customToken,
         { driverId: data.driverId, companyId: data.companyId || undefined },
         epoch,
       );
-      if (authEpoch !== epoch) throw new SupersededAttemptError();
+      if (authSession.isSuperseded(epoch)) throw new SupersededAttemptError();
       // Legacy material is removed only AFTER the SDK session exists.
       await clearLegacyTokenMaterial();
     } else {

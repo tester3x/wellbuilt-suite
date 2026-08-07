@@ -29,6 +29,11 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\
 const authSrc = readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8');
 const auth = stripComments(authSrc);
 const appSrc = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'firebaseApp.ts'), 'utf8'));
+// The ordering-critical logic lives in authSessionCore so it can be driven
+// by deferred fakes under tsx --test; secureDriverAuth wires it to the real
+// boundary. Pins follow the code to whichever file now owns it.
+const coreSrc = readFileSync(join(root, 'src', 'core', 'services', 'authSessionCore.ts'), 'utf8');
+const core = stripComments(coreSrc);
 
 // ── 1. The raw REST auth plane is gone ──────────────────────────────────
 check('no Identity Toolkit token exchange remains', !/identitytoolkit/.test(auth));
@@ -42,17 +47,17 @@ check('no SecureStore WRITE of token material remains',
 
 // ── 2. The SDK owns the session ─────────────────────────────────────────
 check('sign-in goes through the owned boundary',
-  /signInWithCustomTokenOwned\(app, customToken\)/.test(auth));
+  /signInWithCustomTokenOwned\(getFirebaseApp\(\), customToken\)/.test(auth));
 check('persistent Auth is initialized through the boundary',
-  /initializePersistentAuth\(app, AsyncStorage\)/.test(auth));
+  /initializePersistentAuth\(getFirebaseApp\(\), AsyncStorage\)/.test(auth));
 check('AsyncStorage is what is handed to the boundary', /AsyncStorage/.test(auth));
-check('readiness is awaited after sign-in', /waitForAuthReady\(app\)/.test(auth));
+check('readiness is awaited after sign-in', /await ops\.waitForAuthReady\(\)/.test(core));
 check('the current ID token comes from the SDK session, not storage',
   /return getOwnedIdToken\(getFirebaseApp\(\)\)/.test(auth));
 
 // ── 3. Legacy material is cleared only AFTER success ────────────────────
 {
-  const idx = auth.indexOf('await establishSdkSession(');
+  const idx = auth.indexOf('await authSession.establish(');
   const clr = auth.indexOf('await clearLegacyTokenMaterial();', idx);
   check('legacy token material is cleared only after a successful SDK sign-in',
     idx !== -1 && clr !== -1 && clr > idx);
@@ -63,7 +68,7 @@ check('the current ID token comes from the SDK session, not storage',
   check('a failed sign-in cannot fall through to cleanup',
     idx !== -1 && clr !== -1 && !/catch/.test(auth.slice(idx, clr)));
   check('a superseded attempt cannot reach the cleanup either',
-    /await establishSdkSession\([\s\S]{0,200}?\);\s*\n\s*if \(authEpoch !== epoch\) throw new SupersededAttemptError\(\);/.test(auth));
+    /await authSession\.establish\([\s\S]{0,200}?\);\s*\n\s*if \(authSession\.isSuperseded\(epoch\)\) throw new SupersededAttemptError\(\);/.test(auth));
 }
 
 // ── 3b. The genuine login lifecycle reaches the SDK ─────────────────────
@@ -82,19 +87,22 @@ check('the current ID token comes from the SDK session, not storage',
 
   // Step 6: claims are verified before success is reported.
   check('the minted identity is verified before login reports success',
-    /identity\.kind !== 'driver'/.test(auth)
-    && /identity\.driverId !== expected\.driverId/.test(auth)
-    && /identity\.companyId !== expected\.companyId/.test(auth));
+    /identity\.kind !== 'driver'/.test(core)
+    && /identity\.driverId !== expected\.driverId/.test(core)
+    && /identity\.companyId !== expected\.companyId/.test(core));
   // Within establishSdkSession specifically: readiness is awaited before
   // claims are read. (File-wide indexOf is meaningless now that helpers
   // above the function also reference getOwnedVerifiedIdentity.)
   {
-    const body = auth.slice(auth.indexOf('async function establishSdkSession'));
-    const ready = body.indexOf('await waitForAuthReady(app)');
-    const claims = body.indexOf('await getOwnedVerifiedIdentity(app)');
+    const body = core.slice(core.indexOf('async function runEstablish'));
+    const ready = body.indexOf('await ops.waitForAuthReady()');
+    const claims = body.indexOf('await ops.getVerifiedIdentity()');
     check('verification happens after readiness', ready !== -1 && claims !== -1 && ready < claims);
   }
   check('authVerified is only set on the verified path', /authVerified: true/.test(auth));
+  check('the core never imports the Firebase SDK, react-native, or expo',
+    !/from '(firebase|react-native|expo|@react-native)/.test(core));
+  check('the core never touches storage directly', !/AsyncStorage|SecureStore/.test(core));
   check('the legacy fallback never claims authVerified',
     !/authVerified/.test(dAuth.split('trying legacy')[1] || ''));
   check('verifyLogin exposes authVerified so callers can gate on it',
@@ -258,16 +266,16 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
 {
   const s = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8'));
   check('sign-out outcome is tri-state, not boolean',
-    /'confirmed' \| 'not-ours' \| 'failed'/.test(s));
+    /'confirmed' \| 'not-ours' \| 'failed'/.test(core));
   check('cleanup is CONFIRMED by re-reading identity after sign-out',
-    /await signOutOwned\(app\);[\s\S]{0,160}getOwnedVerifiedIdentity\(app\)[\s\S]{0,90}=== null \? 'confirmed' : 'failed'/.test(s));
+    /await ops\.signOut\(\);\s*\n\s*const after = await ops\.getVerifiedIdentity\(\);\s*\n\s*if \(after === null\) return 'confirmed';/.test(core));
   check('a failed rollback raises UnresolvedAuthStateError',
-    /removed === 'failed'\) throw new UnresolvedAuthStateError\('rollback-failed'\)/.test(s));
+    /removed === 'failed'\) throw new UnresolvedAuthStateError\('rollback-failed'\)/.test(core));
   check('an unremovable mismatched prior session also raises it',
-    /removed === 'failed'\) throw new UnresolvedAuthStateError\('prior-mismatch-not-removed'\)/.test(s));
+    /removed === 'failed'\) throw new UnresolvedAuthStateError\('prior-mismatch-not-removed'\)/.test(core));
   check('the unresolved state is surfaced on the result', /authStateUnresolved/.test(s));
   check('no bare catch-and-continue wraps the rollback sign-out',
-    !/signOutOwnedUid\([^)]*\)\.catch\(/.test(s));
+    !/signOutScoped\([^)]*\)\.catch\(/.test(core));
 
   const d = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'driverAuth.ts'), 'utf8'));
   check('driverAuth REFUSES the local fallback when Auth state is unresolved',
@@ -281,28 +289,31 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
 // ── CORRECTION3 item 3: logout cancellation cannot be overtaken ─────────
 {
   const s = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8'));
-  check('an ownership epoch exists', /let authEpoch = 0/.test(s));
+  check('an ownership epoch exists', /let epoch = 0/.test(core));
   check('invalidateAuthEpoch increments the epoch, not just a promise ref',
-    /invalidateAuthEpoch[\s\S]{0,140}authEpoch \+= 1/.test(s));
+    /invalidateAuthEpoch[\s\S]{0,140}authSession\.invalidateEpoch\(\)/.test(s)
+    && /invalidateEpoch\(\) \{\s*\n\s*epoch \+= 1;/.test(core));
   check('it also clears the single-flight slot',
-    /invalidateAuthEpoch[\s\S]{0,220}inFlightLogin = null[\s\S]{0,70}inFlightKey = null/.test(s));
+    /invalidateAuthEpoch[\s\S]{0,260}inFlightLogin = null[\s\S]{0,70}inFlightKey = null/.test(s));
   check('the superseded predicate compares the captured epoch to current',
-    /const superseded = \(\) => authEpoch !== epoch/.test(s));
+    /const superseded = \(\) => epoch !== attemptEpoch/.test(core));
 
-  const est = s.split('async function establishSdkSession')[1].split('\n}\n')[0];
+  const est = core.split('async function runEstablish')[1].split('\n  }\n')[0];
   const awaits = (est.match(/await /g) || []).length;
   const guards = (est.match(/if \(superseded\(\)\) throw/g) || []).length;
   check('establishSdkSession re-checks ownership after its awaits (' + guards + ' guards / ' + awaits + ' awaits)',
     guards >= 4);
   check('the uid is claimed synchronously after sign-in, BEFORE the epoch check',
-    /await signInWithCustomTokenOwned\([^)]*\);\s*establishedUid = getOwnedUserId\(app\);\s*if \(superseded\(\)\)/.test(est));
+    /await ops\.signInWithCustomToken\([^)]*\);\s*establishedUid = ops\.getCurrentUserId\(\);\s*if \(superseded\(\)\)/.test(est));
   check('rollback is UID-scoped so a stale attempt cannot kill a newer session',
-    /signOutOwnedUid\(app, establishedUid\)/.test(est));
-  check('signOutOwnedUid refuses to sign out a session that is not ours',
-    /now\.uid !== uid\) return 'not-ours'/.test(s));
+    /signOutScoped\(establishedUid\)/.test(est));
+  check('scoped sign-out refuses to touch a session that is not ours',
+    /before\.uid !== uid\) return 'not-ours'/.test(core));
   check('a superseded attempt still reaches rollback (its throw is inside the guarded try)',
     est.indexOf('SupersededAttemptError') < est.indexOf('} catch (err)'));
   check('the promise-ref-only cancellation API is gone', !/cancelInFlightLogin/.test(s));
+  check('identity changing between sign-out and confirmation is not "failed"',
+    /if \(uid && after\.uid !== uid\) return 'not-ours';/.test(core));
 
   const ctx = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
   check('both logout paths invalidate the epoch',
