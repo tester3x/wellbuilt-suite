@@ -52,15 +52,16 @@ check('the current ID token comes from the SDK session, not storage',
 
 // ── 3. Legacy material is cleared only AFTER success ────────────────────
 {
-  const idx = auth.indexOf('await establishSdkSession(data.customToken');
+  const idx = auth.indexOf('await establishSdkSession(');
   const clr = auth.indexOf('await clearLegacyTokenMaterial();', idx);
   check('legacy token material is cleared only after a successful SDK sign-in',
     idx !== -1 && clr !== -1 && clr > idx);
   check('cleanup only deletes — it never reads the values',
     /deleteItemAsync\(ID_TOKEN_KEY\)/.test(auth) && /deleteItemAsync\(REFRESH_TOKEN_KEY\)/.test(auth));
-  // A failed exchange must not reach the cleanup.
+  // A failed exchange must not reach the cleanup: establishSdkSession
+  // throws, and nothing between it and the cleanup catches or recovers.
   check('a failed sign-in cannot fall through to cleanup',
-    /await establishSdkSession\([\s\S]{0,120}?\);\s*\n\s*await clearLegacyTokenMaterial\(\);/.test(auth));
+    idx !== -1 && clr !== -1 && !/catch/.test(auth.slice(idx, clr)));
 }
 
 // ── 3b. The genuine login lifecycle reaches the SDK ─────────────────────
@@ -225,6 +226,30 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   check('the legacy path never sets authVerified', !/authVerified/.test(legacy));
   check('the legacy path never touches the Auth boundary',
     !/signInWithCustomTokenOwned|initializePersistentAuth|getOwnedVerifiedIdentity/.test(legacy));
+}
+
+// ── CORRECTION3 item 2: cleanup failure is never swallowed ──────────────
+{
+  const s = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8'));
+  check('sign-out outcome is tri-state, not boolean',
+    /'confirmed' \| 'not-ours' \| 'failed'/.test(s));
+  check('cleanup is CONFIRMED by re-reading identity after sign-out',
+    /await signOutOwned\(app\);[\s\S]{0,160}getOwnedVerifiedIdentity\(app\)[\s\S]{0,90}=== null \? 'confirmed' : 'failed'/.test(s));
+  check('a failed rollback raises UnresolvedAuthStateError',
+    /removed === 'failed'\) throw new UnresolvedAuthStateError\('rollback-failed'\)/.test(s));
+  check('an unremovable mismatched prior session also raises it',
+    /removed === 'failed'\) throw new UnresolvedAuthStateError\('prior-mismatch-not-removed'\)/.test(s));
+  check('the unresolved state is surfaced on the result', /authStateUnresolved/.test(s));
+  check('no bare catch-and-continue wraps the rollback sign-out',
+    !/signOutOwnedUid\([^)]*\)\.catch\(/.test(s));
+
+  const d = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'driverAuth.ts'), 'utf8'));
+  check('driverAuth REFUSES the local fallback when Auth state is unresolved',
+    /if \(secure\.authStateUnresolved\)[\s\S]{0,180}valid: false/.test(d));
+  const gate = d.indexOf('authStateUnresolved');
+  const legacy = d.indexOf('trying legacy');
+  check('the unresolved gate precedes the legacy fallback',
+    gate > -1 && legacy > -1 && gate < legacy);
 }
 
 // ── CORRECTION3 item 4: the equality token, described accurately ────────

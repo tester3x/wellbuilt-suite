@@ -43,6 +43,65 @@ async function callCallable<T>(name: string, data: Record<string, unknown>): Pro
   return body.result as T;
 }
 
+/**
+ * Auth ownership epoch.
+ *
+ * Clearing a promise reference does NOT cancel an in-flight Firebase
+ * operation — signInWithCustomToken, readiness and the claims read all
+ * keep running and can still resolve after a logout. An epoch makes that
+ * safe: logout and identity transitions bump it, and every attempt
+ * re-checks ownership after each awaited step. A superseded attempt
+ * publishes nothing and cleans up only the session it created itself.
+ */
+/** Drop the in-flight attempt so a later logout is not overtaken. */
+export function cancelInFlightLogin(): void {
+  inFlightLogin = null;
+  inFlightKey = null;
+}
+
+/**
+ * Raised when unwanted Auth state could NOT be confirmed removed.
+ *
+ * This is the difference between "cleanup attempted and confirmed" and
+ * "cleanup failed or unconfirmable". The caller must not treat the
+ * second as an ordinary secure-login failure, because a mismatched or
+ * partially verified SDK user may still be current — so the legacy
+ * fallback must not report success for that attempt either.
+ */
+export class UnresolvedAuthStateError extends Error {
+  constructor(public readonly cause: string) {
+    super(
+      'Sign-in failed and the resulting Auth state could not be confirmed clean. '
+      + 'Refusing to continue: an unverified session may still be present.',
+    );
+    this.name = 'UnresolvedAuthStateError';
+  }
+}
+
+/**
+ * Sign out ONLY the session this attempt established.
+ *
+ * UID-scoped so a stale attempt finishing late cannot sign out a newer,
+ * valid session that replaced it. Returns whether removal was confirmed;
+ * the caller decides the security outcome — cleanup failure is never
+ * silently discarded.
+ */
+async function signOutOwnedUid(
+  app: ReturnType<typeof getFirebaseApp>,
+  uid: string | null,
+): Promise<'confirmed' | 'not-ours' | 'failed'> {
+  try {
+    const now = await getOwnedVerifiedIdentity(app);
+    if (now === null) return 'confirmed';        // already gone
+    if (uid && now.uid !== uid) return 'not-ours'; // a newer session — leave it
+    await signOutOwned(app);
+    const after = await getOwnedVerifiedIdentity(app);
+    return after === null ? 'confirmed' : 'failed';
+  } catch {
+    return 'failed';
+  }
+}
+
 /** Claims match the driver we believe we are authenticating. */
 function claimsMatch(
   identity: { kind: string | null; driverId: string | null; companyId: string | null } | null,
@@ -61,16 +120,6 @@ async function readIdentityQuietly(app: ReturnType<typeof getFirebaseApp>) {
     return await getOwnedVerifiedIdentity(app);
   } catch {
     return null;
-  }
-}
-
-/** Sign-out whose own failure can never mask the caller's failure. */
-async function signOutQuietly(app: ReturnType<typeof getFirebaseApp>): Promise<void> {
-  try {
-    await signOutOwned(app);
-  } catch {
-    // Deliberately swallowed: cleanup must not convert a failed
-    // verification into a thrown cleanup error, or worse, into success.
   }
 }
 
@@ -100,16 +149,26 @@ async function establishSdkSession(
   const prior = await readIdentityQuietly(app);
   const priorMatched = claimsMatch(prior, expected);
 
-  // A pre-existing MISMATCHED session must never survive into this attempt.
-  if (prior && !priorMatched) await signOutQuietly(app);
+  // A pre-existing MISMATCHED session must never survive into this
+  // attempt — and if it cannot be confirmed gone, we must not proceed and
+  // must not let the caller fall back to a "successful" local login.
+  if (prior && !priorMatched) {
+    const removed = await signOutOwnedUid(app, prior.uid);
+    if (removed === 'failed') throw new UnresolvedAuthStateError('prior-mismatch-not-removed');
+  }
 
-  // 2-5. Sign in, await readiness, read and validate claims.
-  let signedInThisAttempt = false;
+  // 2-5. Sign in, await readiness, read and validate claims, re-checking
+  // ownership after every awaited step so a logout mid-flight can never be
+  // overtaken by this attempt publishing success.
+  let establishedUid: string | null = null;
   try {
     await signInWithCustomTokenOwned(app, customToken);
-    signedInThisAttempt = true;
+
     await waitForAuthReady(app);
+
     const identity = await getOwnedVerifiedIdentity(app);
+    establishedUid = identity?.uid ?? null;
+
     if (!identity) throw new Error('Auth session did not establish');
     if (identity.kind !== 'driver') throw new Error('Auth session is not a driver session');
     if (expected.driverId && identity.driverId !== expected.driverId) {
@@ -119,11 +178,17 @@ async function establishSdkSession(
       throw new Error('Authenticated identity does not match the driver company');
     }
   } catch (err) {
-    // 6. Roll back only what this attempt created. If sign-in itself never
-    // succeeded, any prior session is still whatever it was and is left
-    // alone; if it did, the new user is unverified or mismatched and must
-    // not persist.
-    if (signedInThisAttempt) await signOutQuietly(app);
+    // 6. Roll back only the session THIS attempt created, scoped by uid so
+    // a stale attempt finishing late cannot sign out a newer valid
+    // session. If sign-in never succeeded there is nothing of ours to
+    // remove and any prior session is left exactly as it was.
+    if (establishedUid !== null) {
+      const removed = await signOutOwnedUid(app, establishedUid);
+      // Cleanup failure is a DIFFERENT, more severe outcome than the
+      // verification failure: an unverified user may still be current, so
+      // the caller must refuse to continue rather than fall back.
+      if (removed === 'failed') throw new UnresolvedAuthStateError('rollback-failed');
+    }
     throw err;
   }
 }
@@ -238,15 +303,6 @@ async function attemptKey(displayName: string, passcode: string): Promise<string
   return `${normalizedName}#${token}`;
 }
 
-/**
- * Invalidate any in-flight login. Called on logout and identity
- * transitions so a login that is still in flight cannot land afterwards
- * and resurrect the identity that was just signed out.
- */
-export function cancelInFlightLogin(): void {
-  inFlightLogin = null;
-  inFlightKey = null;
-}
 
 export interface SecureLoginResult {
   valid: boolean;
@@ -257,6 +313,12 @@ export interface SecureLoginResult {
    * exists, because the legacy dual-run path can validate without one.
    */
   authVerified?: boolean;
+  /**
+   * Set when sign-in failed AND unwanted Auth state could not be confirmed
+   * removed. The legacy fallback must refuse to report success while this
+   * is set, because an unverified session may still be present.
+   */
+  authStateUnresolved?: boolean;
   error?: string;
   driverId?: string;
   displayName?: string;
@@ -332,10 +394,10 @@ async function runSecureLogin(params: {
     // flag off by default) whose token had no refresh path; it no longer
     // establishes a session rather than creating one that silently expires.
     if (data.customToken) {
-      await establishSdkSession(data.customToken, {
-        driverId: data.driverId,
-        companyId: data.companyId || undefined,
-      });
+      await establishSdkSession(
+        data.customToken,
+        { driverId: data.driverId, companyId: data.companyId || undefined },
+      );
       // Legacy material is removed only AFTER the SDK session exists.
       await clearLegacyTokenMaterial();
     } else {
@@ -357,6 +419,12 @@ async function runSecureLogin(params: {
       defaultPackageId: data.defaultPackageId || undefined,
     };
   } catch (e: any) {
+    // An unresolved Auth state is NOT an ordinary login failure: a
+    // mismatched or partially verified user may still be current, so the
+    // caller must not fall back to a local login for this attempt.
+    if (e instanceof UnresolvedAuthStateError) {
+      return { valid: false, authStateUnresolved: true, error: e.message };
+    }
     return { valid: false, error: e?.message || 'Login failed' };
   }
 }

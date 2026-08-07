@@ -203,6 +203,13 @@ export const verifyLogin = async (
     }
     // If server says passcode reset required or invalid, do not fall back to
     // exposed legacy hashes when the error is explicit.
+    // SECURITY GATE: when the secure attempt could not confirm that
+    // unwanted Auth state was removed, a mismatched or partially verified
+    // SDK user may still be current. Falling back to a 'successful' local
+    // login here would be exactly the hole this closes — refuse instead.
+    if (secure.authStateUnresolved) {
+      return { valid: false, error: secure.error || 'Sign-in state could not be verified' };
+    }
     if (secure.error && /reset required|Too many login/i.test(secure.error)) {
       return { valid: false, error: secure.error };
     }
