@@ -111,9 +111,10 @@ check('the current ID token comes from the SDK session, not storage',
     /export function cancelInFlightLogin\(\)/.test(auth));
   check('the single-flight key includes the normalized display name',
     /displayName\.trim\(\)\.toLowerCase\(\)/.test(auth));
-  check('the key material is salted per process and never persisted',
-    /const ATTEMPT_SALT/.test(auth)
-    && !/setItemAsync\([^)]*ATTEMPT|AsyncStorage\.setItem\([^)]*attemptKey/.test(auth));
+  check('the key material is random per process and never persisted',
+    /let attemptKeyMaterial: string \| null = null/.test(auth)
+    && /getRandomBytesAsync\(32\)/.test(auth)
+    && !/(setItemAsync|AsyncStorage\.setItem)\([^)]*(attemptKeyMaterial|processKey)/.test(auth));
   check('the passcode is never logged or stored as a key',
     !/console\.(log|warn|error)\([^)]*passcode/.test(auth)
     && !/setItemAsync\([^)]*passcode/.test(auth));
@@ -224,6 +225,28 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   check('the legacy path never sets authVerified', !/authVerified/.test(legacy));
   check('the legacy path never touches the Auth boundary',
     !/signInWithCustomTokenOwned|initializePersistentAuth|getOwnedVerifiedIdentity/.test(legacy));
+}
+
+// ── CORRECTION3 item 4: the equality token, described accurately ────────
+{
+  const raw = readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8');
+  const s = stripComments(raw);
+  check('the process key is 256 random bits', /getRandomBytesAsync\(32\)/.test(s));
+  check('the token is a KEYED digest (the process key is an input)',
+    /digestStringAsync\([\s\S]{0,140}await processKey\(\)/.test(s));
+  check('SHA-256, not a 32-bit non-cryptographic hash', /CryptoDigestAlgorithm\.SHA256/.test(s));
+  check('the old Math.imul construction is gone', !/Math\.imul/.test(s));
+  check('the process key is never persisted',
+    !/(SecureStore\.setItemAsync|AsyncStorage\.setItem)\([^)]*(attemptKeyMaterial|processKey)/.test(s));
+  check('nothing is described as "non-reversible"', !/non-reversible/i.test(raw));
+  check('the docs state it is keyed rather than a plain salted digest',
+    /KEYED digest, not a plain salted/.test(raw));
+  check('neither the token nor the key is logged',
+    !/console\.[a-z]+\([^)]*(attemptKeyMaterial|processKey\(|\bkey\b)/.test(s));
+  check('the token feeds only the single-flight slot', /inFlightKey = key/.test(s));
+  check('attemptKey is awaited by secureLogin', /const key = await attemptKey\(/.test(s));
+  check('the file is clean UTF-8 with no NUL bytes',
+    !readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts')).includes(0));
 }
 
 console.log(`

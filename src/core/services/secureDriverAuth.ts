@@ -4,6 +4,7 @@
  * Dual-run: call this first; legacy REST remains until rule enforcement.
  */
 import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirebaseApp } from './firebaseApp';
 import {
@@ -180,29 +181,61 @@ export async function secureCheckRegistrationStatus(
  * key therefore distinguishes the normalized display name and the
  * credential attempt.
  *
- * The credential is never stored: it is reduced to a non-reversible,
- * per-process fingerprint that lives only in memory for the duration of
- * the in-flight promise, is never persisted, and is never logged. It
- * exists solely to tell "same submission" from "different submission".
+ * The credential is never stored: it is reduced to a keyed digest under a
+ * random per-process key (see attemptKey below) that lives only in memory
+ * for the duration of the in-flight promise, is never persisted, and is
+ * never logged. It exists solely to tell "same submission" from
+ * "different submission".
  * Expected driver/company are not part of the key because they are
  * server-supplied outputs of the attempt, not inputs to it.
  */
 let inFlightLogin: Promise<SecureLoginResult> | null = null;
 let inFlightKey: string | null = null;
 
-/** Per-process salt so a fingerprint is meaningless outside this run. */
-const ATTEMPT_SALT = `${Date.now()}:${Math.random()}`;
+/**
+ * Random 256-bit process key. Generated once per app process, held only
+ * in memory, never persisted, never logged, never transmitted. It dies
+ * with the process, so an equality token from one run means nothing in
+ * another.
+ */
+let attemptKeyMaterial: string | null = null;
 
-function attemptKey(displayName: string, passcode: string): string {
-  const normalizedName = displayName.trim().toLowerCase();
-  // Non-reversible within this process and discarded with it. Not a
-  // password hash and never used as one — only an equality token.
-  let h = 0;
-  const material = `${ATTEMPT_SALT} ${normalizedName} ${passcode}`;
-  for (let i = 0; i < material.length; i++) {
-    h = (Math.imul(31, h) + material.charCodeAt(i)) | 0;
+async function processKey(): Promise<string> {
+  if (attemptKeyMaterial === null) {
+    const bytes = await Crypto.getRandomBytesAsync(32);
+    attemptKeyMaterial = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   }
-  return `${normalizedName}#${h.toString(36)}`;
+  return attemptKeyMaterial;
+}
+
+/**
+ * Keyed equality token for one submission.
+ *
+ * SHA-256 over (random 256-bit process key, normalized name, credential)
+ * — a KEYED digest, not a plain salted one. The distinction is the whole
+ * point: a passcode is low entropy, so a salted digest with a knowable
+ * salt would be trivially brute-forceable. Keyed under a secret random
+ * value that never leaves memory, it is not. (An earlier version used a
+ * 32-bit non-cryptographic hash over a timestamp salt, and its comment
+ * overstated the guarantee: it was neither keyed nor hard to invert.)
+ *
+ * It exists ONLY to answer "is this the same submission as the one in
+ * flight?" It is never persisted, never logged, never transmitted, and is
+ * never used as a password hash or as authority for anything.
+ *
+ * The normalized name is kept in the clear as a prefix deliberately: the
+ * server resolves identity through driver_name_index/{nameNorm} to a
+ * single driverId, so the normalized name IS the account identifier and
+ * is already stored in local identity. The credential component only
+ * separates a duplicate tap from a corrected retry.
+ */
+async function attemptKey(displayName: string, passcode: string): Promise<string> {
+  const normalizedName = displayName.trim().toLowerCase();
+  const token = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    [await processKey(), normalizedName, passcode].join('\u0001'),
+  );
+  return `${normalizedName}#${token}`;
 }
 
 /**
@@ -242,11 +275,11 @@ export interface SecureLoginResult {
  * submissions so two taps cannot race two token exchanges against a
  * single Auth instance.
  */
-export function secureLogin(params: {
+export async function secureLogin(params: {
   displayName: string;
   passcode: string;
 }): Promise<SecureLoginResult> {
-  const key = attemptKey(params.displayName, params.passcode);
+  const key = await attemptKey(params.displayName, params.passcode);
   // Coalesce only an identical submission. A different name or credential
   // must never receive this attempt's result.
   if (inFlightLogin && inFlightKey === key) return inFlightLogin;
