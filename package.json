@@ -29,6 +29,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "firebase": "12.17.1",
     "i18next": "^25.8.5",
     "react": "19.1.0",
     "react-i18next": "^16.5.4",
