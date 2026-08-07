@@ -12,6 +12,7 @@ import {
   signInWithCustomTokenOwned,
   signOutOwned,
   waitForAuthReady,
+  getOwnedVerifiedIdentity,
 } from './firebaseAuthBoundary';
 
 const PROJECT_ID = 'wellbuilt-sync';
@@ -51,11 +52,28 @@ async function callCallable<T>(name: string, data: Record<string, unknown>): Pro
  *
  * The custom token is consumed exactly once and never persisted or logged.
  */
-async function establishSdkSession(customToken: string): Promise<void> {
+async function establishSdkSession(
+  customToken: string,
+  expected: { driverId?: string; companyId?: string },
+): Promise<void> {
   const app = getFirebaseApp();
   initializePersistentAuth(app, AsyncStorage);
   await signInWithCustomTokenOwned(app, customToken);
   await waitForAuthReady(app);
+
+  // Step 6 of the login contract: the session is only 'verified' once the
+  // server-minted claims match the driver we believe we authenticated. A
+  // token that signs in but carries another identity must fail closed
+  // rather than be reported as a successful verified login.
+  const identity = await getOwnedVerifiedIdentity(app);
+  if (!identity) throw new Error('Auth session did not establish');
+  if (identity.kind !== 'driver') throw new Error('Auth session is not a driver session');
+  if (expected.driverId && identity.driverId !== expected.driverId) {
+    throw new Error('Authenticated identity does not match the signed-in driver');
+  }
+  if (expected.companyId && identity.companyId !== expected.companyId) {
+    throw new Error('Authenticated identity does not match the driver company');
+  }
 }
 
 export async function secureSubmitRegistration(params: {
@@ -97,11 +115,27 @@ export async function secureCheckRegistrationStatus(
   }
 }
 
-export async function secureLogin(params: {
-  displayName: string;
-  passcode: string;
-}): Promise<{
+
+/**
+ * Single-flight guard for the login exchange.
+ *
+ * Duplicate taps must not race two authenticateDriver calls and two
+ * signInWithCustomToken exchanges against one Auth instance — the second
+ * would overwrite the first's session mid-establishment. Concurrent
+ * callers share the in-flight promise; the slot clears when it settles so
+ * a genuine retry after failure still works.
+ */
+let inFlightLogin: Promise<SecureLoginResult> | null = null;
+
+export interface SecureLoginResult {
   valid: boolean;
+  /**
+   * True only when an owned, persistent SDK Auth session exists AND its
+   * server-minted claims match this driver. `valid` alone means the
+   * credentials checked out; it does NOT mean a verified cloud session
+   * exists, because the legacy dual-run path can validate without one.
+   */
+  authVerified?: boolean;
   error?: string;
   driverId?: string;
   displayName?: string;
@@ -113,7 +147,28 @@ export async function secureLogin(params: {
   assignedRoutes?: string[];
   defaultPackageId?: string;
   passcodeHash?: string;
-}> {
+}
+
+/**
+ * Public entry point. Shares one in-flight exchange across duplicate
+ * submissions so two taps cannot race two token exchanges against a
+ * single Auth instance.
+ */
+export function secureLogin(params: {
+  displayName: string;
+  passcode: string;
+}): Promise<SecureLoginResult> {
+  if (inFlightLogin) return inFlightLogin;
+  inFlightLogin = runSecureLogin(params).finally(() => {
+    inFlightLogin = null;
+  });
+  return inFlightLogin;
+}
+
+async function runSecureLogin(params: {
+  displayName: string;
+  passcode: string;
+}): Promise<SecureLoginResult> {
   try {
     const data = await callCallable<{
       customToken?: string;
@@ -140,7 +195,10 @@ export async function secureLogin(params: {
     // flag off by default) whose token had no refresh path; it no longer
     // establishes a session rather than creating one that silently expires.
     if (data.customToken) {
-      await establishSdkSession(data.customToken);
+      await establishSdkSession(data.customToken, {
+        driverId: data.driverId,
+        companyId: data.companyId || undefined,
+      });
       // Legacy material is removed only AFTER the SDK session exists.
       await clearLegacyTokenMaterial();
     } else {
@@ -148,6 +206,7 @@ export async function secureLogin(params: {
     }
     return {
       valid: true,
+      authVerified: true,
       driverId: data.driverId,
       // passcodeHash field kept for session shape compatibility; store driverId
       passcodeHash: data.driverId,

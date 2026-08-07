@@ -52,7 +52,7 @@ check('the current ID token comes from the SDK session, not storage',
 
 // ── 3. Legacy material is cleared only AFTER success ────────────────────
 {
-  const idx = auth.indexOf('await establishSdkSession(data.customToken);');
+  const idx = auth.indexOf('await establishSdkSession(data.customToken');
   const clr = auth.indexOf('await clearLegacyTokenMaterial();', idx);
   check('legacy token material is cleared only after a successful SDK sign-in',
     idx !== -1 && clr !== -1 && clr > idx);
@@ -60,7 +60,40 @@ check('the current ID token comes from the SDK session, not storage',
     /deleteItemAsync\(ID_TOKEN_KEY\)/.test(auth) && /deleteItemAsync\(REFRESH_TOKEN_KEY\)/.test(auth));
   // A failed exchange must not reach the cleanup.
   check('a failed sign-in cannot fall through to cleanup',
-    /await establishSdkSession\([^)]*\);\s*\n\s*await clearLegacyTokenMaterial\(\);/.test(auth));
+    /await establishSdkSession\([\s\S]{0,120}?\);\s*\n\s*await clearLegacyTokenMaterial\(\);/.test(auth));
+}
+
+// ── 3b. The genuine login lifecycle reaches the SDK ─────────────────────
+{
+  const dAuth = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'driverAuth.ts'), 'utf8'));
+  const ctx2 = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
+  const hook = stripComments(readFileSync(join(root, 'src', 'core', 'hooks', 'useLogin.ts'), 'utf8'));
+
+  // THE ACCEPTANCE PIN: a real production login handler must reach secureLogin.
+  check('the production login hook calls AuthContext.login', /auth\.login\(/.test(hook));
+  check('AuthContext.login calls verifyLogin', /await verifyLogin\(displayName, passcode\)/.test(ctx2));
+  check('verifyLogin calls secureLogin (the SDK path is reachable)',
+    /await secureLogin\(\{ displayName, passcode \}\)/.test(dAuth));
+  const prodCallers = (dAuth.match(/secureLogin\(/g) || []).length;
+  check('secureLogin has at least one real production caller', prodCallers >= 1, `${prodCallers}`);
+
+  // Step 6: claims are verified before success is reported.
+  check('the minted identity is verified before login reports success',
+    /identity\.kind !== 'driver'/.test(auth)
+    && /identity\.driverId !== expected\.driverId/.test(auth)
+    && /identity\.companyId !== expected\.companyId/.test(auth));
+  check('verification happens after readiness',
+    auth.indexOf('waitForAuthReady(app)') < auth.indexOf('getOwnedVerifiedIdentity(app)'));
+  check('authVerified is only set on the verified path', /authVerified: true/.test(auth));
+  check('the legacy fallback never claims authVerified',
+    !/authVerified/.test(dAuth.split('trying legacy')[1] || ''));
+  check('verifyLogin exposes authVerified so callers can gate on it',
+    /authVerified\?: boolean/.test(dAuth));
+
+  // Duplicate submissions share one exchange.
+  check('duplicate logins share a single in-flight exchange',
+    /if \(inFlightLogin\) return inFlightLogin;/.test(auth)
+    && /\.finally\(\(\) => \{\s*inFlightLogin = null;\s*\}\)/.test(auth));
 }
 
 // ── 4. No silently-expiring session is created ──────────────────────────

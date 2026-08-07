@@ -179,6 +179,16 @@ export const verifyLogin = async (
   assignedRoutes?: string[];
   defaultPackageId?: string;
   error?: string;
+  /**
+   * True only when the secure path established a verified SDK Auth session
+   * whose server-minted claims matched this driver.
+   *
+   * `valid` alone means the credentials checked out — it does NOT mean a
+   * verified cloud session exists, because the legacy hash fallback below
+   * can validate a driver without one. Protected online operations must
+   * gate on `authVerified`, never on `valid`.
+   */
+  authVerified?: boolean;
 }> => {
   console.log("[DriverAuth-Suite] Verifying login for:", displayName);
 

@@ -255,6 +255,33 @@ export async function getOwnedIdToken(app: FirebaseApp, forceRefresh = false): P
   return user.getIdToken(forceRefresh);
 }
 
+/**
+ * Verified identity of the current SDK user: the uid plus the custom
+ * claims the server minted. Returns null when signed out.
+ *
+ * This is what makes a login "verified" rather than merely local — the
+ * caller compares these server-issued values against the identity it
+ * expects, and fails closed on mismatch.
+ */
+export async function getOwnedVerifiedIdentity(app: FirebaseApp): Promise<{
+  uid: string;
+  kind: string | null;
+  driverId: string | null;
+  companyId: string | null;
+} | null> {
+  const user = getOwnedAuth(app)?.currentUser;
+  if (!user) return null;
+  const result = await user.getIdTokenResult();
+  const claims = result.claims;
+  const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+  return {
+    uid: user.uid,
+    kind: str(claims.kind),
+    driverId: str(claims.driverId),
+    companyId: str(claims.companyId),
+  };
+}
+
 /** Subscribe to session changes. Returns the unsubscribe function. */
 export function onOwnedAuthStateChanged(
   app: FirebaseApp,
