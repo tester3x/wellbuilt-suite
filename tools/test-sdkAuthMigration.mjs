@@ -102,6 +102,16 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   check('AuthContext does not require an SDK session to restore local identity',
     !/waitForAuthReady|requireOwnedAuth|getOwnedIdToken/.test(ctx));
   check('AuthContext still owns logout', /logout/.test(ctx));
+  // Both logout paths must end the verified session, before local teardown.
+  const signOutCalls = (ctx.match(/secureSignOut\(\)/g) || []).length;
+  const clearCalls = (ctx.match(/await clearDriverSession\(\);/g) || []).length;
+  check('every logout path signs out the SDK session',
+    signOutCalls === clearCalls && clearCalls === 2,
+    `${signOutCalls} sign-outs / ${clearCalls} teardowns`);
+  check('SDK sign-out happens BEFORE local session teardown',
+    /secureSignOut\(\)[\s\S]{0,80}await clearDriverSession\(\);/.test(ctx));
+  check('a failed sign-out cannot block logout completion',
+    /secureSignOut\(\)\.catch\(\(\) => \{\}\)/.test(ctx));
 }
 
 console.log(`
