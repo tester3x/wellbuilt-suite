@@ -70,6 +70,35 @@ export interface CompanyConfig {
   city?: string;
   state?: string;
   zip?: string;
+  /**
+   * vc51.9C: the raw wellbuiltContract root, passed through UNPARSED so
+   * suiteShiftAuthority.parseSuiteEnforcement is the single interpreter.
+   * Absent ⇒ legacy (established behavior). Tier remains presentation
+   * only and never activates enforcement.
+   */
+  wellbuiltContract?: Record<string, unknown>;
+}
+
+/**
+ * vc51.9C: decode the wellbuiltContract Firestore map into plain values.
+ * Structure-preserving only — NO interpretation (parseSuiteEnforcement
+ * is the single interpreter, and it fails closed on anything it does
+ * not recognize).
+ */
+function decodeContractRoot(fields: Record<string, any>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields ?? {})) {
+    if (v?.stringValue !== undefined) out[k] = v.stringValue;
+    else if (v?.booleanValue !== undefined) out[k] = v.booleanValue;
+    else if (v?.integerValue !== undefined) out[k] = Number(v.integerValue);
+    else if (v?.doubleValue !== undefined) out[k] = v.doubleValue;
+    else if (v?.mapValue?.fields) out[k] = decodeContractRoot(v.mapValue.fields);
+    else if (v?.arrayValue) {
+      out[k] = (v.arrayValue.values ?? []).map((e: any) =>
+        e?.mapValue?.fields ? decodeContractRoot(e.mapValue.fields) : (e?.stringValue ?? e?.booleanValue ?? e?.integerValue));
+    }
+  }
+  return out;
 }
 
 // ── Fetch helpers ─────────────────────────────────────────────
@@ -151,6 +180,13 @@ export async function fetchCompanyConfig(companyId: string): Promise<CompanyConf
       city: parseStr(f.city) || undefined,
       state: parseStr(f.state) || undefined,
       zip: parseStr(f.zip) || undefined,
+      // vc51.9C: preserve the contract root (Firestore mapValue → plain
+      // object) so enforcement can be evaluated canonically. Only the
+      // fields the boundary needs are decoded; interpretation lives in
+      // suiteShiftAuthority, never here.
+      ...(f.wellbuiltContract?.mapValue?.fields ? {
+        wellbuiltContract: decodeContractRoot(f.wellbuiltContract.mapValue.fields),
+      } : {}),
     };
 
     await AsyncStorage.setItem(cacheKey, JSON.stringify({ config, fetchedAt: Date.now() } as CachedConfig));

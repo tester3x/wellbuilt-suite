@@ -547,11 +547,36 @@ export async function saveYardLocation(lat: number, lng: number): Promise<void> 
  * 1. Auto-closes any stale shift from a previous day
  * 2. Ensures today has a login event (so every working day has a record)
  */
+/**
+ * vc51.9C: fetch one authoritative driver_shifts day document for the
+ * canonical verifier — 404 is definitive absence, transport failure is
+ * UNREADABLE (never "closed", never "open").
+ */
+export async function fetchShiftDayDoc(
+  driverId: string,
+  date: string,
+): Promise<{ readable: boolean; present: boolean; currentShiftId?: string }> {
+  try {
+    const resp = await fetchSafe(`https://firestore.googleapis.com/v1/${docPath(driverId, date)}?key=${FIREBASE_API_KEY}`);
+    if (resp.status === 404) return { readable: true, present: false };
+    if (!resp.ok) return { readable: false, present: false };
+    const doc = await resp.json();
+    const raw = doc?.fields?.currentShiftId?.stringValue;
+    return { readable: true, present: true, ...(typeof raw === 'string' ? { currentShiftId: raw } : {}) };
+  } catch {
+    return { readable: false, present: false };
+  }
+}
+
 export async function checkShiftOnResume(
   driverId: string,
   displayName: string,
   companyId?: string,
   source: 'wbt' | 'wbm' | 'wbs' = 'wbs',
+  /** vc51.9C: the session's cached shift id — the backfilled login must
+   *  restore the doc's currentShiftId scope key, never leave a
+   *  scope-less shift that JSA/DVIR cannot bind to. */
+  cachedShiftId?: string | null,
 ): Promise<void> {
   try {
     await autoCloseStaleShift(driverId, source);
@@ -596,6 +621,12 @@ export async function checkShiftOnResume(
     if (companyId) {
       fields.companyId = { stringValue: companyId };
       fieldPaths.push('companyId');
+    }
+    // vc51.9C: the backfilled login restores the scope key so the shift
+    // is never open-but-scopeless (JSA/DVIR bind on currentShiftId).
+    if (cachedShiftId) {
+      fields.currentShiftId = { stringValue: cachedShiftId };
+      fieldPaths.push('currentShiftId');
     }
 
     const body = {

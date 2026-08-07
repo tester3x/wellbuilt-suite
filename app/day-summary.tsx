@@ -236,7 +236,21 @@ export default function DaySummaryScreen() {
     // jsa_day_status collection for ALL docs with the current shiftId, then
     // collapse them: the gate is "complete" only if EVERY operator's doc
     // is jsaCompleted=true. wellCount is summed across all operator docs.
-    const shiftIdP = getCurrentShiftId().then(id => id || new Date().toISOString().slice(0, 10));
+    // vc51.9C: the UTC date fallback is a LEGACY display convenience and
+    // is enforcement-gated. Under active enforcement no fabricated scope
+    // is used — the JSA card simply shows nothing rather than reading a
+    // period that was never verified. (Display only; no writes here.)
+    const shiftIdP = getCurrentShiftId().then(async (id) => {
+      if (id) return id;
+      const [{ mayUseDateFallback, parseSuiteEnforcement }, { fetchCompanyConfig }] = await Promise.all([
+        import('../src/core/services/workPeriodAuthority/suiteShiftAuthority'),
+        import('../src/core/services/companyConfig'),
+      ]);
+      const cfg = user?.companyId ? await fetchCompanyConfig(user.companyId).catch(() => null) : null;
+      return mayUseDateFallback(parseSuiteEnforcement(cfg ?? undefined))
+        ? new Date().toISOString().slice(0, 10)
+        : '';
+    });
 
     // All 4 fetches in parallel — no sequential waits
     const invoicesP = fetchTodayInvoices(driverName, user.companyId).catch(() => [] as any[]);

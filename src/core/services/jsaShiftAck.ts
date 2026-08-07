@@ -35,7 +35,24 @@ export async function acknowledgeShiftJsa(
 ): Promise<boolean> {
   if (!driverHash) return false;
   try {
-    const scope = (await getCurrentShiftId()) || todayUtc();
+    // vc51.9C: the UTC date fallback is enforcement-gated. Under active
+    // canonical enforcement a missing shift id means NO verified period —
+    // acknowledging into a fabricated date scope would create evidence
+    // bound to a period that does not exist, so it fails closed.
+    const cached = await getCurrentShiftId();
+    let scope = cached;
+    if (!scope) {
+      const [{ mayUseDateFallback, parseSuiteEnforcement }, { fetchCompanyConfig }] = await Promise.all([
+        import('./workPeriodAuthority/suiteShiftAuthority'),
+        import('./companyConfig'),
+      ]);
+      const cfg = companyId ? await fetchCompanyConfig(companyId).catch(() => null) : null;
+      if (!mayUseDateFallback(parseSuiteEnforcement(cfg ?? undefined))) {
+        console.warn('[jsaShiftAck] enforced company with no verified shift — refusing date-fallback scope');
+        return false;
+      }
+      scope = todayUtc();
+    }
     const docId = `${driverHash}_${scope}`;
     const nowIso = new Date().toISOString();
 

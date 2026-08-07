@@ -179,8 +179,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           // Only track shift if driver explicitly started one (tapped "Start Shift").
           // Logged-in but not on-shift should NOT create a shift doc / login event.
+          // vc51.9C: the cached shift id is verified against AUTHORITY through
+          // the canonical resolver before it is presented as current. Closed/
+          // superseded → cleared and the local session marked ended (never
+          // reopened); unverified (offline) → preserved but the backfill still
+          // runs with the cached id so the doc keeps its scope key.
           if (isActive) {
-            checkShiftOnResume(session.driverId, session.legalName || session.displayName, session.companyId).catch(() => {});
+            (async () => {
+              try {
+                const cached = await getCurrentShiftId();
+                const [{ verifyCachedShiftAgainstAuthority }, { fetchShiftDayDoc }] = await Promise.all([
+                  import('../services/workPeriodAuthority/suiteShiftAuthority'),
+                  import('../services/shiftTracking'),
+                ]);
+                const n = new Date();
+                const localDate = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+                const v = await verifyCachedShiftAgainstAuthority({
+                  companyId: session.companyId || '',
+                  driverId: session.driverId,
+                  cachedShiftId: cached,
+                  localDate,
+                  nowMs: Date.now(),
+                  fetchDayDoc: (date) => fetchShiftDayDoc(session.driverId, date),
+                });
+                if (v.verdict === 'verified_closed') {
+                  await clearCurrentShiftId();
+                  await SecureStore.setItemAsync('shiftEnded', 'true');
+                  setShiftActive(false);
+                  console.log('[AuthContext] cached shift closed by authority (' + v.reason + ') — cleared, not reopened');
+                  return;
+                }
+                checkShiftOnResume(session.driverId, session.legalName || session.displayName, session.companyId, 'wbs', cached).catch(() => {});
+              } catch {
+                checkShiftOnResume(session.driverId, session.legalName || session.displayName, session.companyId).catch(() => {});
+              }
+            })();
           }
 
           // Revalidate in background (non-blocking)
@@ -428,17 +461,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logoutWithCascade = useCallback(async () => {
     // Post-Trip gate: never complete logout while the active shift lacks
     // a durable Post-Trip receipt. Launch eQuipment and abort cleanup.
+    // vc51.9C: NO null-shiftId escape hatch — the gate fails closed on a
+    // missing id; the caller never pre-filters it away.
     if (shiftActive && user) {
       try {
-        const shiftId = await getCurrentShiftId();
-        if (shiftId) {
-          const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
-          const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
-          const post = await gate.ensurePostTripGate({ alertOnBlock: true });
-          if (!post.allowed) {
-            console.log('[logoutWithCascade] blocked — Post-Trip required for', shiftId);
-            return;
-          }
+        const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
+        const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+        const post = await gate.ensurePostTripGate({ alertOnBlock: true });
+        if (!post.allowed) {
+          console.log('[logoutWithCascade] blocked — Post-Trip required before logout');
+          return;
         }
       } catch (err) {
         console.warn('[logoutWithCascade] Post-Trip gate error (blocking logout):', err);
@@ -498,17 +530,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // network call flushed (field-confirmed 2026-05-01).
   const logout = useCallback(async () => {
     // Post-Trip gate for home-screen Log Out while shift still active.
+    // vc51.9C: NO null-shiftId escape hatch — a lost cache key must not
+    // silently skip the gate; ensurePostTripGate itself fails closed on
+    // a missing id, so the GATE decides, never this caller.
     if (shiftActive && user) {
       try {
-        const shiftId = await getCurrentShiftId();
-        if (shiftId) {
-          const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
-          const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
-          const post = await gate.ensurePostTripGate({ alertOnBlock: true });
-          if (!post.allowed) {
-            console.log('[logout] blocked — Post-Trip required for', shiftId);
-            return;
-          }
+        const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
+        const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+        const post = await gate.ensurePostTripGate({ alertOnBlock: true });
+        if (!post.allowed) {
+          console.log('[logout] blocked — Post-Trip required before logout');
+          return;
         }
       } catch (err) {
         console.warn('[logout] Post-Trip gate error (blocking logout):', err);
