@@ -522,7 +522,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // never left signed in to Firebase with local state already cleared.
     // secureSignOut swallows an unowned/absent session and still removes the
     // legacy token material, so logout completes even if sign-out fails.
-    await (await import('../services/secureDriverAuth')).secureSignOut().catch(() => {});
+    {
+      // Cancel any in-flight login FIRST, so a sign-in still resolving
+      // cannot land after teardown and resurrect the identity we are
+      // logging out. Then end the verified session before local cleanup.
+      const secure = await import('../services/secureDriverAuth');
+      secure.cancelInFlightLogin();
+      await secure.secureSignOut().catch(() => {});
+    }
     await clearDriverSession();
     setUser(null);
   }, [shiftActive, user]);
@@ -599,7 +606,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // never left signed in to Firebase with local state already cleared.
     // secureSignOut swallows an unowned/absent session and still removes the
     // legacy token material, so logout completes even if sign-out fails.
-    await (await import('../services/secureDriverAuth')).secureSignOut().catch(() => {});
+    {
+      // Cancel any in-flight login FIRST, so a sign-in still resolving
+      // cannot land after teardown and resurrect the identity we are
+      // logging out. Then end the verified session before local cleanup.
+      const secure = await import('../services/secureDriverAuth');
+      secure.cancelInFlightLogin();
+      await secure.secureSignOut().catch(() => {});
+    }
     await clearDriverSession();
     setUser(null);
   }, [shiftActive, user]);
