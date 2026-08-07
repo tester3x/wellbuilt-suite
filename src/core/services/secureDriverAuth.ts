@@ -9,6 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirebaseApp } from './firebaseApp';
 import {
   getOwnedIdToken,
+  getOwnedUserId,
   initializePersistentAuth,
   signInWithCustomTokenOwned,
   signOutOwned,
@@ -53,10 +54,21 @@ async function callCallable<T>(name: string, data: Record<string, unknown>): Pro
  * re-checks ownership after each awaited step. A superseded attempt
  * publishes nothing and cleans up only the session it created itself.
  */
-/** Drop the in-flight attempt so a later logout is not overtaken. */
-export function cancelInFlightLogin(): void {
+let authEpoch = 0;
+
+/** Invalidate every in-flight attempt. Called on logout and identity change. */
+export function invalidateAuthEpoch(): void {
+  authEpoch += 1;
   inFlightLogin = null;
   inFlightKey = null;
+}
+
+/** Raised when an attempt is superseded mid-flight. */
+export class SupersededAttemptError extends Error {
+  constructor() {
+    super('Sign-in was superseded by a logout or a newer identity');
+    this.name = 'SupersededAttemptError';
+  }
 }
 
 /**
@@ -141,12 +153,15 @@ async function readIdentityQuietly(app: ReturnType<typeof getFirebaseApp>) {
 async function establishSdkSession(
   customToken: string,
   expected: { driverId?: string; companyId?: string },
+  epoch: number,
 ): Promise<void> {
   const app = getFirebaseApp();
   initializePersistentAuth(app, AsyncStorage);
+  const superseded = () => authEpoch !== epoch;
 
   // 1. Snapshot the pre-existing owned session, if any.
   const prior = await readIdentityQuietly(app);
+  if (superseded()) throw new SupersededAttemptError();
   const priorMatched = claimsMatch(prior, expected);
 
   // A pre-existing MISMATCHED session must never survive into this
@@ -163,11 +178,21 @@ async function establishSdkSession(
   let establishedUid: string | null = null;
   try {
     await signInWithCustomTokenOwned(app, customToken);
+    // Claim the uid SYNCHRONOUSLY, before the supersession check. Firebase
+    // sign-in has already taken effect by the time it resolves, so if the
+    // epoch changed during that await the session exists and MUST be
+    // rolled back. Recording the uid only after the next await would leave
+    // establishedUid null on that path and let a logged-out driver's
+    // session survive — the resurrection this guard exists to prevent.
+    establishedUid = getOwnedUserId(app);
+    if (superseded()) throw new SupersededAttemptError();
 
     await waitForAuthReady(app);
+    if (superseded()) throw new SupersededAttemptError();
 
     const identity = await getOwnedVerifiedIdentity(app);
-    establishedUid = identity?.uid ?? null;
+    establishedUid = identity?.uid ?? establishedUid;
+    if (superseded()) throw new SupersededAttemptError();
 
     if (!identity) throw new Error('Auth session did not establish');
     if (identity.kind !== 'driver') throw new Error('Auth session is not a driver session');
@@ -368,6 +393,7 @@ async function runSecureLogin(params: {
   displayName: string;
   passcode: string;
 }): Promise<SecureLoginResult> {
+  const epoch = authEpoch;
   try {
     const data = await callCallable<{
       customToken?: string;
@@ -397,7 +423,9 @@ async function runSecureLogin(params: {
       await establishSdkSession(
         data.customToken,
         { driverId: data.driverId, companyId: data.companyId || undefined },
+        epoch,
       );
+      if (authEpoch !== epoch) throw new SupersededAttemptError();
       // Legacy material is removed only AFTER the SDK session exists.
       await clearLegacyTokenMaterial();
     } else {

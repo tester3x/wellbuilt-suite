@@ -156,6 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(sessionToUser(session));
           setLoading(false);
 
+
           // Check if shift was explicitly started (and not ended)
           const shiftStarted = await SecureStore.getItemAsync('shiftStarted');
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
@@ -527,7 +528,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // cannot land after teardown and resurrect the identity we are
       // logging out. Then end the verified session before local cleanup.
       const secure = await import('../services/secureDriverAuth');
-      secure.cancelInFlightLogin();
+      secure.invalidateAuthEpoch();
       await secure.secureSignOut().catch(() => {});
     }
     await clearDriverSession();
@@ -611,7 +612,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // cannot land after teardown and resurrect the identity we are
       // logging out. Then end the verified session before local cleanup.
       const secure = await import('../services/secureDriverAuth');
-      secure.cancelInFlightLogin();
+      secure.invalidateAuthEpoch();
       await secure.secureSignOut().catch(() => {});
     }
     await clearDriverSession();

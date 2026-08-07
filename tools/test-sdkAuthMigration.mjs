@@ -62,6 +62,8 @@ check('the current ID token comes from the SDK session, not storage',
   // throws, and nothing between it and the cleanup catches or recovers.
   check('a failed sign-in cannot fall through to cleanup',
     idx !== -1 && clr !== -1 && !/catch/.test(auth.slice(idx, clr)));
+  check('a superseded attempt cannot reach the cleanup either',
+    /await establishSdkSession\([\s\S]{0,200}?\);\s*\n\s*if \(authEpoch !== epoch\) throw new SupersededAttemptError\(\);/.test(auth));
 }
 
 // ── 3b. The genuine login lifecycle reaches the SDK ─────────────────────
@@ -109,7 +111,7 @@ check('the current ID token comes from the SDK session, not storage',
   check('a late settle cannot undo a cancellation',
     /if \(inFlightKey === key\) \{/.test(auth));
   check('logout can cancel an in-flight login',
-    /export function cancelInFlightLogin\(\)/.test(auth));
+    /export function invalidateAuthEpoch\(\)/.test(auth));
   check('the single-flight key includes the normalized display name',
     /displayName\.trim\(\)\.toLowerCase\(\)/.test(auth));
   check('the key material is random per process and never persisted',
@@ -250,6 +252,37 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   const legacy = d.indexOf('trying legacy');
   check('the unresolved gate precedes the legacy fallback',
     gate > -1 && legacy > -1 && gate < legacy);
+}
+
+// ── CORRECTION3 item 3: logout cancellation cannot be overtaken ─────────
+{
+  const s = stripComments(readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts'), 'utf8'));
+  check('an ownership epoch exists', /let authEpoch = 0/.test(s));
+  check('invalidateAuthEpoch increments the epoch, not just a promise ref',
+    /invalidateAuthEpoch[\s\S]{0,140}authEpoch \+= 1/.test(s));
+  check('it also clears the single-flight slot',
+    /invalidateAuthEpoch[\s\S]{0,220}inFlightLogin = null[\s\S]{0,70}inFlightKey = null/.test(s));
+  check('the superseded predicate compares the captured epoch to current',
+    /const superseded = \(\) => authEpoch !== epoch/.test(s));
+
+  const est = s.split('async function establishSdkSession')[1].split('\n}\n')[0];
+  const awaits = (est.match(/await /g) || []).length;
+  const guards = (est.match(/if \(superseded\(\)\) throw/g) || []).length;
+  check('establishSdkSession re-checks ownership after its awaits (' + guards + ' guards / ' + awaits + ' awaits)',
+    guards >= 4);
+  check('the uid is claimed synchronously after sign-in, BEFORE the epoch check',
+    /await signInWithCustomTokenOwned\([^)]*\);\s*establishedUid = getOwnedUserId\(app\);\s*if \(superseded\(\)\)/.test(est));
+  check('rollback is UID-scoped so a stale attempt cannot kill a newer session',
+    /signOutOwnedUid\(app, establishedUid\)/.test(est));
+  check('signOutOwnedUid refuses to sign out a session that is not ours',
+    /now\.uid !== uid\) return 'not-ours'/.test(s));
+  check('a superseded attempt still reaches rollback (its throw is inside the guarded try)',
+    est.indexOf('SupersededAttemptError') < est.indexOf('} catch (err)'));
+  check('the promise-ref-only cancellation API is gone', !/cancelInFlightLogin/.test(s));
+
+  const ctx = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
+  check('both logout paths invalidate the epoch',
+    (ctx.match(/invalidateAuthEpoch\(\)/g) || []).length >= 2);
 }
 
 // ── CORRECTION3 item 4: the equality token, described accurately ────────
