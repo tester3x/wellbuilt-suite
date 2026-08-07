@@ -70,9 +70,8 @@ const authSession = createAuthSessionCore({
 
 /** Invalidate every in-flight attempt. Called on logout and identity change. */
 export function invalidateAuthEpoch(): void {
+  // Bumps the ownership epoch AND releases the single-flight attempt slot.
   authSession.invalidateEpoch();
-  inFlightLogin = null;
-  inFlightKey = null;
 }
 
 export async function secureSubmitRegistration(params: {
@@ -136,9 +135,6 @@ export async function secureCheckRegistrationStatus(
  * Expected driver/company are not part of the key because they are
  * server-supplied outputs of the attempt, not inputs to it.
  */
-let inFlightLogin: Promise<SecureLoginResult> | null = null;
-let inFlightKey: string | null = null;
-
 /**
  * Random 256-bit process key. Generated once per app process, held only
  * in memory, never persisted, never logged, never transmitted. It dies
@@ -226,24 +222,11 @@ export async function secureLogin(params: {
   const key = await attemptKey(params.displayName, params.passcode);
   // Coalesce only an identical submission. A different name or credential
   // must never receive this attempt's result.
-  if (inFlightLogin && inFlightKey === key) return inFlightLogin;
-  if (inFlightLogin) {
-    return Promise.resolve({
-      valid: false,
-      error: 'Another sign-in is already in progress',
-    });
+  const outcome = authSession.singleFlight(key, () => runSecureLogin(params));
+  if (outcome.kind === 'busy') {
+    return { valid: false, error: 'Another sign-in is already in progress' };
   }
-  inFlightKey = key;
-  const attempt = runSecureLogin(params).finally(() => {
-    // Only clear if this attempt still owns the slot — a logout that
-    // cancelled it must not be undone by this settling late.
-    if (inFlightKey === key) {
-      inFlightLogin = null;
-      inFlightKey = null;
-    }
-  });
-  inFlightLogin = attempt;
-  return attempt;
+  return outcome.promise;
 }
 
 async function runSecureLogin(params: {

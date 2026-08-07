@@ -111,13 +111,14 @@ check('the current ID token comes from the SDK session, not storage',
   // Duplicate submissions share one exchange.
   // ── Single-flight is keyed by attempt identity ────────────────────────
   check('identical submissions coalesce onto one exchange',
-    /if \(inFlightLogin && inFlightKey === key\) return inFlightLogin;/.test(auth));
+    /if \(inFlight && inFlightAttemptKey === key\) \{/.test(core));
   check('a DIFFERENT concurrent attempt is rejected, not given this result',
-    /if \(inFlightLogin\) \{[\s\S]{0,200}Another sign-in is already in progress/.test(auth));
+    /if \(inFlight\) return \{ kind: 'busy' \};/.test(core)
+    && /outcome\.kind === 'busy'[\s\S]{0,160}Another sign-in is already in progress/.test(auth));
   check('the in-flight slot always clears on settle',
-    /\.finally\(\(\) => \{[\s\S]{0,220}inFlightLogin = null;[\s\S]{0,60}inFlightKey = null;/.test(auth));
+    /\.finally\(\(\) => \{[\s\S]{0,260}inFlight = null;[\s\S]{0,70}inFlightAttemptKey = null;/.test(core));
   check('a late settle cannot undo a cancellation',
-    /if \(inFlightKey === key\) \{/.test(auth));
+    /if \(inFlightAttemptKey === key\) \{/.test(core));
   check('logout can cancel an in-flight login',
     /export function invalidateAuthEpoch\(\)/.test(auth));
   check('the single-flight key includes the normalized display name',
@@ -294,7 +295,7 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
     /invalidateAuthEpoch[\s\S]{0,140}authSession\.invalidateEpoch\(\)/.test(s)
     && /invalidateEpoch\(\) \{\s*\n\s*epoch \+= 1;/.test(core));
   check('it also clears the single-flight slot',
-    /invalidateAuthEpoch[\s\S]{0,260}inFlightLogin = null[\s\S]{0,70}inFlightKey = null/.test(s));
+    /invalidateEpoch\(\) \{[\s\S]{0,260}inFlight = null;[\s\S]{0,70}inFlightAttemptKey = null;/.test(core));
   check('the superseded predicate compares the captured epoch to current',
     /const superseded = \(\) => epoch !== attemptEpoch/.test(core));
 
@@ -336,7 +337,8 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
     /KEYED digest, not a plain salted/.test(raw));
   check('neither the token nor the key is logged',
     !/console\.[a-z]+\([^)]*(attemptKeyMaterial|processKey\(|\bkey\b)/.test(s));
-  check('the token feeds only the single-flight slot', /inFlightKey = key/.test(s));
+  check('the token feeds only the single-flight slot',
+    /authSession\.singleFlight\(key, \(\) => runSecureLogin\(params\)\)/.test(s));
   check('attemptKey is awaited by secureLogin', /const key = await attemptKey\(/.test(s));
   check('the file is clean UTF-8 with no NUL bytes',
     !readFileSync(join(root, 'src', 'core', 'services', 'secureDriverAuth.ts')).includes(0));

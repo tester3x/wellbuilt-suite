@@ -118,7 +118,22 @@ export interface AuthSessionCore {
   isSuperseded(epoch: number): boolean;
   /** True while an Auth mutation is unsettled. Diagnostics/tests only. */
   hasPendingMutation(): boolean;
+  /**
+   * Coalesce identical submissions onto one attempt.
+   *
+   * Same key while an attempt is in flight -> that same promise, so two
+   * taps cannot race two exchanges. A DIFFERENT key while one is in
+   * flight -> `busy`, because a different name or credential must never
+   * receive this attempt's result.
+   */
+  singleFlight<T>(key: string, run: () => Promise<T>): SingleFlightOutcome<T>;
+  /** The key currently holding the attempt slot. Diagnostics/tests only. */
+  inFlightKey(): string | null;
 }
+
+export type SingleFlightOutcome<T> =
+  | { readonly kind: 'attempt'; readonly promise: Promise<T> }
+  | { readonly kind: 'busy' };
 
 const DEFAULT_DRAIN_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_DRAIN_WAITS = 4;
@@ -152,6 +167,10 @@ export function createAuthSessionCore(
    * one has fully settled and rolled back whatever it created.
    */
   let mutationInFlight: Promise<void> | null = null;
+
+  /** The single-flight attempt slot: at most one login attempt at a time. */
+  let inFlight: Promise<unknown> | null = null;
+  let inFlightAttemptKey: string | null = null;
 
   /**
    * Serialize Auth mutations.
@@ -306,6 +325,31 @@ export function createAuthSessionCore(
     },
     invalidateEpoch() {
       epoch += 1;
+      // Release the attempt slot too: the attempt it named is no longer
+      // wanted, and a fresh login must not be told the app is busy.
+      inFlight = null;
+      inFlightAttemptKey = null;
+    },
+    singleFlight(key, run) {
+      if (inFlight && inFlightAttemptKey === key) {
+        return { kind: 'attempt', promise: inFlight as Promise<never> };
+      }
+      if (inFlight) return { kind: 'busy' };
+      const promise = run().finally(() => {
+        // Clear ONLY if this attempt still owns the slot. A logout that
+        // released it, or a newer attempt that claimed it, must not be
+        // undone by this one settling late.
+        if (inFlightAttemptKey === key) {
+          inFlight = null;
+          inFlightAttemptKey = null;
+        }
+      });
+      inFlightAttemptKey = key;
+      inFlight = promise;
+      return { kind: 'attempt', promise };
+    },
+    inFlightKey() {
+      return inFlightAttemptKey;
     },
     captureEpoch() {
       return epoch;
