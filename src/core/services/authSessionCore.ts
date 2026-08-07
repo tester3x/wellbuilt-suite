@@ -60,8 +60,21 @@ export interface AuthSessionOps {
 }
 
 export interface AuthSessionOptions {
-  /** Reserved. */
-  readonly _?: never;
+  /**
+   * How long a new attempt will wait for an older unresolved Auth
+   * mutation to settle before failing closed.
+   */
+  drainTimeoutMs?: number;
+  /**
+   * How many consecutive drains a single attempt will perform. Bounds the
+   * pathological case where attempts keep claiming the slot ahead of us.
+   */
+  maxDrainWaits?: number;
+  /**
+   * Wait for `p`, giving up after `ms`. Injected so tests can resolve the
+   * timeout deterministically instead of sleeping.
+   */
+  awaitWithTimeout?<T>(p: Promise<T>, ms: number): Promise<'settled' | 'timeout'>;
 }
 
 /** Raised when a newer epoch has taken ownership mid-attempt. */
@@ -103,13 +116,82 @@ export interface AuthSessionCore {
   captureEpoch(): number;
   /** True when `epoch` is no longer the current owner. */
   isSuperseded(epoch: number): boolean;
+  /** True while an Auth mutation is unsettled. Diagnostics/tests only. */
+  hasPendingMutation(): boolean;
+}
+
+const DEFAULT_DRAIN_TIMEOUT_MS = 15000;
+const DEFAULT_MAX_DRAIN_WAITS = 4;
+
+function realAwaitWithTimeout<T>(p: Promise<T>, ms: number): Promise<'settled' | 'timeout'> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('timeout'), ms);
+    p.then(
+      () => {},
+      () => {},
+    ).then(() => {
+      clearTimeout(timer);
+      resolve('settled');
+    });
+  });
 }
 
 export function createAuthSessionCore(
   ops: AuthSessionOps,
-  _options: AuthSessionOptions = {},
+  options: AuthSessionOptions = {},
 ): AuthSessionCore {
+  const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+  const maxDrainWaits = options.maxDrainWaits ?? DEFAULT_MAX_DRAIN_WAITS;
+  const awaitWithTimeout = options.awaitWithTimeout ?? realAwaitWithTimeout;
+
   let epoch = 0;
+
+  /**
+   * Held for the whole duration of an Auth mutation INCLUDING its
+   * cleanup, so a later attempt cannot begin mutating until the earlier
+   * one has fully settled and rolled back whatever it created.
+   */
+  let mutationInFlight: Promise<void> | null = null;
+
+  /**
+   * Serialize Auth mutations.
+   *
+   * An epoch detects a stale completion only AFTER the awaited operation
+   * returns — it cannot stop Firebase from setting currentUser when the
+   * older sign-in finally resolves. If a newer login were allowed to sign
+   * in concurrently, the older sign-in could land last and replace the
+   * newer user, and the older attempt's own uid-scoped cleanup would then
+   * match and sign that state out, leaving no session at all while the
+   * newer login had already reported success.
+   *
+   * So mutations do not overlap: a new attempt waits for the previous one
+   * to settle and clean up. The wait is bounded and fails closed.
+   */
+  async function acquireMutationSlot(): Promise<() => void> {
+    let waits = 0;
+    // Loop rather than a single check: several attempts can be released by
+    // the same settling mutation, and only one may claim the slot.
+    while (mutationInFlight) {
+      if (waits >= maxDrainWaits) {
+        throw new UnresolvedAuthStateError('prior-auth-mutation-not-drained');
+      }
+      waits += 1;
+      const outcome = await awaitWithTimeout(mutationInFlight, drainTimeoutMs);
+      if (outcome === 'timeout') {
+        throw new UnresolvedAuthStateError('prior-auth-mutation-drain-timeout');
+      }
+    }
+    let release!: () => void;
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mutationInFlight = mine;
+    return () => {
+      release();
+      // Only clear if we still own it — a later attempt may already hold it.
+      if (mutationInFlight === mine) mutationInFlight = null;
+    };
+  }
 
   /**
    * Sign out ONLY the session identified by `uid`.
@@ -215,7 +297,12 @@ export function createAuthSessionCore(
   return {
     async establish(customToken, expected, attemptEpoch) {
       ops.initializePersistentAuth();
-      await runEstablish(customToken, expected, attemptEpoch);
+      const release = await acquireMutationSlot();
+      try {
+        await runEstablish(customToken, expected, attemptEpoch);
+      } finally {
+        release();
+      }
     },
     invalidateEpoch() {
       epoch += 1;
@@ -225,6 +312,9 @@ export function createAuthSessionCore(
     },
     isSuperseded(e) {
       return epoch !== e;
+    },
+    hasPendingMutation() {
+      return mutationInFlight !== null;
     },
   };
 }
