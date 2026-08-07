@@ -70,6 +70,13 @@ export interface WBAppLaunchOptions {
   androidPackage?: string;
   /** Web URL for browser-based apps (opens in browser instead of deep link) */
   webUrl?: string;
+  /**
+   * Credential-free start route (vc51.9J). When set, the app is opened
+   * at `scheme://startHost` carrying nothing at all — used for WB-T,
+   * which mints its own PKCE attempt instead of receiving credentials.
+   * Ignored when `sso` is present; the two are mutually exclusive.
+   */
+  startHost?: string;
   /** SSO params — auto-injected by useAppLauncher hook when driver is logged in */
   sso?: {
     hash: string;
@@ -101,7 +108,7 @@ export async function canLaunchApp(scheme?: string): Promise<boolean> {
  * Launch a WellBuilt ecosystem app via deep link with Android intent fallback.
  */
 export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
-  const { name, scheme, androidPackage, webUrl, sso } = options;
+  const { name, scheme, androidPackage, webUrl, sso, startHost } = options;
   const t = i18n.t.bind(i18n);
 
   // Web apps open in the browser
@@ -123,7 +130,8 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
 
   // Build deep link URL with optional SSO params so the target app
   // can skip its own login screen when launched from WB Suite.
-  let url = `${scheme}://`;
+  // A start route carries no parameters by design — nothing to encode.
+  let url = startHost ? `${scheme}://${startHost}` : `${scheme}://`;
   if (sso) {
     const paramObj: Record<string, string> = { hash: sso.hash, name: sso.name };
     if (sso.companyId) paramObj.companyId = sso.companyId;

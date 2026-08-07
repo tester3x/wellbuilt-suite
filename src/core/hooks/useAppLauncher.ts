@@ -12,6 +12,10 @@ import {
   isTicketsLaunch,
   makeDvirSsoGetter,
 } from '../services/dvirGate';
+import {
+  isCredentialFreeLaunchTarget,
+  WBT_SSO_START_HOST,
+} from '../services/ssoLaunchPolicy';
 
 export function useAppLauncher() {
   const { user, activePackageId, shiftStartTime, shiftActive } = useAuth();
@@ -40,6 +44,15 @@ export function useAppLauncher() {
         if (!gate.allowed) return;
       }
       // Off-shift: no DVIR redirect — fall through to normal Tickets launch.
+    }
+
+    // vc51.9J: WB-T is launched credential-free. It uses the
+    // authorization-code bridge and mints its own PKCE attempt, so the
+    // passcode hash must not appear in its URL. WB-M, WB-JSA and
+    // eQuipment still receive the legacy params — migrating them needs a
+    // bridge each and is out of scope here. See ssoLaunchPolicy.ts.
+    if (isCredentialFreeLaunchTarget(options.scheme)) {
+      return launchWBApp({ ...options, sso: undefined, startHost: WBT_SSO_START_HOST });
     }
 
     let sso = user
