@@ -64,7 +64,11 @@ const CREDENTIAL_TERMS = /\b(passcodeHash|passcode|hash|driverHash|customToken|i
 /** Returns the 1-based line numbers whose console call leaks credential bytes. */
 function scan(src) {
   const hits = [];
-  src.split('\n').forEach((line, i) => {
+  // Split on CRLF too. `.` does not match \r — it is a line terminator — so
+  // on a CRLF working tree `(.*)$` never matched ANY real line and the
+  // scanner reported SAFE while live leaks sat in the file. The synthetic
+  // self-check below is LF, which is exactly why it passed regardless.
+  src.split(/\r?\n/).forEach((line, i) => {
     const m = /console\.(log|warn|error|info|debug)\((.*)$/.exec(line);
     if (!m) return;
     const args = m[2];
