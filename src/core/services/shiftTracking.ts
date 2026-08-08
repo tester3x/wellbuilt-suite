@@ -187,18 +187,40 @@ async function autoCloseStaleShift(
   companyId?: string,
 ): Promise<void> {
   try {
-    const [{ canonicalEnforcementActive, enforcementAllowsSyntheticClose }, { fetchCompanyConfig }] =
-      await Promise.all([
-        import('./workPeriodAuthority/suiteShiftAuthority'),
-        import('./companyConfig'),
-      ]);
-    const { enforcement } = await canonicalEnforcementActive(companyId, (id) => fetchCompanyConfig(id));
-    if (!enforcementAllowsSyntheticClose(enforcement)) {
-      console.log('[shiftTracking] canonical enforcement active — skipping calendar-boundary synthetic close');
+    const [
+      {
+        resolveSyntheticCloseDecision,
+        createAsyncStorageEnforcementSafetyStore,
+      },
+      { fetchCompanyConfig },
+      AsyncStorage,
+    ] = await Promise.all([
+      import('./workPeriodAuthority/suiteShiftAuthority'),
+      import('./companyConfig'),
+      import('@react-native-async-storage/async-storage').then((m) => m.default),
+    ]);
+    // Shift-destructive gate: consult durable last-known-good when the
+    // live company document is unreadable. A prior confirmed enforced
+    // (or invalid) contract must never fail-open to legacy midnight close.
+    const decision = await resolveSyntheticCloseDecision(
+      companyId,
+      (id) => fetchCompanyConfig(id),
+      createAsyncStorageEnforcementSafetyStore(AsyncStorage),
+    );
+    if (!decision.allow) {
+      console.log(
+        `[shiftTracking] synthetic close blocked (${decision.source}` +
+          `${decision.unreadable ? ', unreadable' : ''}) — skipping calendar-boundary close`,
+      );
       return;
     }
-  } catch {
-    // Enforcement unknown → legacy behavior (established sweep).
+  } catch (err) {
+    // Fail CLOSED for the destructive write when the safety gate itself
+    // cannot run. Prefer an open overnight shift over a fabricated logout
+    // under an unreadable enforcement path. Legacy companies that never
+    // hit this catch continue to sweep on the next successful gate run.
+    console.warn('[shiftTracking] synthetic-close safety gate failed — skipping sweep:', err);
+    return;
   }
   for (let daysBack = 1; daysBack <= 3; daysBack++) {
     const checkDate = dateString(new Date(), -daysBack);

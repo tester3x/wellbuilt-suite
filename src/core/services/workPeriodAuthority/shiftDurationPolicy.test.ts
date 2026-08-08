@@ -135,15 +135,18 @@ const tracking = () => readFileSync(join(root, 'src/core/services/shiftTracking.
 test('autoCloseStaleShift is enforcement-gated (no calendar closure under enforcement)', () => {
   const src = tracking();
   const fn = src.slice(src.indexOf('async function autoCloseStaleShift'), src.indexOf('* Read the most recent shift-event type'));
-  assert.ok(/canonicalEnforcementActive|enforcementAllowsSyntheticClose/.test(fn),
+  assert.ok(/resolveSyntheticCloseDecision|enforcementAllowsSyntheticClose|canonicalEnforcementActive/.test(fn),
     'autoCloseStaleShift still synthesizes a calendar-boundary logout under enforcement');
+  assert.ok(fn.includes('resolveSyntheticCloseDecision'),
+    'autoCloseStaleShift must use the LKG-aware synthetic-close decision (not bare legacy fail-open)');
   assert.ok(fn.includes('23:59:59'), 'legacy synthetic close should remain for unenforced companies');
 });
 
 test('legacy/unenforced stale-shift behavior preserved', () => {
   const src = tracking();
-  assert.ok(/legacy/i.test(src.slice(src.indexOf('async function autoCloseStaleShift'), src.indexOf('async function autoCloseStaleShift') + 1800)),
-    'the legacy path must be explicitly retained and documented');
+  const region = src.slice(src.indexOf('async function autoCloseStaleShift'), src.indexOf('async function autoCloseStaleShift') + 2200);
+  assert.ok(/legacy/i.test(region) || /decision\.allow/.test(region),
+    'the legacy path must be explicitly retained via the synthetic-close decision gate');
 });
 
 test('no time-threshold constant governs enforced shift closure', () => {

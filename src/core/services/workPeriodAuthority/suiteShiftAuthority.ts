@@ -155,16 +155,212 @@ export function mayUseDateFallback(enforcement: SuiteEnforcement): boolean {
  * never end it, and crossing midnight never creates a replacement. For
  * legacy/unenforced companies the established DOT-hygiene behavior is
  * preserved unchanged (no canonical authority exists there to consult).
+ *
+ * Confirmed `invalid` is NOT authorized for synthetic close: a malformed
+ * live contract is a diagnostic/fail-closed signal, not a free pass to
+ * invent a calendar logout.
  */
 export function enforcementAllowsSyntheticClose(enforcement: SuiteEnforcement): boolean {
   return enforcement.state === 'legacy' || enforcement.state === 'inert';
 }
 
+// ── Shift-destructive enforcement observation (offline midnight safety) ──
+//
+// Product rule: once WB-S has positively observed a valid *enforced*
+// contract for a company, a transient Firestore/network failure must
+// never downgrade that company to `legacy` in a way that authorizes a
+// synthetic calendar-day logout.
+//
+// States distinguished for the synthetic-close decision:
+//   confirmed_legacy      — live read: no contract (never-configured)
+//   confirmed_inert       — live read: contract present, unenforced
+//   confirmed_active      — live read: valid enforced contract
+//   confirmed_invalid     — live read: malformed/unsupported contract
+//   temporarily_unreadable — load threw / unreadable; may have LKG
+//   last_known_good       — durable prior observation used for safety
+//
+// The 1-hour companyConfig AsyncStorage TTL is a fetch optimization only.
+// The safety decision lives in a separate durable, company-scoped store
+// that is NOT cleared by cache TTL expiry or clearCompanyConfigCache.
+
+/** How the synthetic-close gate arrived at its decision (diagnostics). */
+export type SyntheticCloseObservationSource =
+  | 'confirmed_legacy'
+  | 'confirmed_inert'
+  | 'confirmed_active'
+  | 'confirmed_invalid'
+  | 'last_known_good'
+  | 'temporarily_unreadable_default_legacy'
+  | 'missing_company';
+
+export type SyntheticCloseDecision = {
+  allow: boolean;
+  enforcement: SuiteEnforcement;
+  source: SyntheticCloseObservationSource;
+  /** True when the live company document could not be read. */
+  unreadable: boolean;
+};
+
+/** Durable last-known-good payload (company-scoped, no TTL). */
+export type LastKnownEnforcement = {
+  enforcement: SuiteEnforcement;
+  observedAtMs: number;
+};
+
+/** Injectable store so unit tests stay free of AsyncStorage / RN. */
+export type EnforcementSafetyStore = {
+  load: (companyId: string) => Promise<LastKnownEnforcement | null>;
+  save: (companyId: string, value: LastKnownEnforcement) => Promise<void>;
+};
+
+const ENFORCEMENT_SAFETY_KEY_PREFIX = 'wellbuilt-enforcement-safety-lkg-';
+
+/**
+ * Default durable store: AsyncStorage, no TTL. Survives restart and the
+ * 1h company-config cache expiry. Intentionally NOT wiped by
+ * clearCompanyConfigCache — that is a fetch-cache invalidator, not a
+ * safety-state reset. Survives logout (company-level, not session-level).
+ */
+export function createAsyncStorageEnforcementSafetyStore(
+  storage: {
+    getItem: (key: string) => Promise<string | null>;
+    setItem: (key: string, value: string) => Promise<void>;
+  },
+): EnforcementSafetyStore {
+  return {
+    async load(companyId) {
+      try {
+        const raw = await storage.getItem(`${ENFORCEMENT_SAFETY_KEY_PREFIX}${companyId}`);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as LastKnownEnforcement;
+        if (!parsed || typeof parsed !== 'object' || !parsed.enforcement) return null;
+        if (typeof parsed.observedAtMs !== 'number') return null;
+        return parsed;
+      } catch {
+        return null;
+      }
+    },
+    async save(companyId, value) {
+      try {
+        await storage.setItem(
+          `${ENFORCEMENT_SAFETY_KEY_PREFIX}${companyId}`,
+          JSON.stringify(value),
+        );
+      } catch {
+        // Persistence failure must not open a destructive path by itself;
+        // the in-memory decision for this call already used the live read.
+      }
+    },
+  };
+}
+
+/** In-memory store for deterministic unit tests. */
+export function createMemoryEnforcementSafetyStore(
+  seed?: Map<string, LastKnownEnforcement>,
+): EnforcementSafetyStore {
+  const map = seed ?? new Map<string, LastKnownEnforcement>();
+  return {
+    async load(companyId) {
+      return map.get(companyId) ?? null;
+    },
+    async save(companyId, value) {
+      map.set(companyId, value);
+    },
+  };
+}
+
+function observationSourceFor(enforcement: SuiteEnforcement): SyntheticCloseObservationSource {
+  switch (enforcement.state) {
+    case 'legacy': return 'confirmed_legacy';
+    case 'inert': return 'confirmed_inert';
+    case 'active': return 'confirmed_active';
+    case 'invalid': return 'confirmed_invalid';
+  }
+}
+
+/**
+ * Shift-destructive synthetic-close gate.
+ *
+ * - Confirmed live reads update durable last-known-good and decide from
+ *   the live SuiteEnforcement (legacy/inert allow; active/invalid block).
+ * - Unreadable / thrown loads consult last-known-good: if a prior
+ *   observation blocks synthetic close, it continues to block.
+ * - Never-observed companies stay legacy (allow) — we never promote a
+ *   never-configured company to enforced solely because the network failed.
+ * - Cache TTL is irrelevant: LKG is separate and durable.
+ */
+export async function resolveSyntheticCloseDecision(
+  companyId: string | null | undefined,
+  loadCompanyDoc: (id: string) => Promise<unknown>,
+  store: EnforcementSafetyStore,
+  nowMs: number = Date.now(),
+): Promise<SyntheticCloseDecision> {
+  if (!companyId) {
+    return {
+      allow: true,
+      enforcement: { state: 'legacy' },
+      source: 'missing_company',
+      unreadable: false,
+    };
+  }
+
+  let raw: unknown;
+  let liveReadable = false;
+  try {
+    raw = await loadCompanyDoc(companyId);
+    liveReadable = true;
+  } catch {
+    liveReadable = false;
+  }
+
+  if (liveReadable) {
+    // A successful load — including explicit null/absent doc — is a
+    // confirmed observation. Null/undefined parses as legacy (never-
+    // configured). Malformed contracts parse as invalid (not silent-valid).
+    const enforcement = parseSuiteEnforcement(raw ?? undefined);
+    try {
+      await store.save(companyId, { enforcement, observedAtMs: nowMs });
+    } catch {
+      // already best-effort inside store.save
+    }
+    return {
+      allow: enforcementAllowsSyntheticClose(enforcement),
+      enforcement,
+      source: observationSourceFor(enforcement),
+      unreadable: false,
+    };
+  }
+
+  // Temporarily unreadable: never invent "active", never invent a logout
+  // when LKG says the company was enforced/invalid.
+  const lkg = await store.load(companyId).catch(() => null);
+  if (lkg?.enforcement) {
+    return {
+      allow: enforcementAllowsSyntheticClose(lkg.enforcement),
+      enforcement: lkg.enforcement,
+      source: 'last_known_good',
+      unreadable: true,
+    };
+  }
+
+  // No prior positive observation → genuine legacy / never-configured.
+  return {
+    allow: true,
+    enforcement: { state: 'legacy' },
+    source: 'temporarily_unreadable_default_legacy',
+    unreadable: true,
+  };
+}
+
 /**
  * Resolve the company's enforcement boundary for the app-side gates.
  * `loadCompanyDoc` is injected so this stays node-testable and so the
- * caller owns caching. An UNREADABLE company config is never an
- * activation signal — it resolves legacy (established behavior).
+ * caller owns caching.
+ *
+ * NOTE: For shift-DESTRUCTIVE decisions (calendar synthetic logout), use
+ * `resolveSyntheticCloseDecision` instead — this helper still maps a
+ * thrown/unreadable load to legacy for non-destructive activation checks
+ * and must not be the sole gate for autoCloseStaleShift.
  */
 export async function canonicalEnforcementActive(
   companyId: string | null | undefined,
