@@ -16,6 +16,7 @@
  * reads local identity from storage.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getDriverSession } from './driverAuth';
 import { getFirebaseApp } from './firebaseApp';
 import {
   getOwnedVerifiedIdentity,
@@ -70,13 +71,39 @@ export function invalidateReconciliation(): void {
   core.invalidate();
 }
 
-/** Read the restored local identity. Local storage only — never network. */
+/**
+ * Read the restored local identity. Local storage only — never network.
+ *
+ * Sourced from the authenticated session, because that is the only place
+ * the identity actually exists. This previously read AsyncStorage keys
+ * `driverId` and `selectedCompanyId`, but login persists to SecureStore
+ * (`driverId`, `companyId`) — two different stores — and nothing in WB-S
+ * has ever written `selectedCompanyId` at all: it had three readers and
+ * zero writers.
+ *
+ * So the read returned {null, null} for every driver in every session.
+ * Reconciliation treated a signed-in driver as having no durable identity,
+ * and SSO issuance refused at its local-identity precondition with
+ * `not_authorized` — the WB-S -> WB-T bridge was unreachable by
+ * construction, not by state. Observed live 2026-08-08 when WB-T vc56
+ * correctly requested authorization and WB-S declined.
+ *
+ * getDriverSession() returns null unless driverId, displayName and
+ * passcodeHash are all present, so a partially-written session still
+ * yields no identity. Nothing is defaulted or invented: an absent
+ * companyId stays absent, and ssoRuntime still refuses to issue without
+ * both identifiers.
+ */
 export async function readLocalIdentity(): Promise<LocalIdentity> {
-  const [driverId, companyId] = await Promise.all([
-    AsyncStorage.getItem('driverId').catch(() => null),
-    AsyncStorage.getItem('selectedCompanyId').catch(() => null),
-  ]);
-  return { driverId, companyId };
+  try {
+    const session = await getDriverSession();
+    return {
+      driverId: session?.driverId ?? null,
+      companyId: session?.companyId ?? null,
+    };
+  } catch {
+    return { driverId: null, companyId: null };
+  }
 }
 
 /**

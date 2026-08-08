@@ -217,8 +217,15 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
     /async function signOutQuietly\(gen: number\)[\s\S]{0,140}if \(gen !== generation\) return;/.test(recCore));
   check('taking ownership bumps the generation',
     /invalidate\(\) \{[\s\S]{0,80}generation \+= 1;/.test(recCore));
+  // vc51.9P: identity now comes from the authenticated session accessor.
+  // It previously read AsyncStorage 'driverId'/'selectedCompanyId' — two
+  // keys login never writes there — so this returned {null,null} always
+  // and SSO issuance could never satisfy its local-identity precondition.
+  // The invariant being pinned is unchanged: local storage, never network.
   check('local identity is read from storage only, never the network',
-    /AsyncStorage\.getItem\('driverId'\)/.test(rec) && !/\bfetch\s*\(/.test(rec));
+    /getDriverSession\s*\(/.test(rec) && !/\bfetch\s*\(/.test(rec));
+  check('local identity is not read from a store login never writes',
+    !/AsyncStorage\.getItem\(\s*['"](driverId|selectedCompanyId)['"]\s*\)/.test(rec));
   check('the reconciliation core stays free of SDK/storage imports',
     !/from '(firebase|react-native|expo|@react-native)/.test(recCore)
     && !/AsyncStorage|SecureStore/.test(recCore));
