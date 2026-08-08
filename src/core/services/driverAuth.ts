@@ -220,7 +220,12 @@ export const verifyLogin = async (
 
   try {
     const hash = await hashPasscode(passcode, displayName);
-    console.log("[DriverAuth-Suite] Hash:", hash.slice(0, 8) + "...");
+    // The passcode hash is the legacy BEARER credential. Even a truncated
+    // prefix is an offline oracle: the display name is logged alongside it,
+    // the hash function ships in the bundle, and passcodes are short — so
+    // anyone with logcat access can confirm a guessed passcode without ever
+    // touching the network. Path/status only, never credential bytes.
+    console.log("[DriverAuth-Suite] Legacy hash lookup");
 
     // Look up by name+passcode hash
     const driverData = await firebaseGet(`${DRIVERS_APPROVED}/${hash}`);
@@ -420,7 +425,7 @@ export const revalidateDriverSession = async (): Promise<boolean> => {
       return false;
     }
 
-    console.log("[DriverAuth-Suite] Revalidating session for hash:", hash.slice(0, 8) + "...");
+    console.log("[DriverAuth-Suite] Revalidating session");
     const driverData = await firebaseGet(`${DRIVERS_APPROVED}/${hash}`);
 
     if (!driverData) {
