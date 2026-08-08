@@ -132,30 +132,78 @@ function parseStrArray(field: any): string[] {
 // ── Public API ────────────────────────────────────────────────
 
 /**
- * Fetch full company config from Firestore.
- * Returns null if companyId is empty or doc doesn't exist.
+ * Explicit company-config load outcome.
+ *
+ * CRITICAL for shift-destructive gates: a failed network read with no
+ * cache must NOT be collapsed into the same signal as a successful read
+ * that proves the contract field is absent. Callers that only need
+ * "config or null" should keep using `fetchCompanyConfig` (presentation
+ * / non-destructive). Synthetic-close and other fail-closed consumers
+ * must use `loadCompanyConfigResult`.
  */
-export async function fetchCompanyConfig(companyId: string): Promise<CompanyConfig | null> {
-  if (!companyId) return null;
+export type CompanyConfigLoadResult =
+  /** Fresh network document successfully decoded. */
+  | { kind: 'live'; config: CompanyConfig }
+  /**
+   * Returned from AsyncStorage.
+   * - fresh: within CACHE_TTL_MS (normal fast path)
+   * - stale: failure-fallback path — getCachedConfig does NOT enforce TTL
+   */
+  | { kind: 'cache'; config: CompanyConfig; freshness: 'fresh' | 'stale' }
+  /**
+   * No usable document. Reasons:
+   * - empty_company_id: caller passed falsy id
+   * - network_or_http: fetch threw or !res.ok and no cache
+   * - empty_cache: cache key present but unreadable
+   */
+  | { kind: 'unavailable'; reason: 'empty_company_id' | 'network_or_http' | 'empty_cache' };
+
+export type LoadCompanyConfigOptions = {
+  /**
+   * Bypass the 1h TTL fast-path and force a network read.
+   * On network failure still returns stale cache when present.
+   * Safe cutover aid: refreshes company config without clearing auth,
+   * shift, JSA, DVIR, or other session state.
+   */
+  forceRefresh?: boolean;
+};
+
+/**
+ * Load company config with an explicit outcome (live / cache / unavailable).
+ * This is the only API that distinguishes "successfully read, no contract"
+ * from "could not read, no cache".
+ */
+export async function loadCompanyConfigResult(
+  companyId: string,
+  options?: LoadCompanyConfigOptions,
+): Promise<CompanyConfigLoadResult> {
+  if (!companyId) return { kind: 'unavailable', reason: 'empty_company_id' };
 
   const cacheKey = `${CACHE_KEY_PREFIX}${companyId}`;
+  const forceRefresh = options?.forceRefresh === true;
 
-  // Check cache
-  try {
-    const cached = await AsyncStorage.getItem(cacheKey);
-    if (cached) {
-      const parsed: CachedConfig = JSON.parse(cached);
-      if (Date.now() - parsed.fetchedAt < CACHE_TTL_MS) {
-        return parsed.config;
+  // TTL fast path (skipped on forceRefresh so cutover can prove a fresh contract)
+  if (!forceRefresh) {
+    try {
+      const cached = await AsyncStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed: CachedConfig = JSON.parse(cached);
+        if (Date.now() - parsed.fetchedAt < CACHE_TTL_MS) {
+          return { kind: 'cache', config: parsed.config, freshness: 'fresh' };
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   // Fetch from Firestore REST
   try {
     const url = `${FIRESTORE_BASE}/companies/${companyId}`;
     const res = await fetchTimeout(url);
-    if (!res.ok) return getCachedConfig(cacheKey);
+    if (!res.ok) {
+      const fallback = await getCachedConfig(cacheKey);
+      if (fallback) return { kind: 'cache', config: fallback, freshness: 'stale' };
+      return { kind: 'unavailable', reason: 'network_or_http' };
+    }
 
     const doc = await res.json();
     const f = doc.fields || {};
@@ -190,13 +238,39 @@ export async function fetchCompanyConfig(companyId: string): Promise<CompanyConf
     };
 
     await AsyncStorage.setItem(cacheKey, JSON.stringify({ config, fetchedAt: Date.now() } as CachedConfig));
-    return config;
+    return { kind: 'live', config };
   } catch (err) {
     console.warn('[companyConfig] Failed to fetch:', err);
-    return getCachedConfig(cacheKey);
+    const fallback = await getCachedConfig(cacheKey);
+    if (fallback) return { kind: 'cache', config: fallback, freshness: 'stale' };
+    return { kind: 'unavailable', reason: 'network_or_http' };
   }
 }
 
+/**
+ * Fetch full company config from Firestore.
+ * Convenience wrapper: returns config or null. Does NOT distinguish
+ * "confirmed absent contract" from "unreadable" — prefer
+ * `loadCompanyConfigResult` for shift-destructive decisions.
+ *
+ * `forceRefresh: true` bypasses the 1h TTL and re-fetches from network
+ * (cutover: prove configurationVersion: 3 without wiping auth/shift state).
+ */
+export async function fetchCompanyConfig(
+  companyId: string,
+  options?: LoadCompanyConfigOptions,
+): Promise<CompanyConfig | null> {
+  const result = await loadCompanyConfigResult(companyId, options);
+  if (result.kind === 'live' || result.kind === 'cache') return result.config;
+  return null;
+}
+
+/**
+ * Failure-fallback cache reader. Intentionally does NOT enforce TTL —
+ * any previously stored config is returned so offline clients retain
+ * last-known presentation data. TTL is only on the success fast path
+ * inside loadCompanyConfigResult.
+ */
 async function getCachedConfig(cacheKey: string): Promise<CompanyConfig | null> {
   try {
     const cached = await AsyncStorage.getItem(cacheKey);

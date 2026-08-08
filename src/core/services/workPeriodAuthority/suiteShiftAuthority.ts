@@ -138,9 +138,19 @@ export async function verifyCachedShiftAgainstAuthority(deps: {
 }
 
 /**
- * May a date-derived fallback shift id be used for scoping?
+ * May a date-derived fallback shift id be used for scoping / display
+ * lookup (day-summary, jsaShiftAck)?
+ *
  * ONLY outside active enforcement — an enforced company never fabricates
  * a period from the calendar.
+ *
+ * POLICY NOTE: this predicate is intentionally independent of
+ * `enforcementAllowsSyntheticClose`. They happen to share the same
+ * confirmed-state condition today (legacy || inert), but they authorize
+ * different actions:
+ *   - date fallback: non-destructive identifier derivation / display
+ *   - synthetic close: destructive fabricated logout write
+ * Do not merge them, and do not change one by editing the other.
  */
 export function mayUseDateFallback(enforcement: SuiteEnforcement): boolean {
   return enforcement.state === 'legacy' || enforcement.state === 'inert';
@@ -148,17 +158,23 @@ export function mayUseDateFallback(enforcement: SuiteEnforcement): boolean {
 
 /**
  * vc51.9C clarification 1 — may a CALENDAR-BOUNDARY synthetic logout be
- * written? Only outside active enforcement.
+ * written for a *confirmed* SuiteEnforcement observation?
  *
  * An enforced explicit period is owned by the genuine sign-in/Start
  * Shift → logout lifecycle: elapsed hours, midnight, and day boundaries
  * never end it, and crossing midnight never creates a replacement. For
- * legacy/unenforced companies the established DOT-hygiene behavior is
- * preserved unchanged (no canonical authority exists there to consult).
+ * confirmed legacy/unenforced companies the established DOT-hygiene
+ * behavior is preserved.
  *
  * Confirmed `invalid` is NOT authorized for synthetic close: a malformed
  * live contract is a diagnostic/fail-closed signal, not a free pass to
  * invent a calendar logout.
+ *
+ * POLICY NOTE: independent of `mayUseDateFallback` (see that function).
+ * This predicate alone is NOT sufficient for the sweep — callers must
+ * use `resolveSyntheticCloseDecision`, which also rejects unreadable /
+ * missing-company / unknown paths that never produced a confirmed
+ * observation.
  */
 export function enforcementAllowsSyntheticClose(enforcement: SuiteEnforcement): boolean {
   return enforcement.state === 'legacy' || enforcement.state === 'inert';
@@ -171,17 +187,38 @@ export function enforcementAllowsSyntheticClose(enforcement: SuiteEnforcement): 
 // never downgrade that company to `legacy` in a way that authorizes a
 // synthetic calendar-day logout.
 //
-// States distinguished for the synthetic-close decision:
-//   confirmed_legacy      — live read: no contract (never-configured)
-//   confirmed_inert       — live read: contract present, unenforced
-//   confirmed_active      — live read: valid enforced contract
-//   confirmed_invalid     — live read: malformed/unsupported contract
-//   temporarily_unreadable — load threw / unreadable; may have LKG
-//   last_known_good       — durable prior observation used for safety
+// FOUR independent routes that previously could authorize the same
+// synthetic close — all must be closed for destructive writes:
+//   1. fetchCompanyConfig → null (failed read, no cache) collapsed to legacy
+//   2. missing/falsy companyId → legacy without a read
+//   3. outer catch around the gate fell through into the sweep
+//   4. successful "contract absent" and failed "no document" shared null
 //
+// States distinguished for the synthetic-close decision:
+//   confirmed_legacy      — readable doc with contract ABSENT (positive legacy)
+//   confirmed_inert       — readable: contract present, unenforced
+//   confirmed_active      — readable: valid enforced contract
+//   confirmed_invalid     — readable: malformed/unsupported contract
+//   last_known_good       — unreadable, durable prior observation applied
+//   temporarily_unreadable_unknown — unreadable, no LKG (NOT confirmed legacy)
+//   missing_company       — no companyId (NOT a confirmed company state)
+//
+// CRITICAL: confirmed-legacy (allow) ≠ unreadable-unknown (block).
 // The 1-hour companyConfig AsyncStorage TTL is a fetch optimization only.
-// The safety decision lives in a separate durable, company-scoped store
-// that is NOT cleared by cache TTL expiry or clearCompanyConfigCache.
+// Safety LKG is a separate durable, company-scoped store that is NOT
+// cleared by cache TTL expiry or clearCompanyConfigCache.
+
+/**
+ * Explicit company-document load outcome for shift-destructive gates.
+ * Callers MUST NOT pass bare `null` from fetchCompanyConfig — that API
+ * collapses failed reads and empty results. Use loadCompanyConfigResult
+ * (or an equivalent) and map:
+ *   live|cache → { status: 'readable', doc: config }
+ *   unavailable → { status: 'unreadable' }
+ */
+export type CompanyDocLoadOutcome =
+  | { status: 'readable'; doc: unknown }
+  | { status: 'unreadable' };
 
 /** How the synthetic-close gate arrived at its decision (diagnostics). */
 export type SyntheticCloseObservationSource =
@@ -190,14 +227,14 @@ export type SyntheticCloseObservationSource =
   | 'confirmed_active'
   | 'confirmed_invalid'
   | 'last_known_good'
-  | 'temporarily_unreadable_default_legacy'
+  | 'temporarily_unreadable_unknown'
   | 'missing_company';
 
 export type SyntheticCloseDecision = {
   allow: boolean;
   enforcement: SuiteEnforcement;
   source: SyntheticCloseObservationSource;
-  /** True when the live company document could not be read. */
+  /** True when the company document could not be read (not a confirmed observation). */
   unreadable: boolean;
 };
 
@@ -281,43 +318,47 @@ function observationSourceFor(enforcement: SuiteEnforcement): SyntheticCloseObse
 /**
  * Shift-destructive synthetic-close gate.
  *
- * - Confirmed live reads update durable last-known-good and decide from
- *   the live SuiteEnforcement (legacy/inert allow; active/invalid block).
- * - Unreadable / thrown loads consult last-known-good: if a prior
- *   observation blocks synthetic close, it continues to block.
- * - Never-observed companies stay legacy (allow) — we never promote a
- *   never-configured company to enforced solely because the network failed.
- * - Cache TTL is irrelevant: LKG is separate and durable.
+ * - Readable outcomes update durable last-known-good and decide from the
+ *   confirmed SuiteEnforcement (legacy/inert allow; active/invalid block).
+ * - Unreadable outcomes consult last-known-good: prior active/invalid
+ *   continues to block; prior legacy/inert continues to allow.
+ * - Unreadable with NO last-known-good is UNKNOWN — blocks synthetic close.
+ *   It is NOT confirmed legacy. Never-configured companies that are
+ *   reachable online still authorize via confirmed_legacy after a real read.
+ * - Missing companyId blocks (no company context is not legacy permission).
+ * - Loader throw is treated as unreadable (never fall through to allow).
+ * - Cache TTL is irrelevant to the durable LKG safety store.
  */
 export async function resolveSyntheticCloseDecision(
   companyId: string | null | undefined,
-  loadCompanyDoc: (id: string) => Promise<unknown>,
+  loadCompanyDoc: (id: string) => Promise<CompanyDocLoadOutcome>,
   store: EnforcementSafetyStore,
   nowMs: number = Date.now(),
 ): Promise<SyntheticCloseDecision> {
   if (!companyId) {
+    // Route 2: missing companyId must NOT authorize a destructive close.
     return {
-      allow: true,
+      allow: false,
       enforcement: { state: 'legacy' },
       source: 'missing_company',
-      unreadable: false,
+      unreadable: true,
     };
   }
 
-  let raw: unknown;
-  let liveReadable = false;
+  let outcome: CompanyDocLoadOutcome;
   try {
-    raw = await loadCompanyDoc(companyId);
-    liveReadable = true;
+    outcome = await loadCompanyDoc(companyId);
   } catch {
-    liveReadable = false;
+    // Route 3 (partial): loader/runtime failure → unreadable, never allow
+    // solely because the check threw.
+    outcome = { status: 'unreadable' };
   }
 
-  if (liveReadable) {
-    // A successful load — including explicit null/absent doc — is a
-    // confirmed observation. Null/undefined parses as legacy (never-
-    // configured). Malformed contracts parse as invalid (not silent-valid).
-    const enforcement = parseSuiteEnforcement(raw ?? undefined);
+  if (outcome.status === 'readable') {
+    // Confirmed observation only. A readable config object with no
+    // wellbuiltContract → confirmed legacy. Do NOT pass bare fetch null
+    // here — that is unreadable, not confirmed absent.
+    const enforcement = parseSuiteEnforcement(outcome.doc ?? undefined);
     try {
       await store.save(companyId, { enforcement, observedAtMs: nowMs });
     } catch {
@@ -331,8 +372,8 @@ export async function resolveSyntheticCloseDecision(
     };
   }
 
-  // Temporarily unreadable: never invent "active", never invent a logout
-  // when LKG says the company was enforced/invalid.
+  // Unreadable: consult durable LKG. Never invent confirmed-legacy allow
+  // from a failed read with no prior observation (routes 1 and 4).
   const lkg = await store.load(companyId).catch(() => null);
   if (lkg?.enforcement) {
     return {
@@ -343,11 +384,10 @@ export async function resolveSyntheticCloseDecision(
     };
   }
 
-  // No prior positive observation → genuine legacy / never-configured.
   return {
-    allow: true,
+    allow: false,
     enforcement: { state: 'legacy' },
-    source: 'temporarily_unreadable_default_legacy',
+    source: 'temporarily_unreadable_unknown',
     unreadable: true,
   };
 }

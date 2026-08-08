@@ -29,9 +29,14 @@ interface UseCompanyConfigReturn {
   isWBAppEnabled: (appId: string) => boolean;
   /** Human-readable tier label (e.g. "Suite", "Full Field") */
   tierLabel: string;
-  /** Refresh the config (e.g. after tier change) */
-  refresh: () => Promise<void>;
-  /** Clear cache (call on logout) */
+  /**
+   * Refresh the config. Pass forceRefresh=true to bypass the 1h TTL and
+   * re-read from network (cutover: prove a new configurationVersion without
+   * clearing auth/shift/JSA/DVIR state). Does not wipe the durable
+   * enforcement safety LKG.
+   */
+  refresh: (forceRefresh?: boolean) => Promise<void>;
+  /** Clear company-config fetch cache only (not auth / shift / LKG safety). */
   clearCache: () => Promise<void>;
 }
 
@@ -39,7 +44,7 @@ export function useCompanyConfig(companyId?: string): UseCompanyConfigReturn {
   const [config, setConfig] = useState<CompanyConfig | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const loadConfig = useCallback(async () => {
+  const loadConfig = useCallback(async (forceRefresh = false) => {
     if (!companyId) {
       // No company = WB admin or no company assigned → all apps enabled
       setConfig(null);
@@ -49,7 +54,9 @@ export function useCompanyConfig(companyId?: string): UseCompanyConfigReturn {
 
     setLoading(true);
     try {
-      const result = await fetchCompanyConfig(companyId);
+      // forceRefresh bypasses the 1h TTL only — does not clear auth, shift,
+      // JSA, DVIR, or other session state (safe cutover re-read).
+      const result = await fetchCompanyConfig(companyId, { forceRefresh });
       setConfig(result);
     } catch (err) {
       console.warn('[useCompanyConfig] Failed to load:', err);
@@ -88,7 +95,7 @@ export function useCompanyConfig(companyId?: string): UseCompanyConfigReturn {
     loading,
     isWBAppEnabled,
     tierLabel,
-    refresh: loadConfig,
+    refresh: (forceRefresh = false) => loadConfig(forceRefresh),
     clearCache,
   };
 }

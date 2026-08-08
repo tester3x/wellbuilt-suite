@@ -1,9 +1,10 @@
 // Offline / midnight synthetic-close safety matrix.
 //
-// Product: once WB-S has positively observed a valid enforced explicit-shift
-// contract for a company, a transient company-doc read failure must never
-// authorize a calendar-boundary synthetic logout. Never-configured companies
-// stay legacy. Malformed contracts are invalid (diagnostic), not silent-valid.
+// Claude correction: fetchCompanyConfig does NOT throw — it returns null or
+// cache. Bare null collapses "failed read, no cache" into the same path as
+// confirmed-absent contract. Shift-destructive decisions must use an
+// explicit readable|unreadable outcome and must not share destructive
+// permission between those states.
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,14 +12,16 @@ import test from 'node:test';
 import {
   createMemoryEnforcementSafetyStore,
   enforcementAllowsSyntheticClose,
+  mayUseDateFallback,
   parseSuiteEnforcement,
   resolveSyntheticCloseDecision,
+  type CompanyDocLoadOutcome,
   type LastKnownEnforcement,
   type SuiteEnforcement,
 } from './suiteShiftAuthority';
 
 const COMPANY = 'liquid-gold';
-const NOW = Date.parse('2026-08-08T06:00:00.000Z'); // just after "midnight" sweep window
+const NOW = Date.parse('2026-08-08T06:00:00.000Z');
 
 const ACTIVE_DOC = {
   wellbuiltContract: {
@@ -44,207 +47,231 @@ const INVALID_DOC = {
   },
 };
 
+/** Successful network/cache read of a company doc with no contract field. */
 const LEGACY_DOC = { tier: 'god', name: 'Never Configured Co' };
 
-function loadOk(doc: unknown) {
-  return async (_id: string) => doc;
+function readable(doc: unknown): (id: string) => Promise<CompanyDocLoadOutcome> {
+  return async () => ({ status: 'readable', doc });
 }
-function loadThrow(err: Error = new Error('firestore offline')) {
-  return async (_id: string) => {
+function unreadable(): (id: string) => Promise<CompanyDocLoadOutcome> {
+  return async () => ({ status: 'unreadable' });
+}
+function loadThrows(err: Error = new Error('loader boom')): (id: string) => Promise<CompanyDocLoadOutcome> {
+  return async () => {
     throw err;
   };
 }
 
-// ── 1. Confirmed legacy retains synthetic-close authorization ─────────────
-test('1. confirmed legacy company retains legacy synthetic-close behavior', async () => {
+const root = join(__dirname, '..', '..', '..', '..');
+const src = (p: string) => readFileSync(join(root, p), 'utf8');
+
+// ── Required coverage matrix (Claude supplement) ──────────────────────────
+
+test('1. successful read with contract absent → confirmed_legacy, synthetic close allowed', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadOk(LEGACY_DOC), store, NOW);
+  const d = await resolveSyntheticCloseDecision(COMPANY, readable(LEGACY_DOC), store, NOW);
   assert.equal(d.allow, true);
   assert.equal(d.enforcement.state, 'legacy');
   assert.equal(d.source, 'confirmed_legacy');
   assert.equal(d.unreadable, false);
-  assert.equal(enforcementAllowsSyntheticClose(d.enforcement), true);
 });
 
-// ── 2. Valid enforced explicit-shift disables synthetic midnight close ────
-test('2. valid enforced explicit-shift contract disables synthetic midnight close', async () => {
+test('2. failed read with no cache → unreadable unknown, synthetic close BLOCKED (not confirmed legacy)', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), store, NOW);
-  assert.equal(d.allow, false);
-  assert.equal(d.enforcement.state, 'active');
-  assert.equal(d.source, 'confirmed_active');
-  if (d.enforcement.state === 'active') {
-    assert.equal(d.enforcement.mode, 'explicit_shift');
-  }
+  const d = await resolveSyntheticCloseDecision(COMPANY, unreadable(), store, NOW);
+  assert.equal(d.allow, false, 'unknown/unreadable must not share destructive permission with confirmed legacy');
+  assert.equal(d.source, 'temporarily_unreadable_unknown');
+  assert.equal(d.unreadable, true);
+  // Must not have been written as confirmed LKG legacy
+  const lkg = await store.load(COMPANY);
+  assert.equal(lkg, null);
 });
 
-// ── 3. Transient read failure after LKG enforced does not enable close ────
-test('3. transient read failure after last-known-good enforced does not enable synthetic close', async () => {
+test('3. failed read with last-known-good enforced → synthetic close BLOCKED', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  // Positive observation first
-  const live = await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), store, NOW);
-  assert.equal(live.allow, false);
-  // Transient failure
-  const offline = await resolveSyntheticCloseDecision(
-    COMPANY,
-    loadThrow(new Error('UNAVAILABLE')),
-    store,
-    NOW + 3_600_000,
-  );
-  assert.equal(offline.allow, false, 'LKG enforced must block synthetic close while unreadable');
-  assert.equal(offline.source, 'last_known_good');
-  assert.equal(offline.unreadable, true);
-  assert.equal(offline.enforcement.state, 'active');
-});
-
-// ── 4. Restart offline with durable LKG does not enable synthetic close ───
-test('4. restart offline with durable last-known-good enforced state does not enable synthetic close', async () => {
-  // Simulate process restart: new store instance seeded from durable payload
-  const durable = new Map<string, LastKnownEnforcement>();
-  const session1 = createMemoryEnforcementSafetyStore(durable);
-  await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), session1, NOW);
-
-  const session2 = createMemoryEnforcementSafetyStore(durable); // "restart"
-  const d = await resolveSyntheticCloseDecision(
-    COMPANY,
-    loadThrow(new Error('offline after restart')),
-    session2,
-    NOW + 86_400_000,
-  );
+  await resolveSyntheticCloseDecision(COMPANY, readable(ACTIVE_DOC), store, NOW);
+  const d = await resolveSyntheticCloseDecision(COMPANY, unreadable(), store, NOW + 1);
   assert.equal(d.allow, false);
   assert.equal(d.source, 'last_known_good');
   assert.equal(d.enforcement.state, 'active');
+  assert.equal(d.unreadable, true);
 });
 
-// ── 5. Cache expiry alone does not erase the safety decision ──────────────
-test('5. cache expiry alone does not erase the safety decision', async () => {
+test('4. missing companyId → synthetic close BLOCKED (not legacy permission)', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), store, NOW);
-  // One hour later (companyConfig TTL would have expired); LKG still present.
-  const afterTtl = await resolveSyntheticCloseDecision(
-    COMPANY,
-    loadThrow(new Error('network after ttl')),
-    store,
-    NOW + 60 * 60 * 1000 + 1,
+  for (const id of [null, undefined, ''] as const) {
+    const d = await resolveSyntheticCloseDecision(id as any, unreadable(), store, NOW);
+    assert.equal(d.allow, false, `companyId=${String(id)} must not authorize synthetic close`);
+    assert.equal(d.source, 'missing_company');
+    assert.equal(d.unreadable, true);
+  }
+});
+
+test('5. enforcement-check import failure must not fall through into destructive sweep (wiring)', () => {
+  const tracking = src('src/core/services/shiftTracking.ts');
+  const fn = tracking.slice(
+    tracking.indexOf('async function autoCloseStaleShift'),
+    tracking.indexOf('async function autoCloseStaleShift') + 3200,
   );
-  assert.equal(afterTtl.allow, false);
-  assert.equal(afterTtl.source, 'last_known_good');
-  // LKG has no TTL field that gates the decision — only observedAtMs for diagnostics.
-  const lkg = await store.load(COMPANY);
-  assert.ok(lkg);
-  assert.equal(typeof lkg!.observedAtMs, 'number');
-  assert.ok(afterTtl.unreadable);
+  // Catch must return — never fall into the daysBack sweep
+  assert.ok(/catch\s*\([^)]*\)\s*\{[\s\S]*?return;/.test(fn),
+    'autoCloseStaleShift catch must return (not fall through to sweep)');
+  assert.ok(!/Enforcement unknown → legacy behavior/.test(fn));
+  assert.ok(fn.includes('skipping sweep') || fn.includes('skipping calendar-boundary'));
 });
 
-// ── 6. Malformed contract → invalid, does not authorize destructive close ─
-test('6. malformed contract produces invalid/diagnostic state and does not authorize synthetic close', async () => {
+test('6. enforcement-check runtime failure (loader throw) blocks synthetic close', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadOk(INVALID_DOC), store, NOW);
+  // No LKG
+  const cold = await resolveSyntheticCloseDecision(COMPANY, loadThrows(), store, NOW);
+  assert.equal(cold.allow, false);
+  assert.equal(cold.source, 'temporarily_unreadable_unknown');
+  // With LKG active still blocks
+  await resolveSyntheticCloseDecision(COMPANY, readable(ACTIVE_DOC), store, NOW);
+  const warm = await resolveSyntheticCloseDecision(COMPANY, loadThrows(new Error('runtime')), store, NOW + 1);
+  assert.equal(warm.allow, false);
+  assert.equal(warm.source, 'last_known_good');
+});
+
+test('7. invalid/malformed contract fails closed (does not authorize synthetic close)', async () => {
+  const store = createMemoryEnforcementSafetyStore();
+  const d = await resolveSyntheticCloseDecision(COMPANY, readable(INVALID_DOC), store, NOW);
   assert.equal(d.allow, false);
   assert.equal(d.enforcement.state, 'invalid');
   assert.equal(d.source, 'confirmed_invalid');
   if (d.enforcement.state === 'invalid') {
     assert.match(d.enforcement.reason, /unsupported_contract_version/);
   }
-  // And LKG invalid continues to block while unreadable
-  const offline = await resolveSyntheticCloseDecision(COMPANY, loadThrow(), store, NOW + 1);
+  // LKG invalid continues to block while unreadable
+  const offline = await resolveSyntheticCloseDecision(COMPANY, unreadable(), store, NOW + 1);
   assert.equal(offline.allow, false);
   assert.equal(offline.enforcement.state, 'invalid');
 });
 
-// ── 7. Explicitly unenforced contract follows documented inert behavior ───
-test('7. explicitly unenforced contract follows inert behavior (synthetic close allowed)', async () => {
+test('8. explicitly inert contract allows synthetic close (documented unenforced)', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadOk(INERT_DOC), store, NOW);
+  const d = await resolveSyntheticCloseDecision(COMPANY, readable(INERT_DOC), store, NOW);
   assert.equal(d.allow, true);
   assert.equal(d.enforcement.state, 'inert');
   assert.equal(d.source, 'confirmed_inert');
-  // After inert LKG, unreadable still allows (genuine unenforced)
-  const offline = await resolveSyntheticCloseDecision(COMPANY, loadThrow(), store, NOW + 1);
+  const offline = await resolveSyntheticCloseDecision(COMPANY, unreadable(), store, NOW + 1);
   assert.equal(offline.allow, true);
   assert.equal(offline.source, 'last_known_good');
   assert.equal(offline.enforcement.state, 'inert');
 });
 
-// ── 8. Never-configured company is not promoted to enforced ───────────────
-test('8. never-configured company is not incorrectly promoted to enforced', async () => {
+test('9. confirmed legacy contract state allows synthetic close', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  // Offline with empty store — no positive observation ever
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadThrow(), store, NOW);
+  // Readable config object without wellbuiltContract — NOT bare null
+  const d = await resolveSyntheticCloseDecision(COMPANY, readable({ tier: 'suite' }), store, NOW);
   assert.equal(d.allow, true);
-  assert.equal(d.enforcement.state, 'legacy');
-  assert.equal(d.source, 'temporarily_unreadable_default_legacy');
-  assert.equal(d.unreadable, true);
-  // Live absent contract also stays legacy
-  const live = await resolveSyntheticCloseDecision(COMPANY, loadOk(undefined), store, NOW);
-  assert.equal(live.allow, true);
-  assert.equal(live.enforcement.state, 'legacy');
-  assert.equal(live.source, 'confirmed_legacy');
+  assert.equal(d.source, 'confirmed_legacy');
+  assert.equal(d.unreadable, false);
 });
 
-// ── 9. 54-hour explicit shift remains open (authority matrix + close gate) ─
-test('9. a 54-hour explicit shift remains open (no duration / midnight synthetic path)', async () => {
-  // Gate: active enforcement never authorizes synthetic close regardless of elapsed hours.
+test('10. date fallback policy is independent of synthetic-close permission', () => {
+  // Same confirmed-state matrix today, but distinct symbols/docs — must not merge
+  const auth = src('src/core/services/workPeriodAuthority/suiteShiftAuthority.ts');
+  assert.ok(auth.includes('export function mayUseDateFallback'));
+  assert.ok(auth.includes('export function enforcementAllowsSyntheticClose'));
+  assert.ok(auth.includes('intentionally independent') || auth.includes('POLICY NOTE'),
+    'policies must be documented as independent');
+
+  // Predicate values for confirmed states (current product)
+  const states: SuiteEnforcement[] = [
+    { state: 'legacy' },
+    { state: 'inert' },
+    { state: 'active', mode: 'explicit_shift' },
+    { state: 'invalid', reason: 'x' },
+  ];
+  for (const s of states) {
+    // Documented current alignment for confirmed states only
+    assert.equal(mayUseDateFallback(s), enforcementAllowsSyntheticClose(s),
+      `confirmed-state alignment for ${s.state}`);
+  }
+
+  // Date-fallback consumers do not write synthetic close and do not use the LKG gate
+  const jsa = src('src/core/services/jsaShiftAck.ts');
+  const day = src('app/day-summary.tsx');
+  assert.ok(jsa.includes('mayUseDateFallback'));
+  assert.ok(day.includes('mayUseDateFallback'));
+  assert.ok(!jsa.includes('resolveSyntheticCloseDecision'));
+  assert.ok(!day.includes('resolveSyntheticCloseDecision'));
+  assert.ok(!jsa.includes('enforcementAllowsSyntheticClose'));
+  assert.ok(!day.includes('enforcementAllowsSyntheticClose'));
+
+  // Synthetic-close path does not use mayUseDateFallback
+  const tracking = src('src/core/services/shiftTracking.ts');
+  const autoClose = tracking.slice(
+    tracking.indexOf('async function autoCloseStaleShift'),
+    tracking.indexOf('async function autoCloseStaleShift') + 3200,
+  );
+  assert.ok(!autoClose.includes('mayUseDateFallback'));
+  assert.ok(autoClose.includes('resolveSyntheticCloseDecision'));
+});
+
+// ── Additional product / wiring coverage ──────────────────────────────────
+
+test('valid enforced explicit_shift blocks synthetic close', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  const start = Date.parse('2026-08-05T12:00:00.000Z');
-  const after54h = start + 54 * 60 * 60 * 1000;
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), store, after54h);
-  assert.equal(d.allow, false, 'elapsed hours must never authorize synthetic close under explicit_shift');
-  // No MAX duration constant in the authority module
-  const authSrc = readFileSync(join(__dirname, 'suiteShiftAuthority.ts'), 'utf8');
+  const d = await resolveSyntheticCloseDecision(COMPANY, readable(ACTIVE_DOC), store, NOW);
+  assert.equal(d.allow, false);
+  assert.equal(d.source, 'confirmed_active');
+});
+
+test('restart offline with durable LKG enforced still blocks', async () => {
+  const durable = new Map<string, LastKnownEnforcement>();
+  const s1 = createMemoryEnforcementSafetyStore(durable);
+  await resolveSyntheticCloseDecision(COMPANY, readable(ACTIVE_DOC), s1, NOW);
+  const s2 = createMemoryEnforcementSafetyStore(durable);
+  const d = await resolveSyntheticCloseDecision(COMPANY, unreadable(), s2, NOW + 86_400_000);
+  assert.equal(d.allow, false);
+  assert.equal(d.source, 'last_known_good');
+});
+
+test('cache TTL is irrelevant to durable LKG safety decision', async () => {
+  const store = createMemoryEnforcementSafetyStore();
+  await resolveSyntheticCloseDecision(COMPANY, readable(ACTIVE_DOC), store, NOW);
+  const afterHour = await resolveSyntheticCloseDecision(
+    COMPANY,
+    unreadable(),
+    store,
+    NOW + 60 * 60 * 1000 + 1,
+  );
+  assert.equal(afterHour.allow, false);
+  assert.equal(afterHour.source, 'last_known_good');
+});
+
+test('54-hour explicit shift: no duration path authorizes synthetic close', async () => {
+  const store = createMemoryEnforcementSafetyStore();
+  const after54h = NOW + 54 * 60 * 60 * 1000;
+  const d = await resolveSyntheticCloseDecision(COMPANY, readable(ACTIVE_DOC), store, after54h);
+  assert.equal(d.allow, false);
+  const authSrc = src('src/core/services/workPeriodAuthority/suiteShiftAuthority.ts');
   assert.ok(!/MAX_SHIFT_HOURS|54 \* 60|hoursSince/.test(authSrc));
 });
 
-// ── 10. Explicit Shift Close still closes normally (gate is synthetic-only)
-test('10. explicit Shift Close path is not blocked by synthetic-close safety (gate is synthetic-only)', () => {
-  // The safety gate only feeds autoCloseStaleShift. Genuine logout is
-  // recordShiftEvent('logout') — independent. Pin the production wiring.
-  const root = join(__dirname, '..', '..', '..', '..');
-  const tracking = readFileSync(join(root, 'src/core/services/shiftTracking.ts'), 'utf8');
-  const autoClose = tracking.slice(
-    tracking.indexOf('async function autoCloseStaleShift'),
-    tracking.indexOf('async function autoCloseStaleShift') + 2500,
-  );
-  assert.ok(autoClose.includes('resolveSyntheticCloseDecision'));
-  // Genuine logout recording is a separate export/path
-  assert.ok(tracking.includes("type: 'login' | 'logout' | 'depart_return'"));
+test('explicit logout path is independent of synthetic-close gate', () => {
+  const tracking = src('src/core/services/shiftTracking.ts');
   assert.ok(tracking.includes("if (type === 'login')"));
-  assert.ok(
-    /autoCloseStaleShift\(driverId, source, companyId\)/.test(tracking),
-    'autoClose only from login/resume paths, not from explicit logout',
-  );
-  // AuthContext logout still records genuine logout (post-trip gated separately)
-  const auth = readFileSync(join(root, 'src/core/context/AuthContext.tsx'), 'utf8');
-  assert.ok(/recordShiftEvent\(\s*['"]logout['"]/.test(auth) || auth.includes("recordShiftEvent('logout'"),
-    'explicit logout still records a genuine logout event');
+  assert.ok(/autoCloseStaleShift\(driverId, source, companyId\)/.test(tracking));
+  const auth = src('src/core/context/AuthContext.tsx');
+  assert.ok(auth.includes("recordShiftEvent('logout'"));
 });
 
-// ── 11. Ticket/JSA/DVIR gates not weakened ────────────────────────────────
-test('11. ticket/JSA/DVIR gates are not weakened by synthetic-close LKG path', () => {
-  const root = join(__dirname, '..', '..', '..', '..');
-  // mayUseDateFallback still blocks under active/invalid — LKG not wired into
-  // date fallback (which would be a separate authorization concern).
+test('ticket/JSA/DVIR gates not weakened; LKG gate only on autoClose', () => {
   assert.equal(enforcementAllowsSyntheticClose({ state: 'active', mode: 'explicit_shift' }), false);
   assert.equal(enforcementAllowsSyntheticClose({ state: 'invalid', reason: 'x' }), false);
-  // JSA still gates date fallback via parseSuiteEnforcement on live config
-  const jsa = readFileSync(join(root, 'src/core/services/jsaShiftAck.ts'), 'utf8');
-  assert.ok(jsa.includes('mayUseDateFallback'));
-  assert.ok(jsa.includes('parseSuiteEnforcement'));
-  // Day summary still enforcement-gates date fallback
-  const day = readFileSync(join(root, 'app/day-summary.tsx'), 'utf8');
-  assert.ok(day.includes('mayUseDateFallback'));
-  // DVIR completion authority still imports SuiteEnforcement (unchanged surface)
-  const dvir = readFileSync(join(root, 'src/core/services/workPeriodAuthority/dvirCompletionAuthority.ts'), 'utf8');
-  assert.ok(dvir.includes('SuiteEnforcement') || dvir.includes('suiteShiftAuthority'));
-  // resolveSyntheticCloseDecision is only consumed by autoCloseStaleShift
-  const tracking = readFileSync(join(root, 'src/core/services/shiftTracking.ts'), 'utf8');
+  assert.ok(src('src/core/services/jsaShiftAck.ts').includes('mayUseDateFallback'));
+  assert.ok(src('app/day-summary.tsx').includes('mayUseDateFallback'));
+  const tracking = src('src/core/services/shiftTracking.ts');
   assert.ok(tracking.includes('resolveSyntheticCloseDecision'));
-  assert.ok(!jsa.includes('resolveSyntheticCloseDecision'));
-  assert.ok(!day.includes('resolveSyntheticCloseDecision'));
+  assert.ok(tracking.includes('loadCompanyConfigResult'));
+  assert.ok(!tracking.includes('fetchCompanyConfig(id)') || tracking.includes('loadCompanyConfigResult'),
+    'autoClose must not feed bare fetchCompanyConfig null into the safety gate');
 });
 
-// ── 12. Existing parse/adoption semantics remain (vc11 contract consumer) ─
-test('12. existing vc11 contract-adoption parse semantics remain green', () => {
+test('vc11 contract-adoption parse semantics remain green', () => {
   assert.equal(parseSuiteEnforcement({ tier: 'god' }).state, 'legacy');
   assert.equal(parseSuiteEnforcement(undefined).state, 'legacy');
   assert.equal(parseSuiteEnforcement(INERT_DOC).state, 'inert');
@@ -253,66 +280,85 @@ test('12. existing vc11 contract-adoption parse semantics remain green', () => {
   assert.equal(parseSuiteEnforcement({ wellbuiltContract: { contractEnforced: true, contractVersion: 1 } }).state, 'invalid');
 });
 
-// ── Additional matrix coverage ────────────────────────────────────────────
-test('matrix: online midnight with active contract blocks synthetic close', async () => {
+test('live re-read can demote LKG active → confirmed inert', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), store, NOW);
-  assert.equal(d.allow, false);
-  assert.equal(d.unreadable, false);
-});
-
-test('matrix: offline midnight with LKG active blocks synthetic close', async () => {
-  const store = createMemoryEnforcementSafetyStore();
-  await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), store, NOW - 1000);
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadThrow(), store, NOW);
-  assert.equal(d.allow, false);
-  assert.equal(d.source, 'last_known_good');
-});
-
-test('matrix: live re-read can demote LKG active → confirmed inert (real unenforce)', async () => {
-  const store = createMemoryEnforcementSafetyStore();
-  await resolveSyntheticCloseDecision(COMPANY, loadOk(ACTIVE_DOC), store, NOW);
-  const demoted = await resolveSyntheticCloseDecision(COMPANY, loadOk(INERT_DOC), store, NOW + 1);
+  await resolveSyntheticCloseDecision(COMPANY, readable(ACTIVE_DOC), store, NOW);
+  const demoted = await resolveSyntheticCloseDecision(COMPANY, readable(INERT_DOC), store, NOW + 1);
   assert.equal(demoted.allow, true);
   assert.equal(demoted.source, 'confirmed_inert');
-  // Subsequent offline uses the new LKG
-  const offline = await resolveSyntheticCloseDecision(COMPANY, loadThrow(), store, NOW + 2);
-  assert.equal(offline.allow, true);
-  assert.equal(offline.enforcement.state, 'inert');
 });
 
-test('matrix: missing companyId allows synthetic close (no activation signal)', async () => {
+test('never-configured company is not promoted to enforced by unreadable path', async () => {
   const store = createMemoryEnforcementSafetyStore();
-  const d = await resolveSyntheticCloseDecision(null, loadThrow(), store, NOW);
-  assert.equal(d.allow, true);
-  assert.equal(d.source, 'missing_company');
+  const offline = await resolveSyntheticCloseDecision(COMPANY, unreadable(), store, NOW);
+  assert.equal(offline.enforcement.state, 'legacy');
+  assert.equal(offline.allow, false); // blocks close, but does not invent "active"
+  assert.notEqual(offline.source, 'confirmed_active');
+  // Online success still confirms true legacy and allows
+  const online = await resolveSyntheticCloseDecision(COMPANY, readable(LEGACY_DOC), store, NOW + 1);
+  assert.equal(online.allow, true);
+  assert.equal(online.source, 'confirmed_legacy');
 });
 
-test('matrix: null live doc is confirmed legacy (not unreadable)', async () => {
-  const store = createMemoryEnforcementSafetyStore();
-  const d = await resolveSyntheticCloseDecision(COMPANY, loadOk(null), store, NOW);
-  assert.equal(d.allow, true);
-  assert.equal(d.source, 'confirmed_legacy');
-  assert.equal(d.unreadable, false);
+// ── companyConfig source pins (null collapse + TTL + cutover) ─────────────
+
+test('companyConfig: getCachedConfig failure path does not enforce TTL', () => {
+  const cc = src('src/core/services/companyConfig.ts');
+  // Failure path returns cache without comparing fetchedAt to TTL
+  assert.ok(cc.includes('async function getCachedConfig'));
+  assert.ok(/Intentionally does NOT enforce TTL|does NOT enforce TTL/.test(cc));
+  // TTL only on fresh fast path
+  assert.ok(cc.includes('CACHE_TTL_MS'));
+  assert.ok(cc.includes('freshness: \'fresh\'') || cc.includes('freshness: "fresh"') || cc.includes("freshness: 'fresh'"));
+  assert.ok(cc.includes('freshness: \'stale\'') || cc.includes("freshness: 'stale'"));
 });
 
-test('wiring: autoCloseStaleShift uses resolveSyntheticCloseDecision + durable store', () => {
-  const root = join(__dirname, '..', '..', '..', '..');
-  const tracking = readFileSync(join(root, 'src/core/services/shiftTracking.ts'), 'utf8');
+test('companyConfig: loadCompanyConfigResult distinguishes live/cache/unavailable', () => {
+  const cc = src('src/core/services/companyConfig.ts');
+  assert.ok(cc.includes('export async function loadCompanyConfigResult'));
+  assert.ok(cc.includes("kind: 'live'"));
+  assert.ok(cc.includes("kind: 'cache'"));
+  assert.ok(cc.includes("kind: 'unavailable'"));
+  assert.ok(cc.includes('forceRefresh'));
+  // fetchCompanyConfig is a null-collapsing convenience wrapper
+  assert.ok(cc.includes('export async function fetchCompanyConfig'));
+});
+
+test('companyConfig: forceRefresh bypasses TTL without clearing other state', () => {
+  const cc = src('src/core/services/companyConfig.ts');
+  assert.ok(cc.includes('forceRefresh'));
+  assert.ok(/forceRefresh[\s\S]{0,200}CACHE_TTL|!forceRefresh/.test(cc));
+  const hook = src('src/core/hooks/useCompanyConfig.ts');
+  assert.ok(hook.includes('forceRefresh'));
+  assert.ok(hook.includes('fetchCompanyConfig(companyId, { forceRefresh })'));
+  // clearCache still only company-config keys — not auth/shift
+  const clear = cc.slice(cc.indexOf('clearCompanyConfigCache'));
+  assert.ok(clear.includes('CACHE_KEY_PREFIX') || clear.includes('wellbuilt-company-config-'));
+  assert.ok(!clear.includes('enforcement-safety'));
+});
+
+test('wiring: autoClose maps unavailable→unreadable, never bare null as confirmed', () => {
+  const tracking = src('src/core/services/shiftTracking.ts');
   const fn = tracking.slice(
     tracking.indexOf('async function autoCloseStaleShift'),
-    tracking.indexOf('async function autoCloseStaleShift') + 2800,
+    tracking.indexOf('async function autoCloseStaleShift') + 3500,
   );
-  assert.ok(fn.includes('resolveSyntheticCloseDecision'));
+  assert.ok(fn.includes('loadCompanyConfigResult'));
+  assert.ok(fn.includes("status: 'unreadable'") || fn.includes('status: "unreadable"') || fn.includes("status: 'unreadable' as const"));
+  assert.ok(fn.includes("status: 'readable'") || fn.includes('status: "readable"') || fn.includes("status: 'readable' as const"));
   assert.ok(fn.includes('createAsyncStorageEnforcementSafetyStore'));
-  // Must not fail-open to the sweep on gate errors
-  assert.ok(/skipping sweep|skipping calendar-boundary/i.test(fn));
-  assert.ok(!/Enforcement unknown → legacy behavior/.test(fn),
-    'old fail-open catch comment/path must be gone');
+  // Must not call resolve with bare fetchCompanyConfig return value
+  assert.ok(!/resolveSyntheticCloseDecision\(\s*companyId,\s*\(id\)\s*=>\s*fetchCompanyConfig/.test(fn));
 });
 
-test('parseSuiteEnforcement still treats absent contract as legacy (never auto-promote)', () => {
-  const e: SuiteEnforcement = parseSuiteEnforcement({});
-  assert.equal(e.state, 'legacy');
-  assert.equal(enforcementAllowsSyntheticClose(e), true);
+test('readable empty object is confirmed legacy; unreadable is not', async () => {
+  const store = createMemoryEnforcementSafetyStore();
+  const confirmed = await resolveSyntheticCloseDecision(COMPANY, readable({}), store, NOW);
+  assert.equal(confirmed.source, 'confirmed_legacy');
+  assert.equal(confirmed.allow, true);
+
+  const store2 = createMemoryEnforcementSafetyStore();
+  const unknown = await resolveSyntheticCloseDecision(COMPANY, unreadable(), store2, NOW);
+  assert.equal(unknown.source, 'temporarily_unreadable_unknown');
+  assert.equal(unknown.allow, false);
 });

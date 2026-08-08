@@ -192,19 +192,24 @@ async function autoCloseStaleShift(
         resolveSyntheticCloseDecision,
         createAsyncStorageEnforcementSafetyStore,
       },
-      { fetchCompanyConfig },
+      { loadCompanyConfigResult },
       AsyncStorage,
     ] = await Promise.all([
       import('./workPeriodAuthority/suiteShiftAuthority'),
       import('./companyConfig'),
       import('@react-native-async-storage/async-storage').then((m) => m.default),
     ]);
-    // Shift-destructive gate: consult durable last-known-good when the
-    // live company document is unreadable. A prior confirmed enforced
-    // (or invalid) contract must never fail-open to legacy midnight close.
+    // Shift-destructive gate. MUST use loadCompanyConfigResult (explicit
+    // live|cache|unavailable) — fetchCompanyConfig's null collapses
+    // "failed read, no cache" into the same signal as "no config" and
+    // would re-open the legacy fail-open path (Claude route 1 + 4).
     const decision = await resolveSyntheticCloseDecision(
       companyId,
-      (id) => fetchCompanyConfig(id),
+      async (id) => {
+        const result = await loadCompanyConfigResult(id);
+        if (result.kind === 'unavailable') return { status: 'unreadable' as const };
+        return { status: 'readable' as const, doc: result.config };
+      },
       createAsyncStorageEnforcementSafetyStore(AsyncStorage),
     );
     if (!decision.allow) {
@@ -215,10 +220,9 @@ async function autoCloseStaleShift(
       return;
     }
   } catch (err) {
-    // Fail CLOSED for the destructive write when the safety gate itself
-    // cannot run. Prefer an open overnight shift over a fabricated logout
-    // under an unreadable enforcement path. Legacy companies that never
-    // hit this catch continue to sweep on the next successful gate run.
+    // Route 3: import / gate runtime failure must NEVER fall through into
+    // the destructive sweep. Prefer an open overnight shift over a
+    // fabricated logout when the safety check cannot complete.
     console.warn('[shiftTracking] synthetic-close safety gate failed — skipping sweep:', err);
     return;
   }
