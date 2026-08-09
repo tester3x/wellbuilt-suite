@@ -48,6 +48,12 @@ export default function HomeScreen() {
   }, [refreshDispatches]);
 
   React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
+
+  const handleArrived = useCallback(async (odometerMiles?: number) => {
+    await confirmArrival(odometerMiles);
+    router.push('/day-summary');
+  }, [confirmArrival]);
+
   if (!user) return null;
 
   const roleLabel = t(`home.roles.${user.role}`);
@@ -61,11 +67,6 @@ export default function HomeScreen() {
     }
     return true;
   });
-
-  const handleArrived = useCallback(async (odometerMiles?: number) => {
-    await confirmArrival(odometerMiles);
-    router.push('/day-summary');
-  }, [confirmArrival]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>

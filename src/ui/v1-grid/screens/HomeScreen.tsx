@@ -23,22 +23,8 @@ export default function HomeScreen() {
   const greeting = useGreeting();
 
   React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
-  if (!user) return null;
 
-  const roleLabel = t(`home.roles.${user.role}`);
-  // Filter out WB M for unrouted-only drivers (completely hidden, not greyed)
-  const companyApps = wellbuiltApps.filter(app => {
-    if (app.id === 'wellbuilt-mobile' && user.companyId) {
-      const routes = user.assignedRoutes;
-      if (routes === undefined) return true; // legacy driver — show
-      if (routes.length === 0) return false;
-      return routes.some(r => !r.startsWith('Unrouted'));
-    }
-    return true;
-  });
-  const showTierBanner = companyConfig && companyConfig.tier !== 'suite';
-  const enabledCount = companyApps.filter(a => isWBAppEnabled(a.id)).length;
-
+  // All hooks MUST run before any early return (logout / revalidation null user).
   const handleArrived = useCallback(async (odometerMiles?: number) => {
     await confirmArrival(odometerMiles);
     router.push('/day-summary');
@@ -106,6 +92,22 @@ export default function HomeScreen() {
       androidPackage: 'com.syconik801.jsaapp',
     });
   }, [launchWBApp]);
+
+  if (!user) return null;
+
+  const roleLabel = t(`home.roles.${user.role}`);
+  // Filter out WB M for unrouted-only drivers (completely hidden, not greyed)
+  const companyApps = wellbuiltApps.filter(app => {
+    if (app.id === 'wellbuilt-mobile' && user.companyId) {
+      const routes = user.assignedRoutes;
+      if (routes === undefined) return true; // legacy driver — show
+      if (routes.length === 0) return false;
+      return routes.some(r => !r.startsWith('Unrouted'));
+    }
+    return true;
+  });
+  const showTierBanner = companyConfig && companyConfig.tier !== 'suite';
+  const enabledCount = companyApps.filter(a => isWBAppEnabled(a.id)).length;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
