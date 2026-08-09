@@ -24,7 +24,10 @@ import {
   buildHandoffRequestDiag,
   emitHandoffDiag,
 } from './dvirHandoffDiag';
-import { rememberGovernedEquipmentHandoff } from './equipmentHandoffBinding';
+import {
+  completeGovernedHandoffIfMatches,
+  rememberGovernedEquipmentHandoff,
+} from './equipmentHandoffBinding';
 
 export const EQUIPMENT_SCHEME = 'wbequipment';
 export const EQUIPMENT_ANDROID_PACKAGE = 'com.wellbuilt.equipment';
@@ -149,7 +152,7 @@ export async function launchEquipmentPhase(
   const returnUrl = SUITE_DVIR_RETURN_URL;
   // Governed path: metadata only. Authentication is PKCE to WB-S, never
   // hash/name/passcode in the launch URI (security gate).
-  rememberGovernedEquipmentHandoff(shiftId, phase);
+  await rememberGovernedEquipmentHandoff(shiftId, phase);
   const requestDiag = buildHandoffRequestDiag({
     phase,
     shiftId,
@@ -432,6 +435,18 @@ export async function ingestDvirCompletionUrl(
   }
 
   const result = await saveReceiptIdempotent(deps.kv, validated.receipt);
+  try {
+    console.log(
+      `[Suite-DVIR] dvir.receipt.received phase=${validated.receipt.phase} created=${result === 'created' ? 1 : 0}`,
+    );
+    console.log(
+      `[Suite-DVIR] dvir.receipt.accepted phase=${validated.receipt.phase} shiftId=${validated.receipt.shiftId}`,
+    );
+  } catch { /* ignore */ }
+  await completeGovernedHandoffIfMatches(
+    validated.receipt.shiftId,
+    validated.receipt.phase,
+  );
   // Post-Trip receipt means the gate for this phase is satisfied — drop
   // pending end-shift so off-shift / later taps cannot re-launch Post-Trip.
   if (validated.receipt.phase === 'post_trip') {
