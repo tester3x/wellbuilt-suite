@@ -64,6 +64,18 @@ export function getSsoRouteAdapter(
     getVerifiedIdentity: () => getOwnedVerifiedIdentity(getFirebaseApp(), true),
     requestCode: (request) => issuance.requestCode(request),
     currentIdentityEpoch: () => identityEpoch,
+    getEquipmentShiftBinding: async () => {
+      const { resolveAuthoritativeEquipmentShiftBinding } = await import(
+        './dvirGate/equipmentHandoffBinding'
+      );
+      const { getCurrentShiftId } = await import('./shiftTracking');
+      // isShiftActive: prefer true when a current shift id exists (authoritative).
+      const shiftId = await getCurrentShiftId();
+      return resolveAuthoritativeEquipmentShiftBinding({
+        getCurrentShiftId: async () => shiftId,
+        isShiftActive: () => !!shiftId,
+      });
+    },
   });
 
   adapter = createSsoRouteAdapter({

@@ -14,14 +14,37 @@
 import {
   SSO_AUTHORIZE_HOST,
   SSO_AUTHORIZE_SCHEME,
+  SSO_AUDIENCE_EQUIPMENT,
+  SSO_AUDIENCE_WBT,
+  SSO_CALLBACK_BY_AUDIENCE,
   SSO_CALLBACK_SUCCESS_KEYS,
   SSO_CALLBACK_ERROR_KEYS,
-  buildSsoCallbackUrl,
+  SSO_CALLBACK_SCHEME,
+  SSO_CALLBACK_HOST,
   hasOnlyKeys,
   parseSsoAuthorizationUrl,
+  type SsoAudience,
   type SsoCallback,
 } from './ssoProtocol.generated';
 import type { SsoAuthorizationOutcome } from './ssoAuthorizationCore';
+
+/** Build fixed callback URL for the audience that was authorized. */
+export function buildAudienceCallbackUrl(
+  callback: SsoCallback,
+  audience: SsoAudience = SSO_AUDIENCE_WBT,
+): string {
+  const route = SSO_CALLBACK_BY_AUDIENCE[audience]
+    ?? { scheme: SSO_CALLBACK_SCHEME, host: SSO_CALLBACK_HOST };
+  const enc = (v: string) => encodeURIComponent(v);
+  const parts = [`v=${enc(String(callback.protocolVersion))}`, `status=${enc(callback.status)}`];
+  if (callback.status === 'success') {
+    parts.push(`code=${enc(callback.code)}`, `state=${enc(callback.state)}`);
+  } else {
+    parts.push(`err=${enc(callback.errorCode)}`);
+    if (callback.state) parts.push(`state=${enc(callback.state)}`);
+  }
+  return `${route.scheme}://${route.host}?${parts.join('&')}`;
+}
 
 /** What the adapter decided to do with a URL. Bounded, for diagnostics. */
 export type SsoRouteResult =
@@ -112,9 +135,12 @@ export function createSsoRouteAdapter(ops: SsoRouteOps): SsoRouteAdapter {
 
       try {
         let callback: SsoCallback;
+        /** Callback scheme follows request audience (tickets default for malformed). */
+        let audience: SsoAudience = SSO_AUDIENCE_WBT;
         if (!parsed.ok) {
           // Malformed, wrong protocol, forbidden extras: answer with the
           // canonical bounded failure. No state exists to echo.
+          // Prefer tickets callback for unparseable requests (legacy WB-T path).
           ops.log('sso.route.rejected', parsed.errorCode);
           callback = {
             protocolVersion: 1,
@@ -122,6 +148,7 @@ export function createSsoRouteAdapter(ops: SsoRouteOps): SsoRouteAdapter {
             errorCode: parsed.errorCode,
           };
         } else {
+          audience = parsed.value.audience;
           const outcome = await ops.authorize(parsed.value);
 
           // Ownership recheck AFTER the awaited authorization. A logout or
@@ -136,6 +163,7 @@ export function createSsoRouteAdapter(ops: SsoRouteOps): SsoRouteAdapter {
             return { kind: 'abandoned' };
           }
           callback = outcome.callback;
+          if (outcome.audience) audience = outcome.audience;
           if (outcome.internalReason) {
             // Operator-facing reason code only; never transmitted.
             ops.log('sso.route.outcome', outcome.internalReason);
@@ -153,11 +181,10 @@ export function createSsoRouteAdapter(ops: SsoRouteOps): SsoRouteAdapter {
         }
 
         try {
-          await ops.openUrl(buildSsoCallbackUrl(callback));
+          await ops.openUrl(buildAudienceCallbackUrl(callback, audience));
         } catch {
-          // WB-T may not be installed or may have been uninstalled
-          // mid-flight. Nothing to retry into — the code simply expires.
-          ops.log('sso.route.callbackFailed', 'could not open the WB-T callback');
+          // Target may not be installed. Nothing to retry into — the code simply expires.
+          ops.log('sso.route.callbackFailed', 'could not open the audience callback');
           return { kind: 'callback-failed' };
         }
         return { kind: 'answered', status: callback.status };

@@ -511,12 +511,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Must await finalize so day-summary does not open on a stale Pre-Trip-only
     // Partial while Post-Trip receipt is already durable (fire-and-forget race).
     try {
-      const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
+      const { createSuiteDvirGate } = await import('../services/dvirGate');
       const { getCurrentShiftId: getSid } = await import('../services/shiftTracking');
       const gate = createSuiteDvirGate({
         isShiftActive: () => false,
-        getSso: makeDvirSsoGetter(user),
-      });
+        });
       await gate.clearDvirRoutingAfterFinalization();
       const sid = await getSid();
       if (sid) await gate.finalizeShiftDvirSummary(sid);
@@ -542,8 +541,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // missing id; the caller never pre-filters it away.
     if (shiftActive && user) {
       try {
-        const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
-        const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+        const { createSuiteDvirGate } = await import('../services/dvirGate');
+        const gate = createSuiteDvirGate({ isShiftActive: () => true });
         const post = await gate.ensurePostTripGate({ alertOnBlock: true });
         if (!post.allowed) {
           console.log('[logoutWithCascade] blocked — Post-Trip required before logout');
@@ -628,8 +627,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // a missing id, so the GATE decides, never this caller.
     if (shiftActive && user) {
       try {
-        const { createSuiteDvirGate, makeDvirSsoGetter } = await import('../services/dvirGate');
-        const gate = createSuiteDvirGate({ getSso: makeDvirSsoGetter(user) });
+        const { createSuiteDvirGate } = await import('../services/dvirGate');
+        const gate = createSuiteDvirGate({ isShiftActive: () => true });
         const post = await gate.ensurePostTripGate({ alertOnBlock: true });
         if (!post.allowed) {
           console.log('[logout] blocked — Post-Trip required before logout');

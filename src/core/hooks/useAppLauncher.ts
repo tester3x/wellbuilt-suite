@@ -10,7 +10,6 @@ import { getCurrentShiftId } from '../services/shiftTracking';
 import {
   createSuiteDvirGate,
   isTicketsLaunch,
-  makeDvirSsoGetter,
 } from '../services/dvirGate';
 import {
   isCredentialFreeLaunchTarget,
@@ -20,13 +19,13 @@ import {
 export function useAppLauncher() {
   const { user, activePackageId, shiftStartTime, shiftActive } = useAuth();
 
+  // Governed DVIR launches never attach URI hash identity (PKCE only).
   const dvirGate = useMemo(
     () =>
       createSuiteDvirGate({
-        getSso: makeDvirSsoGetter(user),
         isShiftActive: () => shiftActive,
       }),
-    [user, shiftActive],
+    [shiftActive],
   );
 
   const checkCanLaunch = useCallback((scheme?: string) => {

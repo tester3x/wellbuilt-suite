@@ -24,6 +24,7 @@ import {
   buildHandoffRequestDiag,
   emitHandoffDiag,
 } from './dvirHandoffDiag';
+import { rememberGovernedEquipmentHandoff } from './equipmentHandoffBinding';
 
 export const EQUIPMENT_SCHEME = 'wbequipment';
 export const EQUIPMENT_ANDROID_PACKAGE = 'com.wellbuilt.equipment';
@@ -145,13 +146,14 @@ export async function launchEquipmentPhase(
   phase: DvirReceiptPhase,
   shiftId: string,
 ): Promise<{ launched: boolean; error?: string }> {
-  const sso = deps.getSso ? await deps.getSso() : null;
   const returnUrl = SUITE_DVIR_RETURN_URL;
-  // Observability only — never logs URL / hash / name.
+  // Governed path: metadata only. Authentication is PKCE to WB-S, never
+  // hash/name/passcode in the launch URI (security gate).
+  rememberGovernedEquipmentHandoff(shiftId, phase);
   const requestDiag = buildHandoffRequestDiag({
     phase,
     shiftId,
-    sso,
+    sso: null, // authParamsAttached=false by design
     returnUrl,
   });
   emitHandoffDiag(requestDiag);
@@ -160,12 +162,21 @@ export async function launchEquipmentPhase(
     shiftId,
     phase,
     returnUrl,
-    hash: sso?.hash,
-    name: sso?.name,
-    companyId: sso?.companyId,
-    truck: sso?.truck,
-    trailer: sso?.trailer,
+    // Explicitly omit hash/name/company/truck/trailer identity fields.
   });
+  // Hard refuse if a caller ever reintroduces identity into the builder.
+  if (/[?&](hash|name|passcode|token)=/i.test(url)) {
+    emitHandoffDiag(
+      buildHandoffOpenDiag({
+        phase,
+        shiftId,
+        success: false,
+        classification: 'open_failed',
+        authParamsAttached: true,
+      }),
+    );
+    return { launched: false, error: 'Refused to open equipment with identity in URI' };
+  }
   try {
     await deps.openUrl(url);
     emitHandoffDiag(
@@ -174,7 +185,7 @@ export async function launchEquipmentPhase(
         shiftId,
         success: true,
         classification: 'opened',
-        authParamsAttached: requestDiag.authParamsAttached,
+        authParamsAttached: false,
       }),
     );
     return { launched: true };
@@ -190,7 +201,7 @@ export async function launchEquipmentPhase(
             shiftId,
             success: true,
             classification: 'intent_fallback_opened',
-            authParamsAttached: requestDiag.authParamsAttached,
+            authParamsAttached: false,
           }),
         );
         return { launched: true };
@@ -204,7 +215,7 @@ export async function launchEquipmentPhase(
         shiftId,
         success: false,
         classification: 'open_failed',
-        authParamsAttached: requestDiag.authParamsAttached,
+        authParamsAttached: false,
       }),
     );
     return {

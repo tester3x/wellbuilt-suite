@@ -126,11 +126,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     // Force Pre-Trip at the beginning of every shift (Suite durable gate).
     // Tickets stay blocked until eQuipment returns a matching receipt.
     try {
-      const { createSuiteDvirGate, makeDvirSsoGetter } = await import(
-        '@/core/services/dvirGate'
-      );
-      // SSO identity filled inside gate when user is available via createSuiteDvirGate
-      // from useAppLauncher paths; here use bare gate for launch after mint.
+      const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
+      // Governed Pre-Trip: metadata + PKCE only (no hash/name getter).
       const gate = createSuiteDvirGate({ isShiftActive: () => true });
       await gate.ensurePreTripGate({ alertOnBlock: true });
     } catch (err) {
@@ -193,6 +190,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
             // Post-Trip gate: do NOT end shift until eQuipment receipt is durable.
             try {
               const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
+              // Governed Post-Trip: PKCE only (no hash/name URI material).
               const gate = createSuiteDvirGate({ isShiftActive: () => true });
               const post = await gate.ensurePostTripGate({
                 odometerMiles: miles,

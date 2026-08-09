@@ -16,13 +16,17 @@
  * cannot be proven by reading source.
  */
 import {
+  SSO_AUDIENCE_EQUIPMENT,
   SSO_AUDIENCE_WBT,
   SSO_CHALLENGE_METHOD,
   SSO_PROTOCOL_VERSION,
+  audienceRequiresShiftBinding,
+  isSsoAudience,
   validateSsoAuthorizationRequest,
   type SsoAuthorizationRequest,
   type SsoCallback,
   type SsoErrorCode,
+  type SsoShiftBinding,
 } from './ssoProtocol.generated';
 
 export interface SsoIssuerLocalIdentity {
@@ -54,6 +58,7 @@ export interface SsoAuthorizationOps {
     audience: string;
     codeChallenge: string;
     codeChallengeMethod: string;
+    shiftBinding?: SsoShiftBinding;
   }): Promise<{ code: string }>;
   /**
    * Ownership epoch for the WB-S session. Captured before issuance and
@@ -62,29 +67,37 @@ export interface SsoAuthorizationOps {
    * for the driver who just left.
    */
   currentIdentityEpoch(): number;
+  /**
+   * Authoritative equipment shift binding from WB-S governed state.
+   * Required when audience is equipment; ignored for tickets.
+   */
+  getEquipmentShiftBinding?(): Promise<SsoShiftBinding | null>;
 }
 
 export interface SsoAuthorizationOutcome {
-  /** Exactly what WB-S sends to the fixed WB-T callback. */
+  /** Exactly what WB-S sends to the fixed audience callback. */
   callback: SsoCallback;
   /** Operator-facing only; never transmitted. */
   internalReason?: string;
+  /** Drives fixed callback scheme selection (tickets vs equipment). */
+  audience?: typeof SSO_AUDIENCE_WBT | typeof SSO_AUDIENCE_EQUIPMENT;
 }
 
 function errorOut(
   errorCode: SsoErrorCode,
   internalReason: string,
   state?: string,
+  audience?: typeof SSO_AUDIENCE_WBT | typeof SSO_AUDIENCE_EQUIPMENT,
 ): SsoAuthorizationOutcome {
   const callback: SsoCallback = {
     protocolVersion: SSO_PROTOCOL_VERSION,
     status: 'error',
     errorCode,
   };
-  // Echo state only when we actually parsed one, so WB-T can retire the
+  // Echo state only when we actually parsed one, so the target can retire the
   // right attempt. A malformed request yields no state at all.
   if (state) callback.state = state;
-  return { callback, internalReason };
+  return { callback, internalReason, audience };
 }
 
 export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
@@ -104,17 +117,24 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
       }
       const request: SsoAuthorizationRequest = parsed.value;
 
-      if (request.audience !== SSO_AUDIENCE_WBT) {
+      if (!isSsoAudience(request.audience)) {
         return errorOut('unsupported_audience', 'audience not allowlisted', request.state);
       }
+      if (
+        request.audience !== SSO_AUDIENCE_WBT
+        && request.audience !== SSO_AUDIENCE_EQUIPMENT
+      ) {
+        return errorOut('unsupported_audience', 'audience not allowlisted', request.state, undefined);
+      }
+      const aud = request.audience;
       if (request.codeChallengeMethod !== SSO_CHALLENGE_METHOD) {
-        return errorOut('unsupported_method', 'method not S256', request.state);
+        return errorOut('unsupported_method', 'method not S256', request.state, aud);
       }
 
       // 2. WB-S must have a local identity at all.
       const local = await ops.getLocalIdentity();
       if (!local) {
-        return errorOut('not_authorized', 'no local identity', request.state);
+        return errorOut('not_authorized', 'no local identity', request.state, aud);
       }
 
       // 3. Reconciliation must say VERIFIED. 'local-only' is the offline
@@ -123,10 +143,10 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
       //    for another app.
       const reconciliation = ops.getReconciliationState();
       if (reconciliation === 'unavailable' || reconciliation === 'verifying') {
-        return errorOut('unavailable', `reconciliation ${reconciliation}`, request.state);
+        return errorOut('unavailable', `reconciliation ${reconciliation}`, request.state, aud);
       }
       if (reconciliation !== 'verified') {
-        return errorOut('not_authorized', `reconciliation ${reconciliation}`, request.state);
+        return errorOut('not_authorized', `reconciliation ${reconciliation}`, request.state, aud);
       }
 
       // 4. Fresh claims from the boundary — not the reconciliation verdict,
@@ -135,26 +155,39 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
       try {
         verified = await ops.getVerifiedIdentity();
       } catch {
-        return errorOut('unavailable', 'claims unreadable', request.state);
+        return errorOut('unavailable', 'claims unreadable', request.state, aud);
       }
       if (!verified) {
-        return errorOut('not_authorized', 'no owned session', request.state);
+        return errorOut('not_authorized', 'no owned session', request.state, aud);
       }
       if (verified.kind !== 'driver') {
-        return errorOut('not_authorized', 'session is not a driver', request.state);
+        return errorOut('not_authorized', 'session is not a driver', request.state, aud);
       }
       if (!verified.driverId || !verified.companyId) {
-        return errorOut('not_authorized', 'incomplete claims', request.state);
+        return errorOut('not_authorized', 'incomplete claims', request.state, aud);
       }
 
       // 5. Those claims must describe the driver THIS device is signed in
       //    as. A disagreement means the two identities have drifted, which
       //    is exactly the case that must never be bridged.
       if (verified.driverId !== local.driverId || verified.companyId !== local.companyId) {
-        return errorOut('not_authorized', 'sdk/local identity mismatch', request.state);
+        return errorOut('not_authorized', 'sdk/local identity mismatch', request.state, aud);
       }
 
-      // 6. Every local gate has passed. Only now does anything leave the
+      // 6. Equipment requires authoritative shift binding from Suite state.
+      let shiftBinding: SsoShiftBinding | undefined;
+      if (audienceRequiresShiftBinding(request.audience)) {
+        if (!ops.getEquipmentShiftBinding) {
+          return errorOut('not_authorized', 'no equipment binding resolver', request.state, aud);
+        }
+        const binding = await ops.getEquipmentShiftBinding();
+        if (!binding) {
+          return errorOut('not_authorized', 'no authoritative equipment shift binding', request.state, aud);
+        }
+        shiftBinding = binding;
+      }
+
+      // 7. Every local gate has passed. Only now does anything leave the
       //    device.
       const epochBefore = ops.currentIdentityEpoch();
       let code: string;
@@ -164,18 +197,19 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
           audience: request.audience,
           codeChallenge: request.codeChallenge,
           codeChallengeMethod: request.codeChallengeMethod,
+          ...(shiftBinding ? { shiftBinding } : {}),
         });
         code = result.code;
       } catch {
-        return errorOut('unavailable', 'code request failed', request.state);
+        return errorOut('unavailable', 'code request failed', request.state, aud);
       }
 
-      // 7. A logout or driver switch during issuance invalidates this
+      // 8. A logout or driver switch during issuance invalidates this
       //    authorization. The code exists server-side and will simply
-      //    expire unused; handing it to WB-T would bridge the driver who
-      //    just left.
+      //    expire unused; handing it to the target would bridge the driver
+      //    who just left.
       if (ops.currentIdentityEpoch() !== epochBefore) {
-        return errorOut('superseded', 'identity changed during issuance', request.state);
+        return errorOut('superseded', 'identity changed during issuance', request.state, aud);
       }
 
       return {
@@ -185,6 +219,8 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
           code,
           state: request.state,
         },
+        internalReason: aud === SSO_AUDIENCE_EQUIPMENT ? 'equipment_issued' : 'tickets_issued',
+        audience: aud,
       };
     },
   };

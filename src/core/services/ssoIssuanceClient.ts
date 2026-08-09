@@ -11,11 +11,15 @@
  * is deterministic; production always constructs the real httpsCallable.
  */
 import {
+  SSO_AUDIENCE_EQUIPMENT,
   SSO_AUDIENCE_WBT,
   SSO_PROTOCOL_VERSION,
+  isSsoAudience,
   isSsoProtocolVersion,
   isSsoCode,
+  isSsoShiftBinding,
   type SsoIssueCodeResponse,
+  type SsoShiftBinding,
 } from './ssoProtocol.generated';
 
 /** Must match the Functions export name exactly. */
@@ -94,29 +98,42 @@ export interface SsoIssuanceClient {
     audience: string;
     codeChallenge: string;
     codeChallengeMethod: string;
+    /** Required for equipment; forbidden for tickets. */
+    shiftBinding?: SsoShiftBinding;
   }): Promise<{ code: string; expiresInSeconds: number }>;
 }
 
 export function createSsoIssuanceClient(transport: SsoCallableTransport): SsoIssuanceClient {
   return {
     async requestCode(request) {
-      if (request.audience !== SSO_AUDIENCE_WBT
+      if (!isSsoAudience(request.audience)
         || !isSsoProtocolVersion(request.protocolVersion)) {
         throw new SsoIssuanceError('malformed_request', 'refusing to send a non-canonical request');
+      }
+      if (request.audience === SSO_AUDIENCE_EQUIPMENT) {
+        if (!isSsoShiftBinding(request.shiftBinding)) {
+          throw new SsoIssuanceError('malformed_request', 'equipment issuance requires shiftBinding');
+        }
+      } else if (request.audience === SSO_AUDIENCE_WBT) {
+        if (request.shiftBinding !== undefined) {
+          throw new SsoIssuanceError('malformed_request', 'tickets issuance forbids shiftBinding');
+        }
       }
       let raw: unknown;
       try {
         // Exactly the canonical request fields. No identity is sent —
         // the server takes it from the verified Auth context, and sending
         // it would be both useless and a hard reject there.
+        const payload: Record<string, unknown> = {
+          protocolVersion: request.protocolVersion,
+          audience: request.audience,
+          codeChallenge: request.codeChallenge,
+          codeChallengeMethod: request.codeChallengeMethod,
+        };
+        if (request.shiftBinding) payload.shiftBinding = request.shiftBinding;
         raw = await transport(
           SSO_ISSUE_CALLABLE,
-          {
-            protocolVersion: request.protocolVersion,
-            audience: request.audience,
-            codeChallenge: request.codeChallenge,
-            codeChallengeMethod: request.codeChallengeMethod,
-          },
+          payload,
           SSO_ISSUE_TIMEOUT_MS,
         );
       } catch (err) {
