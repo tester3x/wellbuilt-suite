@@ -388,8 +388,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             localDate,
             nowMs: Date.now(),
             companyId,
-            driverId: result.driverId,
-            fetchDayDoc: (date) => fetchShiftDayDoc(result.driverId, date),
+            driverId: result.driverId!,
+            fetchDayDoc: (date) => fetchShiftDayDoc(result.driverId!, date),
             localShiftStarted: priorStarted,
           });
           if (action.kind === 'restore_active' && action.periodId) {
@@ -413,8 +413,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             );
             // Resume hygiene only — must not mint or append a new login event.
             checkShiftOnResume(
-              result.driverId,
-              result.legalName || result.displayName,
+              result.driverId!,
+              result.legalName || result.displayName || '',
               result.companyId,
               'wbs',
               action.periodId,
@@ -430,8 +430,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.log(
               '[AuthContext] Post-login authority: no open shift (' + action.reason + ')',
             );
-          } else {
-            // block_start — unreadable / mismatch / missing-cache discovery gap
+          } else if (action.kind === 'block_start') {
+            // Unreadable / mismatch / missing-cache discovery gap
             await SecureStore.deleteItemAsync('shiftStarted');
             await SecureStore.deleteItemAsync('shiftEnded');
             setShiftActive(false);
@@ -440,8 +440,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.log(
               '[AuthContext] Post-login shift restore blocked (' + action.reason + ') — Start Shift disabled until authority clears',
             );
-            // Surface non-actionable state: shiftActive false AND shiftMintBlocked
-            // is enforced in startShift pre-mint gate (refuse when open/unknown).
+            // startShift pre-mint gate refuses when open/unknown.
           }
         } else if (mayUseDateFallback(enforcement)) {
           // Legacy/inert: established clean-slate on fresh login.
