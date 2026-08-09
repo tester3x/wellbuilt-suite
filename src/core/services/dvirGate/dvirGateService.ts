@@ -19,6 +19,11 @@ import {
   validatePhaseCompletionReceipt,
 } from './validateReceipt';
 import type { DvirReceiptPhase, PhaseCompletionReceipt } from './receiptTypes';
+import {
+  buildHandoffOpenDiag,
+  buildHandoffRequestDiag,
+  emitHandoffDiag,
+} from './dvirHandoffDiag';
 
 export const EQUIPMENT_SCHEME = 'wbequipment';
 export const EQUIPMENT_ANDROID_PACKAGE = 'com.wellbuilt.equipment';
@@ -141,10 +146,20 @@ export async function launchEquipmentPhase(
   shiftId: string,
 ): Promise<{ launched: boolean; error?: string }> {
   const sso = deps.getSso ? await deps.getSso() : null;
+  const returnUrl = SUITE_DVIR_RETURN_URL;
+  // Observability only — never logs URL / hash / name.
+  const requestDiag = buildHandoffRequestDiag({
+    phase,
+    shiftId,
+    sso,
+    returnUrl,
+  });
+  emitHandoffDiag(requestDiag);
+
   const url = buildEquipmentDvirUrl({
     shiftId,
     phase,
-    returnUrl: SUITE_DVIR_RETURN_URL,
+    returnUrl,
     hash: sso?.hash,
     name: sso?.name,
     companyId: sso?.companyId,
@@ -153,6 +168,15 @@ export async function launchEquipmentPhase(
   });
   try {
     await deps.openUrl(url);
+    emitHandoffDiag(
+      buildHandoffOpenDiag({
+        phase,
+        shiftId,
+        success: true,
+        classification: 'opened',
+        authParamsAttached: requestDiag.authParamsAttached,
+      }),
+    );
     return { launched: true };
   } catch {
     if (deps.tryAndroidIntent) {
@@ -160,11 +184,29 @@ export async function launchEquipmentPhase(
         await deps.openUrl(
           `intent://dvir#Intent;scheme=${EQUIPMENT_SCHEME};package=${EQUIPMENT_ANDROID_PACKAGE};end`,
         );
+        emitHandoffDiag(
+          buildHandoffOpenDiag({
+            phase,
+            shiftId,
+            success: true,
+            classification: 'intent_fallback_opened',
+            authParamsAttached: requestDiag.authParamsAttached,
+          }),
+        );
         return { launched: true };
       } catch {
         /* fall through */
       }
     }
+    emitHandoffDiag(
+      buildHandoffOpenDiag({
+        phase,
+        shiftId,
+        success: false,
+        classification: 'open_failed',
+        authParamsAttached: requestDiag.authParamsAttached,
+      }),
+    );
     return {
       launched: false,
       error: 'Could not open WellBuilt eQuipment. Install or update the app.',
