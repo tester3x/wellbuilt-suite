@@ -277,12 +277,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             })();
           }
 
-          // Revalidate in background (non-blocking)
+          // Revalidate in background (non-blocking). Secure path uses
+          // verifyDriverSession; hard fail clears SDK+local without shift close.
           revalidateDriverSession().then(async (stillValid) => {
             if (!stillValid) {
               console.log('[AuthContext] Background revalidation failed — logging out');
+              // Take reconciliation ownership so orphan SDK state cannot linger.
+              reconcileForIdentity(null);
               setUser(null);
-              // revalidateDriverSession already cleared SecureStore
+              // revalidateDriverSession already performed secure sign-out + SecureStore clear
             } else {
               // Re-read session in case revalidation updated fields
               const freshSession = await getDriverSession();
@@ -291,7 +294,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               }
             }
           }).catch((err) => {
-            // Network error during revalidation — keep the user logged in (offline-friendly)
+            // Unexpected throw only: soft keep (revalidate should not throw for hard fails)
             console.log('[AuthContext] Background revalidation error (keeping session):', err);
           });
           return; // Early return — loading already set to false above
@@ -319,6 +322,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.assignedRoutes,
         result.defaultPackageId
       );
+      // Durable secure vs legacy marker — never inferred from passcodeHash alone later.
+      {
+        const { markSessionAuthMode, markSecureSessionVerified } = await import(
+          '../services/secureSessionRevalidation'
+        );
+        if (result.authVerified) {
+          await markSessionAuthMode('secure');
+          // Login just established a verified SDK session — offline soft-fail eligible.
+          await markSecureSessionVerified();
+        } else {
+          await markSessionAuthMode('legacy');
+        }
+      }
       // The identity changed: reconcile for the new driver. The login
       // itself already established and verified the SDK session, but this
       // keeps reconciliation state owned by the current identity rather

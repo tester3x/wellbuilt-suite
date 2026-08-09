@@ -412,63 +412,115 @@ export const isDriverVerified = async (): Promise<boolean> => {
 };
 
 /**
- * Revalidate driver session - verify driver is still approved
+ * Hard-fail cleanup for revalidation: secure sign-out + local identity clear.
+ * Does NOT close the backend shift, write logout events, or run Post-Trip.
+ */
+async function hardFailRevalidationCleanup(): Promise<void> {
+  try {
+    const secure = await import('./secureDriverAuth');
+    secure.invalidateAuthEpoch();
+    await secure.secureSignOut().catch(() => {});
+  } catch {
+    /* boundary may be unavailable offline */
+  }
+  await clearDriverSession();
+}
+
+/**
+ * Revalidate driver session on cold start / resume.
+ *
+ * Secure sessions: SDK claims + verifyDriverSession({}) — never RTDB approved-list.
+ * Legacy sessions: bounded dual-run RTDB drivers/approved/{passcodeHash}.
+ * UUID compatibility aliases never enter the legacy path.
  */
 export const revalidateDriverSession = async (): Promise<boolean> => {
   const session = await getDriverSession();
   if (!session) return false;
 
+  const {
+    resolveSessionAuthMode,
+    revalidateSecureSession,
+    createProductionSecureRevalidationOps,
+    isSecureSessionShape,
+  } = await import('./secureSessionRevalidation');
+
+  const mode = await resolveSessionAuthMode(session);
+
+  // Secure path — never touch drivers/approved/{hash}
+  if (mode === 'secure' || isSecureSessionShape(session)) {
+    console.log('[DriverAuth-Suite] Revalidating secure session');
+    const ops = createProductionSecureRevalidationOps(hardFailRevalidationCleanup);
+    const result = await revalidateSecureSession(session, ops);
+    if (result.outcome === 'verified') {
+      console.log('[DriverAuth-Suite] Secure session revalidated');
+      return true;
+    }
+    if (result.outcome === 'soft_offline') {
+      console.log('[DriverAuth-Suite] Secure revalidation offline — keeping verified session');
+      return true;
+    }
+    console.log('[DriverAuth-Suite] Secure revalidation failed — signed out');
+    return false;
+  }
+
+  // ── Legacy dual-run only ───────────────────────────────────────────────
   try {
     const hash = session.passcodeHash;
     if (!hash) {
-      console.log("[DriverAuth-Suite] No passcodeHash in session");
+      console.log('[DriverAuth-Suite] No passcodeHash in legacy session');
+      await hardFailRevalidationCleanup();
+      return false;
+    }
+    // Never treat UUID alias as a legacy RTDB key
+    if (isSecureSessionShape(session)) {
+      console.log('[DriverAuth-Suite] Refusing legacy path for secure session shape');
+      await hardFailRevalidationCleanup();
       return false;
     }
 
-    console.log("[DriverAuth-Suite] Revalidating session");
+    console.log('[DriverAuth-Suite] Revalidating legacy session');
     const driverData = await firebaseGet(`${DRIVERS_APPROVED}/${hash}`);
 
     if (!driverData) {
-      console.log("[DriverAuth-Suite] Driver not found, clearing session...");
-      await clearDriverSession();
+      console.log('[DriverAuth-Suite] Legacy driver not found, clearing session...');
+      await hardFailRevalidationCleanup();
       return false;
     }
 
-    // Check new structure (displayName at root)
     if (driverData.displayName) {
       if (driverData.active === false) {
-        console.log("[DriverAuth-Suite] Driver deactivated, clearing session...");
-        await clearDriverSession();
+        console.log('[DriverAuth-Suite] Legacy driver deactivated, clearing session...');
+        await hardFailRevalidationCleanup();
         return false;
       }
       return true;
     }
 
-    // Check legacy structure (nested by deviceId)
     for (const key of Object.keys(driverData)) {
       const entry = driverData[key];
       if (entry.displayName?.toLowerCase() === session.displayName.toLowerCase()) {
         if (entry.active === false) {
-          console.log("[DriverAuth-Suite] Driver deactivated (legacy), clearing session...");
-          await clearDriverSession();
+          console.log('[DriverAuth-Suite] Legacy driver deactivated, clearing session...');
+          await hardFailRevalidationCleanup();
           return false;
         }
         return true;
       }
     }
 
-    console.log("[DriverAuth-Suite] Driver name not found in approved list");
-    await clearDriverSession();
+    console.log('[DriverAuth-Suite] Legacy name not found in approved list');
+    await hardFailRevalidationCleanup();
     return false;
   } catch (error) {
-    console.error("[DriverAuth-Suite] Error revalidating session:", error);
-    // Don't clear session on network error - allow offline use
+    // Transport only — keep offline legacy session (unchanged dual-run policy)
+    console.log('[DriverAuth-Suite] Legacy revalidation network error — keeping session');
     return true;
   }
 };
 
 /**
- * Clear driver session (logout)
+ * Clear driver session (logout / hard revalidation fail).
+ * Does not touch shiftStarted / currentShiftId / backend shift.
  */
 export const clearDriverSession = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("driverId");
@@ -481,6 +533,13 @@ export const clearDriverSession = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("companyName");
   await SecureStore.deleteItemAsync("legalName");
   await SecureStore.deleteItemAsync("assignedRoutes");
+  await SecureStore.deleteItemAsync("defaultPackageId");
+  try {
+    const { clearSecureSessionMarkers } = await import('./secureSessionRevalidation');
+    await clearSecureSessionMarkers();
+  } catch {
+    /* ignore */
+  }
   await clearPendingRegistration();
 };
 
