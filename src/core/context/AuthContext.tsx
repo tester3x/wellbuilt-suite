@@ -356,16 +356,115 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         observeEnforcementSafety(result.companyId, 'AuthContext.login').catch(() => {});
       }
 
-      // New login = clean slate. Clear stale flags + SSO tracking from previous session.
-      await SecureStore.deleteItemAsync('shiftEnded');
-      await SecureStore.deleteItemAsync('shiftStarted');
-      await SecureStore.deleteItemAsync('returnDepartTime');
-      await SecureStore.deleteItemAsync('activePackageId');
+      // SSO app-switcher tracking is always reset on fresh identity login.
       await clearSSOLaunchedApps();
-      setShiftActive(false);
+      await SecureStore.deleteItemAsync('returnDepartTime');
       setReturningToYard(false);
       setReturnDepartTime(null);
-      setActivePackageId(null);
+
+      // ── Explicit-shift restoration (do NOT blind-clear under enforcement) ──
+      // clearDriverSession never clears AsyncStorage currentShiftId; login must
+      // re-verify that cache against origin-day authority (cross-midnight safe).
+      try {
+        const companyId = result.companyId || '';
+        const [{ fetchCompanyConfig }, { parseSuiteEnforcement, mayUseDateFallback }, { decidePostLoginShiftRestore, shiftStartIsoFromShiftId }, { fetchShiftDayDoc }] =
+          await Promise.all([
+            import('../services/companyConfig'),
+            import('../services/workPeriodAuthority/suiteShiftAuthority'),
+            import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+            import('../services/shiftTracking'),
+          ]);
+        const cfg = companyId ? await fetchCompanyConfig(companyId) : null;
+        const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+        const n = new Date();
+        const localDate = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+        const cached = await getCurrentShiftId();
+        const priorStarted = (await SecureStore.getItemAsync('shiftStarted')) === 'true';
+
+        if (enforcement.state === 'active' && enforcement.mode === 'explicit_shift') {
+          const action = await decidePostLoginShiftRestore({
+            enforcement,
+            cachedShiftId: cached,
+            localDate,
+            nowMs: Date.now(),
+            companyId,
+            driverId: result.driverId,
+            fetchDayDoc: (date) => fetchShiftDayDoc(result.driverId, date),
+            localShiftStarted: priorStarted,
+          });
+          if (action.kind === 'restore_active' && action.periodId) {
+            await setCurrentShiftId(action.periodId);
+            await SecureStore.setItemAsync('shiftStarted', 'true');
+            await SecureStore.deleteItemAsync('shiftEnded');
+            const startIso =
+              action.shiftStartTimeIso ||
+              shiftStartIsoFromShiftId(action.periodId) ||
+              (await SecureStore.getItemAsync('shiftStartTime'));
+            if (startIso) {
+              await SecureStore.setItemAsync('shiftStartTime', startIso);
+              setShiftStartTime(startIso);
+            }
+            // Keep package if still present; do not invent one
+            const savedPkgId = await SecureStore.getItemAsync('activePackageId');
+            if (savedPkgId) setActivePackageId(savedPkgId);
+            setShiftActive(true);
+            console.log(
+              '[AuthContext] Restored explicit shift after login periodId=' + action.periodId,
+            );
+            // Resume hygiene only — must not mint or append a new login event.
+            checkShiftOnResume(
+              result.driverId,
+              result.legalName || result.displayName,
+              result.companyId,
+              'wbs',
+              action.periodId,
+            ).catch(() => {});
+          } else if (action.kind === 'inactive_allow_start') {
+            await SecureStore.deleteItemAsync('shiftStarted');
+            await SecureStore.setItemAsync('shiftEnded', 'true');
+            await clearCurrentShiftId();
+            setShiftActive(false);
+            setShiftStartTime(null);
+            setActivePackageId(null);
+            await SecureStore.deleteItemAsync('activePackageId');
+            console.log(
+              '[AuthContext] Post-login authority: no open shift (' + action.reason + ')',
+            );
+          } else {
+            // block_start — unreadable / mismatch / missing-cache discovery gap
+            await SecureStore.deleteItemAsync('shiftStarted');
+            await SecureStore.deleteItemAsync('shiftEnded');
+            setShiftActive(false);
+            setShiftStartTime(null);
+            // Keep currentShiftId cache if present for a later retry; do not mint.
+            console.log(
+              '[AuthContext] Post-login shift restore blocked (' + action.reason + ') — Start Shift disabled until authority clears',
+            );
+            // Surface non-actionable state: shiftActive false AND shiftMintBlocked
+            // is enforced in startShift pre-mint gate (refuse when open/unknown).
+          }
+        } else if (mayUseDateFallback(enforcement)) {
+          // Legacy/inert: established clean-slate on fresh login.
+          await SecureStore.deleteItemAsync('shiftEnded');
+          await SecureStore.deleteItemAsync('shiftStarted');
+          await SecureStore.deleteItemAsync('activePackageId');
+          await clearCurrentShiftId();
+          setShiftActive(false);
+          setShiftStartTime(null);
+          setActivePackageId(null);
+        } else {
+          // invalid / unknown contract — fail closed (no mint from local flags)
+          await SecureStore.deleteItemAsync('shiftStarted');
+          setShiftActive(false);
+          setShiftStartTime(null);
+        }
+      } catch (err) {
+        console.warn('[AuthContext] Post-login shift restore failed closed:', err);
+        await SecureStore.deleteItemAsync('shiftStarted');
+        setShiftActive(false);
+        setShiftStartTime(null);
+      }
+
       setUser({
         driverId: result.driverId,
         displayName: result.displayName,
@@ -393,6 +492,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // event to the WB JSA refresh log byte-for-byte.
     const _now = new Date();
     const localDate = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+
+    // Pre-mint authority gate: never rely solely on React shiftActive.
+    // Under explicit_shift, refuse if an open period exists or authority is unknown.
+    try {
+      const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { decidePreMintShiftGate }, { fetchShiftDayDoc }] =
+        await Promise.all([
+          import('../services/companyConfig'),
+          import('../services/workPeriodAuthority/suiteShiftAuthority'),
+          import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+          import('../services/shiftTracking'),
+        ]);
+      const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+      const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+      const cached = await getCurrentShiftId();
+      const gate = await decidePreMintShiftGate({
+        enforcement,
+        cachedShiftId: cached,
+        localDate,
+        nowMs: Date.now(),
+        companyId: user.companyId || '',
+        driverId: user.driverId,
+        fetchDayDoc: (date) => fetchShiftDayDoc(user.driverId, date),
+      });
+      if (!gate.allowMint) {
+        if (gate.openPeriodId) {
+          // Heal UI: restore the open period instead of dual-opening.
+          await setCurrentShiftId(gate.openPeriodId);
+          await SecureStore.setItemAsync('shiftStarted', 'true');
+          await SecureStore.deleteItemAsync('shiftEnded');
+          setShiftActive(true);
+          console.log(
+            '[startShift] refused mint — open explicit shift restored periodId=' + gate.openPeriodId,
+          );
+        } else {
+          console.log('[startShift] refused mint — ' + gate.reason);
+        }
+        return;
+      }
+      // Closed/stale cache may be cleared before mint
+      if (cached) await clearCurrentShiftId();
+    } catch (err) {
+      console.warn('[startShift] pre-mint authority check failed closed:', err);
+      return;
+    }
+
     // Mint a fresh shiftId for the new shift. JSA is keyed by this id
     // across WB S / WB T / WB JSA — closing a shift "freezes" its JSA
     // because the next shift gets a new id. SSO deep links pass it down
