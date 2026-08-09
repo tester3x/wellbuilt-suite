@@ -6,6 +6,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  decideColdStartFlagAction,
   decidePostLoginShiftRestore,
   decidePreMintShiftGate,
   mapVerdictToRestoreAction,
@@ -206,10 +207,107 @@ test('18. derived/synthetic fallback remains disabled under active explicit', ()
   assert.equal(mayUseDateFallback(explicit), false);
 });
 
-test('wiring: login path consults decidePostLoginShiftRestore', () => {
+test('cold-start: cached open origin-day with missing local flags → set_active', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: '2026-08-08_211725',
+    localShiftStarted: false,
+    fetchDayDoc: doc({
+      '2026-08-09': { readable: true, present: false },
+      '2026-08-08': { readable: true, present: true, currentShiftId: '2026-08-08_211725' },
+    }),
+  });
+  assert.equal(a.kind, 'restore_active');
+  assert.equal(
+    decideColdStartFlagAction({ priorLocalActive: false, action: a }),
+    'set_active',
+  );
+});
+
+test('cold-start: closed shift → set_inactive', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: '2026-08-08_211725',
+    fetchDayDoc: doc({
+      '2026-08-09': { readable: true, present: true, currentShiftId: '' },
+      '2026-08-08': { readable: true, present: true, currentShiftId: '' },
+    }),
+  });
+  assert.equal(
+    decideColdStartFlagAction({ priorLocalActive: true, action: a }),
+    'set_inactive',
+  );
+});
+
+test('cold-start: unreadable authority + prior active → preserve_active_offline', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: '2026-08-08_211725',
+    fetchDayDoc: doc({}),
+  });
+  assert.equal(a.kind, 'block_start');
+  assert.equal(
+    decideColdStartFlagAction({ priorLocalActive: true, action: a }),
+    'preserve_active_offline',
+  );
+});
+
+test('cold-start: unreadable + not active → leave_inactive (no mint)', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: '2026-08-08_211725',
+    fetchDayDoc: doc({}),
+  });
+  assert.equal(
+    decideColdStartFlagAction({ priorLocalActive: false, action: a }),
+    'leave_inactive',
+  );
+});
+
+test('cold-start: today absent does not invent restore without origin open', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: null,
+    fetchDayDoc: doc({
+      '2026-08-09': { readable: true, present: false },
+    }),
+  });
+  assert.equal(a.kind, 'block_start');
+  assert.equal(
+    decideColdStartFlagAction({ priorLocalActive: false, action: a }),
+    'leave_inactive',
+  );
+});
+
+test('cold-start: idempotent restore when already local active', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: '2026-08-08_211725',
+    localShiftStarted: true,
+    fetchDayDoc: doc({
+      '2026-08-09': { readable: true, present: false },
+      '2026-08-08': { readable: true, present: true, currentShiftId: '2026-08-08_211725' },
+    }),
+  });
+  assert.equal(a.kind, 'restore_active');
+  assert.equal(
+    decideColdStartFlagAction({ priorLocalActive: true, action: a }),
+    'set_active',
+  );
+});
+
+test('wiring: login + cold-start consult decidePostLoginShiftRestore', () => {
   const auth = readFileSync(join(__dirname, '..', '..', 'context', 'AuthContext.tsx'), 'utf8');
   assert.ok(auth.includes('decidePostLoginShiftRestore'));
   assert.ok(auth.includes('decidePreMintShiftGate'));
+  assert.ok(auth.includes('decideColdStartFlagAction'));
+  assert.ok(auth.includes('Cold-start restored explicit shift'));
   // Must not still do blind clean-slate only without authority for explicit
   assert.ok(auth.includes("mode === 'explicit_shift'"));
 });

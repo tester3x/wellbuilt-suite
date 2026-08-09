@@ -217,12 +217,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             observeEnforcementSafety(session.companyId, 'AuthContext.sessionRestore').catch(() => {});
           }
 
-          // Check if shift was explicitly started (and not ended)
+          // Local flags are hints only. Under explicit_shift, cold start must
+          // consult origin-day authority even when shiftStarted is missing —
+          // otherwise an open overnight shift shows "Start Shift" until a tap.
+          // Does not mint, write day docs, or append login events.
           const shiftStarted = await SecureStore.getItemAsync('shiftStarted');
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
-          const isActive = shiftStarted === 'true' && shiftEnded !== 'true';
-          setShiftActive(isActive);
-          if (isActive) {
+          const priorLocalActive = shiftStarted === 'true' && shiftEnded !== 'true';
+          setShiftActive(priorLocalActive);
+          if (priorLocalActive) {
             const startTime = await SecureStore.getItemAsync('shiftStartTime');
             setShiftStartTime(startTime || null);
           }
@@ -238,44 +241,138 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setReturnDepartTime(savedReturnTime);
           }
 
-          // Only track shift if driver explicitly started one (tapped "Start Shift").
-          // Logged-in but not on-shift should NOT create a shift doc / login event.
-          // vc51.9C: the cached shift id is verified against AUTHORITY through
-          // the canonical resolver before it is presented as current. Closed/
-          // superseded → cleared and the local session marked ended (never
-          // reopened); unverified (offline) → preserved but the backfill still
-          // runs with the cached id so the doc keeps its scope key.
-          if (isActive) {
-            (async () => {
-              try {
-                const cached = await getCurrentShiftId();
-                const [{ verifyCachedShiftAgainstAuthority }, { fetchShiftDayDoc }] = await Promise.all([
-                  import('../services/workPeriodAuthority/suiteShiftAuthority'),
-                  import('../services/shiftTracking'),
-                ]);
-                const n = new Date();
-                const localDate = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-                const v = await verifyCachedShiftAgainstAuthority({
-                  companyId: session.companyId || '',
-                  driverId: session.driverId,
-                  cachedShiftId: cached,
-                  localDate,
-                  nowMs: Date.now(),
-                  fetchDayDoc: (date) => fetchShiftDayDoc(session.driverId, date),
-                });
-                if (v.verdict === 'verified_closed') {
-                  await clearCurrentShiftId();
-                  await SecureStore.setItemAsync('shiftEnded', 'true');
-                  setShiftActive(false);
-                  console.log('[AuthContext] cached shift closed by authority (' + v.reason + ') — cleared, not reopened');
-                  return;
+          // Authoritative cold-start restoration (always when company known).
+          void (async () => {
+            try {
+              const companyId = session.companyId || '';
+              if (!companyId) {
+                if (priorLocalActive) {
+                  checkShiftOnResume(
+                    session.driverId,
+                    session.legalName || session.displayName,
+                    session.companyId,
+                  ).catch(() => {});
                 }
-                checkShiftOnResume(session.driverId, session.legalName || session.displayName, session.companyId, 'wbs', cached).catch(() => {});
-              } catch {
-                checkShiftOnResume(session.driverId, session.legalName || session.displayName, session.companyId).catch(() => {});
+                return;
               }
-            })();
-          }
+              const [
+                { fetchCompanyConfig },
+                { parseSuiteEnforcement },
+                {
+                  decidePostLoginShiftRestore,
+                  decideColdStartFlagAction,
+                  shiftStartIsoFromShiftId,
+                },
+                { fetchShiftDayDoc },
+              ] = await Promise.all([
+                import('../services/companyConfig'),
+                import('../services/workPeriodAuthority/suiteShiftAuthority'),
+                import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+                import('../services/shiftTracking'),
+              ]);
+              const cfg = await fetchCompanyConfig(companyId);
+              const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+              const n = new Date();
+              const localDate = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+              const cached = await getCurrentShiftId();
+
+              // Only enforced explicit_shift uses authority restore on cold start.
+              // Legacy/inert keeps priorLocalActive flags as before.
+              if (enforcement.state !== 'active' || enforcement.mode !== 'explicit_shift') {
+                if (priorLocalActive) {
+                  checkShiftOnResume(
+                    session.driverId,
+                    session.legalName || session.displayName,
+                    session.companyId,
+                    'wbs',
+                    cached,
+                  ).catch(() => {});
+                }
+                return;
+              }
+
+              const action = await decidePostLoginShiftRestore({
+                enforcement,
+                cachedShiftId: cached,
+                localDate,
+                nowMs: Date.now(),
+                companyId,
+                driverId: session.driverId,
+                fetchDayDoc: (date) => fetchShiftDayDoc(session.driverId, date),
+                localShiftStarted: priorLocalActive,
+              });
+              const flag = decideColdStartFlagAction({
+                priorLocalActive,
+                action,
+              });
+
+              if (flag === 'set_active' && action.kind === 'restore_active' && action.periodId) {
+                await setCurrentShiftId(action.periodId);
+                await SecureStore.setItemAsync('shiftStarted', 'true');
+                await SecureStore.deleteItemAsync('shiftEnded');
+                const startIso =
+                  action.shiftStartTimeIso ||
+                  shiftStartIsoFromShiftId(action.periodId) ||
+                  (await SecureStore.getItemAsync('shiftStartTime'));
+                if (startIso) {
+                  await SecureStore.setItemAsync('shiftStartTime', startIso);
+                  setShiftStartTime(startIso);
+                }
+                setShiftActive(true);
+                console.log(
+                  '[AuthContext] Cold-start restored explicit shift periodId=' + action.periodId,
+                );
+                checkShiftOnResume(
+                  session.driverId,
+                  session.legalName || session.displayName,
+                  session.companyId,
+                  'wbs',
+                  action.periodId,
+                ).catch(() => {});
+              } else if (flag === 'set_inactive') {
+                await SecureStore.deleteItemAsync('shiftStarted');
+                await SecureStore.setItemAsync('shiftEnded', 'true');
+                await clearCurrentShiftId();
+                setShiftActive(false);
+                setShiftStartTime(null);
+                console.log(
+                  '[AuthContext] Cold-start authority: no open shift (' +
+                    (action.kind === 'inactive_allow_start' ? action.reason : 'inactive') +
+                    ')',
+                );
+              } else if (flag === 'preserve_active_offline') {
+                // UNVERIFIED_OFFLINE — keep local active, do not mint.
+                console.log(
+                  '[AuthContext] Cold-start UNVERIFIED_OFFLINE — preserving local active shift',
+                );
+                checkShiftOnResume(
+                  session.driverId,
+                  session.legalName || session.displayName,
+                  session.companyId,
+                  'wbs',
+                  cached,
+                ).catch(() => {});
+              } else {
+                // leave_inactive — keep cache for later retry; no mint
+                setShiftActive(false);
+                console.log(
+                  '[AuthContext] Cold-start leave inactive (' +
+                    (action.kind === 'block_start' ? action.reason : 'leave') +
+                    ')',
+                );
+              }
+            } catch (err) {
+              console.warn('[AuthContext] Cold-start shift restore failed closed:', err);
+              // Fail closed without mint; if we had local active, keep offline continuity.
+              if (priorLocalActive) {
+                checkShiftOnResume(
+                  session.driverId,
+                  session.legalName || session.displayName,
+                  session.companyId,
+                ).catch(() => {});
+              }
+            }
+          })();
 
           // Revalidate in background (non-blocking). Secure path uses
           // verifyDriverSession; hard fail clears SDK+local without shift close.

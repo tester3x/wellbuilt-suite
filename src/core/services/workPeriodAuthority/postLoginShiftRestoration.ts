@@ -182,6 +182,31 @@ export async function decidePreMintShiftGate(deps: {
   return { allowMint: true, reason: verdict.reason };
 }
 
+/**
+ * Map post-login/cold-start authority action + prior local flags to a local
+ * flag decision. Pure — no I/O.
+ *
+ * Cold start must restore when authority says open even if `shiftStarted`
+ * is missing. UNVERIFIED (block_start) with prior local active preserves
+ * offline continuity without minting.
+ */
+export type ColdStartFlagDecision =
+  | 'set_active'
+  | 'set_inactive'
+  | 'preserve_active_offline'
+  | 'leave_inactive';
+
+export function decideColdStartFlagAction(input: {
+  priorLocalActive: boolean;
+  action: ShiftUiRestoreAction;
+}): ColdStartFlagDecision {
+  if (input.action.kind === 'restore_active') return 'set_active';
+  if (input.action.kind === 'inactive_allow_start') return 'set_inactive';
+  // block_start: unreadable / mismatch / discovery gap
+  if (input.priorLocalActive) return 'preserve_active_offline';
+  return 'leave_inactive';
+}
+
 /** Derive a plausible ISO start time from shift id wall-clock (local, not authoritative GPS). */
 export function shiftStartIsoFromShiftId(shiftId: string): string | null {
   // `${YYYY-MM-DD}_${HHMMSS}` — best-effort local wall time for UI timer only.
