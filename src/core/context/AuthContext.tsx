@@ -18,7 +18,7 @@ import {
   completeRegistration,
   firebasePatch,
 } from '../services/driverAuth';
-import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, clearCurrentShiftId, getCurrentShiftId } from '../services/shiftTracking';
+import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, clearCurrentShiftId, getCurrentShiftId, observeEnforcementSafety } from '../services/shiftTracking';
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { clearSSOLaunchedApps } from '../services/appLauncher';
@@ -209,6 +209,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(sessionToUser(session));
           setLoading(false);
 
+          // Cold-start / session restore: force-refresh company config and
+          // refresh durable enforcement LKG when a live read succeeds.
+          // Independent of shift activity so cutover does not require
+          // Start Shift. Does not clear auth/shift/JSA/DVIR state.
+          if (session.companyId) {
+            observeEnforcementSafety(session.companyId, 'AuthContext.sessionRestore').catch(() => {});
+          }
+
           // Check if shift was explicitly started (and not ended)
           const shiftStarted = await SecureStore.getItemAsync('shiftStarted');
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
@@ -324,6 +332,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // So truck/trailer/signature are ready for SSO deep links + shift start
       loadDriverProfile(result.passcodeHash).catch(() => {});
       loadVehicleInfo(result.passcodeHash).catch(() => {});
+
+      // Cutover / enforcement LKG: force-refresh company config on secure
+      // login and persist durable enforcement safety state when the live
+      // read succeeds. Does not clear auth, shift, JSA, or DVIR keys.
+      if (result.companyId) {
+        observeEnforcementSafety(result.companyId, 'AuthContext.login').catch(() => {});
+      }
 
       // New login = clean slate. Clear stale flags + SSO tracking from previous session.
       await SecureStore.deleteItemAsync('shiftEnded');

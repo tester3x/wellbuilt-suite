@@ -210,14 +210,20 @@ export function enforcementAllowsSyntheticClose(enforcement: SuiteEnforcement): 
 
 /**
  * Explicit company-document load outcome for shift-destructive gates.
+ *
  * Callers MUST NOT pass bare `null` from fetchCompanyConfig — that API
- * collapses failed reads and empty results. Use loadCompanyConfigResult
- * (or an equivalent) and map:
- *   live|cache → { status: 'readable', doc: config }
+ * collapses failed reads and empty results. Map loadCompanyConfigResult:
+ *   live        → { status: 'live', doc: config }
+ *   cache       → { status: 'cache', doc: config }
  *   unavailable → { status: 'unreadable' }
+ *
+ * LKG is only updated from `live` (network success). Cache-only results
+ * never downgrade a prior enforced LKG (cutover safety: stale pre-contract
+ * TTL cache must not re-confirm legacy after a live v3 observation).
  */
 export type CompanyDocLoadOutcome =
-  | { status: 'readable'; doc: unknown }
+  | { status: 'live'; doc: unknown }
+  | { status: 'cache'; doc: unknown }
   | { status: 'unreadable' };
 
 /** How the synthetic-close gate arrived at its decision (diagnostics). */
@@ -227,6 +233,7 @@ export type SyntheticCloseObservationSource =
   | 'confirmed_active'
   | 'confirmed_invalid'
   | 'last_known_good'
+  | 'cache_provisional'
   | 'temporarily_unreadable_unknown'
   | 'missing_company';
 
@@ -234,8 +241,12 @@ export type SyntheticCloseDecision = {
   allow: boolean;
   enforcement: SuiteEnforcement;
   source: SyntheticCloseObservationSource;
-  /** True when the company document could not be read (not a confirmed observation). */
+  /** True when no live network document was used for this decision. */
   unreadable: boolean;
+  /** Whether durable LKG was written on this call. */
+  lkgUpdated: boolean;
+  /** Load provenance for cutover diagnostics (not the full company doc). */
+  loadKind: 'live' | 'cache' | 'unreadable' | 'missing_company';
 };
 
 /** Durable last-known-good payload (company-scoped, no TTL). */
@@ -267,7 +278,7 @@ export function createAsyncStorageEnforcementSafetyStore(
   return {
     async load(companyId) {
       try {
-        const raw = await storage.getItem(`${ENFORCEMENT_SAFETY_KEY_PREFIX}${companyId}`);
+        const raw = await storage.getItem(enforcementSafetyLkgKey(companyId));
         if (!raw) return null;
         const parsed = JSON.parse(raw) as LastKnownEnforcement;
         if (!parsed || typeof parsed !== 'object' || !parsed.enforcement) return null;
@@ -280,7 +291,7 @@ export function createAsyncStorageEnforcementSafetyStore(
     async save(companyId, value) {
       try {
         await storage.setItem(
-          `${ENFORCEMENT_SAFETY_KEY_PREFIX}${companyId}`,
+          enforcementSafetyLkgKey(companyId),
           JSON.stringify(value),
         );
       } catch {
@@ -316,18 +327,20 @@ function observationSourceFor(enforcement: SuiteEnforcement): SyntheticCloseObse
 }
 
 /**
- * Shift-destructive synthetic-close gate.
+ * Shift-destructive synthetic-close gate + cutover LKG observer.
  *
- * - Readable outcomes update durable last-known-good and decide from the
- *   confirmed SuiteEnforcement (legacy/inert allow; active/invalid block).
- * - Unreadable outcomes consult last-known-good: prior active/invalid
- *   continues to block; prior legacy/inert continues to allow.
- * - Unreadable with NO last-known-good is UNKNOWN — blocks synthetic close.
- *   It is NOT confirmed legacy. Never-configured companies that are
- *   reachable online still authorize via confirmed_legacy after a real read.
- * - Missing companyId blocks (no company context is not legacy permission).
- * - Loader throw is treated as unreadable (never fall through to allow).
- * - Cache TTL is irrelevant to the durable LKG safety store.
+ * Live network document:
+ *   - parse → decide
+ *   - ALWAYS update durable LKG (including deliberate inert/legacy rollback)
+ * Cache-only document (TTL hit or failure-fallback):
+ *   - NEVER overwrite LKG (stale pre-contract cache must not clobber enforced)
+ *   - if LKG exists → decide from LKG
+ *   - if no LKG → provisional decide from cache (no persist)
+ * Unreadable:
+ *   - if LKG exists → decide from LKG
+ *   - else → block (unknown ≠ confirmed legacy)
+ * Missing companyId → block
+ * Loader throw → unreadable path
  */
 export async function resolveSyntheticCloseDecision(
   companyId: string | null | undefined,
@@ -336,12 +349,13 @@ export async function resolveSyntheticCloseDecision(
   nowMs: number = Date.now(),
 ): Promise<SyntheticCloseDecision> {
   if (!companyId) {
-    // Route 2: missing companyId must NOT authorize a destructive close.
     return {
       allow: false,
       enforcement: { state: 'legacy' },
       source: 'missing_company',
       unreadable: true,
+      lkgUpdated: false,
+      loadKind: 'missing_company',
     };
   }
 
@@ -349,38 +363,64 @@ export async function resolveSyntheticCloseDecision(
   try {
     outcome = await loadCompanyDoc(companyId);
   } catch {
-    // Route 3 (partial): loader/runtime failure → unreadable, never allow
-    // solely because the check threw.
     outcome = { status: 'unreadable' };
   }
 
-  if (outcome.status === 'readable') {
-    // Confirmed observation only. A readable config object with no
-    // wellbuiltContract → confirmed legacy. Do NOT pass bare fetch null
-    // here — that is unreadable, not confirmed absent.
+  if (outcome.status === 'live') {
     const enforcement = parseSuiteEnforcement(outcome.doc ?? undefined);
+    let lkgUpdated = false;
     try {
       await store.save(companyId, { enforcement, observedAtMs: nowMs });
+      lkgUpdated = true;
     } catch {
-      // already best-effort inside store.save
+      lkgUpdated = false;
     }
     return {
       allow: enforcementAllowsSyntheticClose(enforcement),
       enforcement,
       source: observationSourceFor(enforcement),
       unreadable: false,
+      lkgUpdated,
+      loadKind: 'live',
     };
   }
 
-  // Unreadable: consult durable LKG. Never invent confirmed-legacy allow
-  // from a failed read with no prior observation (routes 1 and 4).
+  // Cache or unreadable: never invent confirmed-legacy permission from a
+  // failed/stale path when LKG already says enforced.
   const lkg = await store.load(companyId).catch(() => null);
+
+  if (outcome.status === 'cache') {
+    if (lkg?.enforcement) {
+      return {
+        allow: enforcementAllowsSyntheticClose(lkg.enforcement),
+        enforcement: lkg.enforcement,
+        source: 'last_known_good',
+        unreadable: true,
+        lkgUpdated: false,
+        loadKind: 'cache',
+      };
+    }
+    // No LKG yet — provisional decision from cache without persisting.
+    const enforcement = parseSuiteEnforcement(outcome.doc ?? undefined);
+    return {
+      allow: enforcementAllowsSyntheticClose(enforcement),
+      enforcement,
+      source: 'cache_provisional',
+      unreadable: true,
+      lkgUpdated: false,
+      loadKind: 'cache',
+    };
+  }
+
+  // Unreadable
   if (lkg?.enforcement) {
     return {
       allow: enforcementAllowsSyntheticClose(lkg.enforcement),
       enforcement: lkg.enforcement,
       source: 'last_known_good',
       unreadable: true,
+      lkgUpdated: false,
+      loadKind: 'unreadable',
     };
   }
 
@@ -389,7 +429,30 @@ export async function resolveSyntheticCloseDecision(
     enforcement: { state: 'legacy' },
     source: 'temporarily_unreadable_unknown',
     unreadable: true,
+    lkgUpdated: false,
+    loadKind: 'unreadable',
   };
+}
+
+/**
+ * Best-effort extract of configurationVersion from a company config / doc
+ * for cutover diagnostics only. Never used as an authorization signal.
+ */
+export function readConfigurationVersion(doc: unknown): number | null {
+  try {
+    const root = (doc ?? {}) as Record<string, unknown>;
+    const contract = root.wellbuiltContract as Record<string, unknown> | undefined;
+    if (!contract || typeof contract !== 'object') return null;
+    const v = contract.configurationVersion;
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** AsyncStorage key for the durable enforcement safety LKG (company-scoped). */
+export function enforcementSafetyLkgKey(companyId: string): string {
+  return `${ENFORCEMENT_SAFETY_KEY_PREFIX}${companyId}`;
 }
 
 /**

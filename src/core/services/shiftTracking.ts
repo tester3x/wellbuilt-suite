@@ -164,6 +164,84 @@ function eventToFirestoreMap(event: ShiftEvent) {
 }
 
 /**
+ * Force-refresh company config and run the synthetic-close safety resolver.
+ * This is the production cutover path: secure login, cold-start session
+ * restore, Start Shift (via autoClose), and resume all call it so LKG is
+ * updated from a LIVE network read without waiting for the 1h TTL and
+ * without clearing auth/shift/JSA/DVIR state.
+ *
+ * Bounded diagnostic only: companyId, configurationVersion, enforcement
+ * state, loadKind, source, lkgUpdated — never the full company document.
+ */
+export async function observeEnforcementSafety(
+  companyId?: string | null,
+  source: string = 'observeEnforcementSafety',
+): Promise<{ allow: boolean; source: string; lkgUpdated: boolean } | null> {
+  try {
+    const [
+      {
+        resolveSyntheticCloseDecision,
+        createAsyncStorageEnforcementSafetyStore,
+        readConfigurationVersion,
+      },
+      { loadCompanyConfigResult },
+      { wbDiagLog },
+    ] = await Promise.all([
+      import('./workPeriodAuthority/suiteShiftAuthority'),
+      import('./companyConfig'),
+      import('./wbDiagLog'),
+    ]);
+    // forceRefresh: bypass 1h TTL so cutover to configurationVersion:3 is
+    // observed on the next authoritative lifecycle event, not an hour later.
+    // LKG is only written on kind:'live' inside resolveSyntheticCloseDecision.
+    let lastDoc: unknown = null;
+    let lastKind: 'live' | 'cache' | 'unavailable' = 'unavailable';
+    const decision = await resolveSyntheticCloseDecision(
+      companyId,
+      async (id) => {
+        const result = await loadCompanyConfigResult(id, { forceRefresh: true });
+        lastKind = result.kind === 'live' ? 'live' : result.kind === 'cache' ? 'cache' : 'unavailable';
+        if (result.kind === 'unavailable') return { status: 'unreadable' as const };
+        lastDoc = result.config;
+        if (result.kind === 'live') return { status: 'live' as const, doc: result.config };
+        return { status: 'cache' as const, doc: result.config };
+      },
+      createAsyncStorageEnforcementSafetyStore(AsyncStorage),
+    );
+    const configurationVersion = readConfigurationVersion(lastDoc);
+    wbDiagLog({
+      area: 'shift',
+      event: 'enforcement.safety.observe',
+      source,
+      result: decision.lkgUpdated ? 'ok' : decision.unreadable ? 'skipped' : 'ok',
+      reason: decision.source,
+      extra: {
+        companyId: companyId || null,
+        configurationVersion,
+        enforcementState: decision.enforcement.state,
+        loadKind: decision.loadKind,
+        configLoadKind: lastKind,
+        lkgUpdated: decision.lkgUpdated,
+        syntheticCloseAllowed: decision.allow,
+      },
+    });
+    console.log(
+      `[shiftTracking] enforcement safety (${source}): state=${decision.enforcement.state}` +
+        ` load=${decision.loadKind} lkgUpdated=${decision.lkgUpdated} allowSynthetic=${decision.allow}` +
+        (configurationVersion != null ? ` configVersion=${configurationVersion}` : ''),
+    );
+    return {
+      allow: decision.allow,
+      source: decision.source,
+      lkgUpdated: decision.lkgUpdated,
+    };
+  } catch (err) {
+    console.warn('[shiftTracking] observeEnforcementSafety failed:', err);
+    return null;
+  }
+}
+
+/**
  * LEGACY DOT-hygiene sweep: auto-close a stale open shift from a
  * previous calendar day (up to 3 days back, covering weekend gaps) by
  * appending a synthetic `{date}T23:59:59.000Z` logout event.
@@ -187,36 +265,20 @@ async function autoCloseStaleShift(
   companyId?: string,
 ): Promise<void> {
   try {
-    const [
-      {
-        resolveSyntheticCloseDecision,
-        createAsyncStorageEnforcementSafetyStore,
-      },
-      { loadCompanyConfigResult },
-      AsyncStorage,
-    ] = await Promise.all([
-      import('./workPeriodAuthority/suiteShiftAuthority'),
-      import('./companyConfig'),
-      import('@react-native-async-storage/async-storage').then((m) => m.default),
-    ]);
-    // Shift-destructive gate. MUST use loadCompanyConfigResult (explicit
-    // live|cache|unavailable) — fetchCompanyConfig's null collapses
-    // "failed read, no cache" into the same signal as "no config" and
-    // would re-open the legacy fail-open path (Claude route 1 + 4).
-    const decision = await resolveSyntheticCloseDecision(
-      companyId,
-      async (id) => {
-        const result = await loadCompanyConfigResult(id);
-        if (result.kind === 'unavailable') return { status: 'unreadable' as const };
-        return { status: 'readable' as const, doc: result.config };
-      },
-      createAsyncStorageEnforcementSafetyStore(AsyncStorage),
-    );
-    if (!decision.allow) {
+    // Same force-refresh + LKG path as secure login / cold start. The
+    // decision both gates the sweep and persists live enforced LKG.
+    const observed = await observeEnforcementSafety(companyId, `autoCloseStaleShift:${source}`);
+    if (observed && !observed.allow) {
       console.log(
-        `[shiftTracking] synthetic close blocked (${decision.source}` +
-          `${decision.unreadable ? ', unreadable' : ''}) — skipping calendar-boundary close`,
+        `[shiftTracking] synthetic close blocked (${observed.source}) — skipping calendar-boundary close`,
       );
+      return;
+    }
+    // observed === null means the safety check itself failed — fail CLOSED
+    // (do not sweep). Missing allow after a successful observe is only true
+    // for confirmed legacy/inert.
+    if (!observed) {
+      console.warn('[shiftTracking] synthetic-close safety observe failed — skipping sweep');
       return;
     }
   } catch (err) {
