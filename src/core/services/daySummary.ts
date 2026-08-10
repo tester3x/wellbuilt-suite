@@ -303,14 +303,16 @@ export async function fetchTodayInvoices(
 }
 
 /**
- * Fetch today's shift doc for a driver via Firestore REST.
+ * Fetch a driver_shifts day document by local date (YYYY-MM-DD).
+ * Under enforced explicit shift, bookends live on the ORIGIN day of the
+ * period — not "calendar today" after a cross-midnight close.
  */
-export async function fetchTodayShift(
+export async function fetchShiftDocForDate(
   driverId: string,
-): Promise<{ events: TimelineEvent[] } | null> {
-  const now = new Date();
-  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const docId = `${driverId}_${date}`;
+  localDate: string,
+): Promise<{ events: TimelineEvent[]; odometerMiles: number; date: string } | null> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) return null;
+  const docId = `${driverId}_${localDate}`;
   const url = firestoreDocUrl('driver_shifts', docId);
 
   try {
@@ -335,11 +337,43 @@ export async function fetchTodayShift(
     });
 
     const odometerMiles = parseFirestoreValue(doc.fields?.odometerMiles) || 0;
-    return { events, odometerMiles };
+    return { events, odometerMiles, date: localDate };
   } catch (err) {
     console.warn('[daySummary] Failed to fetch shift:', err);
     return null;
   }
+}
+
+/**
+ * Fetch today's shift doc for a driver via Firestore REST (calendar today).
+ * Prefer fetchShiftDocForDate with originLocalDate for explicit periods.
+ */
+export async function fetchTodayShift(
+  driverId: string,
+): Promise<{ events: TimelineEvent[]; odometerMiles?: number } | null> {
+  const now = new Date();
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const result = await fetchShiftDocForDate(driverId, date);
+  if (!result) return null;
+  return { events: result.events, odometerMiles: result.odometerMiles };
+}
+
+/**
+ * Resolve which day document holds the just-completed explicit shift.
+ * Prefer stored originLocalDate, then periodId prefix, then calendar today (legacy).
+ */
+export function resolveShiftSummaryDate(opts: {
+  originLocalDate?: string | null;
+  periodId?: string | null;
+  todayLocalDate: string;
+}): string {
+  if (opts.originLocalDate && /^\d{4}-\d{2}-\d{2}$/.test(opts.originLocalDate)) {
+    return opts.originLocalDate;
+  }
+  if (opts.periodId && /^\d{4}-\d{2}-\d{2}/.test(opts.periodId)) {
+    return opts.periodId.slice(0, 10);
+  }
+  return opts.todayLocalDate;
 }
 
 // ── Summary calculation ──────────────────────────────────────────────────────

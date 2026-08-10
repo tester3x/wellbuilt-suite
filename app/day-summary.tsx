@@ -26,12 +26,15 @@ import { cascadeLogoutToSSOApps } from '@/core/services/appLauncher';
 import {
   fetchTodayInvoices,
   fetchTodayShift,
+  fetchShiftDocForDate,
+  resolveShiftSummaryDate,
   calculateDaySummary,
   type DaySummary,
 } from '@/core/services/daySummary';
 import { acknowledgeShiftJsa } from '@/core/services/jsaShiftAck';
 import { wbDiagLog } from '@/core/services/wbDiagLog';
-import { getCurrentShiftId } from '@/core/services/shiftTracking';
+import { getCurrentShiftId, getCurrentShiftOriginDate } from '@/core/services/shiftTracking';
+import { originDateFromShiftId } from '@/core/services/workPeriodAuthority/postLoginShiftRestoration';
 import JsaCloseModal from '@/ui/shared/JsaCloseModal';
 import type { ShiftDvirSummary } from '@/core/services/dvirGate';
 import {
@@ -254,7 +257,30 @@ export default function DaySummaryScreen() {
 
     // All 4 fetches in parallel — no sequential waits
     const invoicesP = fetchTodayInvoices(driverName, user.companyId).catch(() => [] as any[]);
-    const shiftP = fetchTodayShift(user.driverId).catch(() => null);
+    // Explicit shifts store login/depart_return/logout/odometer on the ORIGIN-day
+    // document (frozen at claim), not "calendar today" after a cross-midnight close.
+    const shiftP = (async () => {
+      try {
+        const periodId = await getCurrentShiftId();
+        const origin = (await getCurrentShiftOriginDate()) || originDateFromShiftId(periodId);
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const day = resolveShiftSummaryDate({
+          originLocalDate: origin,
+          periodId,
+          todayLocalDate: today,
+        });
+        // Prefer origin-day document for explicit periods (cross-midnight safe).
+        const doc = await fetchShiftDocForDate(user.driverId, day).catch(() => null);
+        if (doc) return doc;
+        if (day !== today) {
+          return fetchTodayShift(user.driverId).catch(() => null);
+        }
+        return null;
+      } catch {
+        return fetchTodayShift(user.driverId).catch(() => null);
+      }
+    })();
     const jsaP = shiftIdP.then(async (scope) => {
       // First try the legacy single-doc path: `{driverId}_{shiftId}` (also
       // catches pre-rollout date-keyed docs).

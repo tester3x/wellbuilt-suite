@@ -12,7 +12,8 @@
     "test:auth-core": "tsx --test src/core/services/authSessionCore.test.ts src/core/services/reconciliationCore.test.ts src/core/services/attemptToken.test.ts src/core/services/ssoAuthorizationCore.test.ts src/core/services/ssoLaunchPolicy.test.ts src/core/services/ssoRouteAdapter.test.ts",
     "test:auth": "node tools/test-sdkAuthMigration.mjs && node tools/test-firebaseAuthBoundary.mjs && tsx --test src/core/services/authSessionCore.test.ts src/core/services/reconciliationCore.test.ts src/core/services/attemptToken.test.ts src/core/services/ssoAuthorizationCore.test.ts src/core/services/ssoLaunchPolicy.test.ts src/core/services/ssoRouteAdapter.test.ts",
     "test:sso": "node tools/mirror-sso-protocol.mjs --verify && tsx --test src/core/services/ssoAuthorizationCore.test.ts src/core/services/ssoLaunchPolicy.test.ts src/core/services/ssoRouteAdapter.test.ts src/core/services/ssoAuthorizeRouteOwnership.test.ts",
-    "test:sso-e2e": "tsx tools/test-ssoEndToEnd.mjs"
+    "test:sso-e2e": "tsx tools/test-ssoEndToEnd.mjs",
+    "test:shift-authority": "tsx --test src/core/services/workPeriodAuthority/**/*.test.ts"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
