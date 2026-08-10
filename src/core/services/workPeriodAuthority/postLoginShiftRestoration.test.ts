@@ -10,6 +10,7 @@ import {
   decidePostLoginShiftRestore,
   decidePreMintShiftGate,
   mapVerdictToRestoreAction,
+  mayOpenStartShiftChecklist,
   originDateFromShiftId,
   shiftStartIsoFromShiftId,
 } from './postLoginShiftRestoration';
@@ -203,8 +204,94 @@ test('17b. missing cache refuses mint under explicit_shift (no dual-open)', asyn
   if (!g.allowMint) assert.equal(g.reason, 'missing_cache_no_safe_discovery');
 });
 
+test('17c. server resolve none enables Start Shift without cache', async () => {
+  const g = await decidePreMintShiftGate({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: null,
+    fetchDayDoc: doc({}),
+    resolveServer: async () => ({ protocolVersion: 1, state: 'none' }),
+  });
+  assert.equal(g.allowMint, true);
+  assert.equal(g.reason, 'server_none');
+});
+
+test('17d. server resolve open refuses mint and returns period', async () => {
+  const g = await decidePreMintShiftGate({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: null,
+    fetchDayDoc: doc({}),
+    resolveServer: async () => ({
+      protocolVersion: 1,
+      state: 'open',
+      periodId: '2026-08-08_211725',
+      originLocalDate: '2026-08-08',
+    }),
+  });
+  assert.equal(g.allowMint, false);
+  if (!g.allowMint) {
+    assert.equal(g.openPeriodId, '2026-08-08_211725');
+    assert.equal(g.openOriginLocalDate, '2026-08-08');
+  }
+});
+
+test('17e. server resolve unverifiable blocks mint', async () => {
+  const g = await decidePreMintShiftGate({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: null,
+    fetchDayDoc: doc({}),
+    resolveServer: async () => ({
+      protocolVersion: 1,
+      state: 'unverifiable',
+      reason: 'authority_absent',
+    }),
+  });
+  assert.equal(g.allowMint, false);
+});
+
+test('17f. post-login empty cache + server none → inactive_allow_start', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: null,
+    fetchDayDoc: doc({}),
+    resolveServer: async () => ({ protocolVersion: 1, state: 'none' }),
+  });
+  assert.equal(a.kind, 'inactive_allow_start');
+});
+
+test('17g. post-login empty cache + server open → restore_active', async () => {
+  const a = await decidePostLoginShiftRestore({
+    ...base,
+    enforcement: explicit,
+    cachedShiftId: null,
+    fetchDayDoc: doc({}),
+    resolveServer: async () => ({
+      protocolVersion: 1,
+      state: 'open',
+      periodId: '2026-08-08_211725',
+      originLocalDate: '2026-08-08',
+    }),
+  });
+  assert.equal(a.kind, 'restore_active');
+  if (a.kind === 'restore_active') {
+    assert.equal(a.periodId, '2026-08-08_211725');
+    assert.equal(a.originLocalDate, '2026-08-08');
+  }
+});
+
 test('18. derived/synthetic fallback remains disabled under active explicit', () => {
   assert.equal(mayUseDateFallback(explicit), false);
+});
+
+test('UI checklist only when none or legacy', () => {
+  assert.equal(mayOpenStartShiftChecklist({ kind: 'none' }), true);
+  assert.equal(mayOpenStartShiftChecklist({ kind: 'legacy' }), true);
+  assert.equal(mayOpenStartShiftChecklist({ kind: 'checking' }), false);
+  assert.equal(mayOpenStartShiftChecklist({ kind: 'open', periodId: 'x', originLocalDate: '2026-08-10' }), false);
+  assert.equal(mayOpenStartShiftChecklist({ kind: 'unavailable', reason: 'x' }), false);
 });
 
 test('cold-start: cached open origin-day with missing local flags → set_active', async () => {
@@ -302,14 +389,14 @@ test('cold-start: idempotent restore when already local active', async () => {
   );
 });
 
-test('wiring: login + cold-start consult decidePostLoginShiftRestore', () => {
+test('wiring: login + cold-start consult server postLoginEnforcedRestore', () => {
   const auth = readFileSync(join(__dirname, '..', '..', 'context', 'AuthContext.tsx'), 'utf8');
-  assert.ok(auth.includes('decidePostLoginShiftRestore'));
-  assert.ok(auth.includes('decidePreMintShiftGate'));
-  assert.ok(auth.includes('decideColdStartFlagAction'));
+  assert.ok(auth.includes('postLoginEnforcedRestore'));
+  assert.ok(auth.includes('claimEnforcedExplicitStart'));
+  assert.ok(auth.includes('isEnforcedExplicitShift'));
   assert.ok(auth.includes('Cold-start restored explicit shift'));
   // Must not still do blind clean-slate only without authority for explicit
-  assert.ok(auth.includes("mode === 'explicit_shift'"));
+  assert.ok(auth.includes('isEnforcedExplicitShift'));
 });
 
 test('wiring: restore does not call mintShiftId or recordShiftEvent login on restore path', () => {
@@ -319,4 +406,5 @@ test('wiring: restore does not call mintShiftId or recordShiftEvent login on res
   assert.ok(loginFn.includes('Restored explicit shift after login'));
   assert.ok(!loginFn.includes('mintShiftId()'));
   assert.ok(!/recordShiftEvent\(\s*'login'/.test(loginFn));
+  assert.ok(!loginFn.includes('claimEnforcedExplicitStart'));
 });

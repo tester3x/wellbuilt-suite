@@ -1,23 +1,21 @@
 /**
  * Post-login / pre-mint explicit-shift restoration against canonical authority.
  *
- * Does NOT invent a second work-period resolver. Uses
- * verifyCachedShiftAgainstAuthority → resolveWorkPeriod only.
+ * Enforced explicit_shift empty-cache path uses server resolveActiveDriverShift
+ * (injected). Cache present still verifies origin-day day docs when no server
+ * resolve is supplied, or prefers server resolve when provided.
  *
- * Missing cached shiftId: no safe unbounded discovery seam exists on the
- * client. Do not treat "today absent" as proof of no open overnight shift.
- * That case is fail-closed for UI mint enablement unless the canonical
- * verifier returns a positive no_shift with a present-but-empty today
- * AND no cache (same-day no-open only). Overnight without cache remains
- * an architectural gap (documented).
+ * Legacy/inert keep local-flag / date-fallback behavior.
  */
 import type { CachedShiftVerdict, DayDoc, SuiteEnforcement } from './suiteShiftAuthority';
 import { mayUseDateFallback, verifyCachedShiftAgainstAuthority } from './suiteShiftAuthority';
+import type { ResolveActiveResult } from './shiftAuthorityClient';
 
 export type ShiftUiRestoreAction =
   | {
       kind: 'restore_active';
       periodId: string;
+      originLocalDate?: string;
       /** ISO start time if known from local evidence; null → keep/leave unset */
       shiftStartTimeIso: string | null;
     }
@@ -38,6 +36,10 @@ export function originDateFromShiftId(shiftId: string | null | undefined): strin
   return shiftId.slice(0, 10);
 }
 
+export function isEnforcedExplicitShift(enforcement: SuiteEnforcement): boolean {
+  return enforcement.state === 'active' && enforcement.mode === 'explicit_shift';
+}
+
 /**
  * Map a cached-shift authority verdict to local UI/persistence actions.
  * Requires periodId equality on verified_open (caller must pass the cache used).
@@ -53,6 +55,7 @@ export function mapVerdictToRestoreAction(
     return {
       kind: 'restore_active',
       periodId: verdict.periodId,
+      originLocalDate: originDateFromShiftId(verdict.periodId) || undefined,
       shiftStartTimeIso: null,
     };
   }
@@ -60,22 +63,35 @@ export function mapVerdictToRestoreAction(
     return { kind: 'inactive_allow_start', reason: verdict.reason };
   }
   if (verdict.verdict === 'no_shift') {
-    // Positive no-open only when the verifier said so with the evidence given.
-    // Callers must not pass a fabricated empty today for overnight without cache.
     return { kind: 'inactive_allow_start', reason: verdict.reason };
   }
-  // unverified
   return { kind: 'block_start', reason: verdict.reason };
+}
+
+/** Map server resolveActiveDriverShift result to UI restore action. */
+export function mapServerResolveToRestoreAction(resolved: ResolveActiveResult): ShiftUiRestoreAction {
+  if (resolved.state === 'open') {
+    return {
+      kind: 'restore_active',
+      periodId: resolved.periodId,
+      originLocalDate: resolved.originLocalDate,
+      shiftStartTimeIso: null,
+    };
+  }
+  if (resolved.state === 'none') {
+    return { kind: 'inactive_allow_start', reason: 'server_none' };
+  }
+  return { kind: 'block_start', reason: `server_unverifiable:${resolved.reason}` };
 }
 
 /**
  * Decide post-login shift UI from enforcement + cache + authority.
  *
  * Under active explicit_shift:
- *  - never blind-clear without consulting authority when cache exists
- *  - missing cache → block_start (no discovery seam; do not assume no shift)
- * Under legacy/inert:
- *  - may fall back to local flags or clean inactive start
+ *  - prefer server resolve when `resolveServer` is provided (authoritative)
+ *  - with cache and no server: origin-day day-doc verify (legacy path)
+ *  - without cache and no server: block (no discovery)
+ * Under legacy/inert: local flags
  */
 export async function decidePostLoginShiftRestore(deps: {
   enforcement: SuiteEnforcement;
@@ -85,16 +101,24 @@ export async function decidePostLoginShiftRestore(deps: {
   companyId: string;
   driverId: string;
   fetchDayDoc: (date: string) => Promise<DayDoc>;
-  /** Prior local flags only used outside active explicit enforcement */
   localShiftStarted?: boolean;
+  /** Server-owned active-shift pointer (required for empty-cache under enforcement). */
+  resolveServer?: () => Promise<ResolveActiveResult>;
 }): Promise<ShiftUiRestoreAction> {
   const { enforcement, cachedShiftId } = deps;
 
-  // Enforced explicit_shift — authority owns restoration
-  if (enforcement.state === 'active' && enforcement.mode === 'explicit_shift') {
+  if (isEnforcedExplicitShift(enforcement)) {
+    if (deps.resolveServer) {
+      try {
+        const resolved = await deps.resolveServer();
+        return mapServerResolveToRestoreAction(resolved);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'resolve_failed';
+        return { kind: 'block_start', reason: `server_resolve_error:${reason}` };
+      }
+    }
     if (!cachedShiftId) {
-      // Architectural gap: cannot discover open overnight shifts without cache.
-      // Fail closed — do not enable Start Shift from "today missing" alone.
+      // No server client wired — fail closed (pre-integration residual).
       return {
         kind: 'block_start',
         reason: 'missing_cache_no_safe_discovery',
@@ -111,12 +135,10 @@ export async function decidePostLoginShiftRestore(deps: {
     return mapVerdictToRestoreAction(verdict, cachedShiftId);
   }
 
-  // invalid enforcement: fail closed (no mint from unknown contract)
   if (enforcement.state === 'invalid') {
     return { kind: 'block_start', reason: `enforcement_invalid:${enforcement.reason}` };
   }
 
-  // legacy / inert — retain prior local-flag behavior when present
   if (deps.localShiftStarted) {
     return {
       kind: 'restore_active',
@@ -128,8 +150,9 @@ export async function decidePostLoginShiftRestore(deps: {
 }
 
 /**
- * Pre-mint gate: may Start Shift mint a new id under this enforcement?
- * Does not rely on React shiftActive alone.
+ * Pre-mint / pre-claim gate under enforcement.
+ * When resolveServer provided: only allow claim when server says none.
+ * open → refuse with openPeriodId; unverifiable → refuse.
  */
 export async function decidePreMintShiftGate(deps: {
   enforcement: SuiteEnforcement;
@@ -139,23 +162,41 @@ export async function decidePreMintShiftGate(deps: {
   companyId: string;
   driverId: string;
   fetchDayDoc: (date: string) => Promise<DayDoc>;
+  resolveServer?: () => Promise<ResolveActiveResult>;
 }): Promise<
   | { allowMint: true; reason: string }
-  | { allowMint: false; reason: string; openPeriodId?: string }
+  | { allowMint: false; reason: string; openPeriodId?: string; openOriginLocalDate?: string }
 > {
-  // Outside enforcement, date fallback / established DOT hygiene may mint.
   if (mayUseDateFallback(deps.enforcement)) {
     return { allowMint: true, reason: 'legacy_or_inert' };
   }
 
-  if (deps.enforcement.state !== 'active' || deps.enforcement.mode !== 'explicit_shift') {
+  if (!isEnforcedExplicitShift(deps.enforcement)) {
     return { allowMint: false, reason: 'enforcement_not_active_explicit' };
   }
 
-  // Enforced explicit_shift: always re-verify before mint.
+  if (deps.resolveServer) {
+    try {
+      const resolved = await deps.resolveServer();
+      if (resolved.state === 'none') {
+        return { allowMint: true, reason: 'server_none' };
+      }
+      if (resolved.state === 'open') {
+        return {
+          allowMint: false,
+          reason: 'open_explicit_shift_exists',
+          openPeriodId: resolved.periodId,
+          openOriginLocalDate: resolved.originLocalDate,
+        };
+      }
+      return { allowMint: false, reason: `server_unverifiable:${resolved.reason}` };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'resolve_failed';
+      return { allowMint: false, reason: `server_resolve_error:${reason}` };
+    }
+  }
+
   if (!deps.cachedShiftId) {
-    // Without cache we cannot prove no overnight open shift.
-    // Residual blocker: refuse mint rather than dual-open risk.
     return { allowMint: false, reason: 'missing_cache_no_safe_discovery' };
   }
 
@@ -178,18 +219,9 @@ export async function decidePreMintShiftGate(deps: {
   if (verdict.verdict === 'unverified') {
     return { allowMint: false, reason: `authority_unreadable:${verdict.reason}` };
   }
-  // closed or no_shift with a cache that was re-checked — allow mint
   return { allowMint: true, reason: verdict.reason };
 }
 
-/**
- * Map post-login/cold-start authority action + prior local flags to a local
- * flag decision. Pure — no I/O.
- *
- * Cold start must restore when authority says open even if `shiftStarted`
- * is missing. UNVERIFIED (block_start) with prior local active preserves
- * offline continuity without minting.
- */
 export type ColdStartFlagDecision =
   | 'set_active'
   | 'set_inactive'
@@ -202,18 +234,15 @@ export function decideColdStartFlagAction(input: {
 }): ColdStartFlagDecision {
   if (input.action.kind === 'restore_active') return 'set_active';
   if (input.action.kind === 'inactive_allow_start') return 'set_inactive';
-  // block_start: unreadable / mismatch / discovery gap
   if (input.priorLocalActive) return 'preserve_active_offline';
   return 'leave_inactive';
 }
 
 /** Derive a plausible ISO start time from shift id wall-clock (local, not authoritative GPS). */
 export function shiftStartIsoFromShiftId(shiftId: string): string | null {
-  // `${YYYY-MM-DD}_${HHMMSS}` — best-effort local wall time for UI timer only.
   const m = shiftId.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})$/);
   if (!m) return null;
   const [, y, mo, d, h, mi, s] = m;
-  // Construct as local Date components
   const dt = new Date(
     Number(y),
     Number(mo) - 1,
@@ -224,4 +253,32 @@ export function shiftStartIsoFromShiftId(shiftId: string): string | null {
   );
   if (Number.isNaN(dt.getTime())) return null;
   return dt.toISOString();
+}
+
+/**
+ * UI authority state for Home / Start Shift card (enforced explicit path).
+ * checking → none → open | unavailable
+ */
+export type ShiftAuthorityUiState =
+  | { kind: 'checking' }
+  | { kind: 'none' }
+  | { kind: 'open'; periodId: string; originLocalDate: string }
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'legacy' };
+
+export function restoreActionToUiState(action: ShiftUiRestoreAction): ShiftAuthorityUiState {
+  if (action.kind === 'restore_active' && action.periodId) {
+    return {
+      kind: 'open',
+      periodId: action.periodId,
+      originLocalDate: action.originLocalDate || originDateFromShiftId(action.periodId) || '',
+    };
+  }
+  if (action.kind === 'inactive_allow_start') return { kind: 'none' };
+  return { kind: 'unavailable', reason: action.kind === 'block_start' ? action.reason : 'blocked' };
+}
+
+/** Checklist / Start Shift only when authority is none (or legacy). */
+export function mayOpenStartShiftChecklist(ui: ShiftAuthorityUiState): boolean {
+  return ui.kind === 'none' || ui.kind === 'legacy';
 }

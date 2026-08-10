@@ -18,6 +18,8 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SHIFT_ID_KEY = 'wellbuilt-current-shift-id';
+/** Origin local date (YYYY-MM-DD) for the server-returned binding — not calendar today. */
+const SHIFT_ORIGIN_KEY = 'wellbuilt-current-shift-origin-date';
 
 /** Generate a new shift id from the current local time. */
 export function mintShiftId(): string {
@@ -31,6 +33,14 @@ export function mintShiftId(): string {
   return `${yyyy}-${mm}-${dd}_${hh}${mi}${ss}`;
 }
 
+/** Local calendar date YYYY-MM-DD for a proposed period id (matches mintShiftId). */
+export function localOriginDateFromNow(now: Date = new Date()): string {
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 /** Persist the active shiftId to AsyncStorage. */
 export async function setCurrentShiftId(shiftId: string): Promise<void> {
   try { await AsyncStorage.setItem(SHIFT_ID_KEY, shiftId); } catch {}
@@ -41,9 +51,33 @@ export async function getCurrentShiftId(): Promise<string | null> {
   try { return await AsyncStorage.getItem(SHIFT_ID_KEY); } catch { return null; }
 }
 
+/** Origin local date for the current binding (server-returned). */
+export async function getCurrentShiftOriginDate(): Promise<string | null> {
+  try { return await AsyncStorage.getItem(SHIFT_ORIGIN_KEY); } catch { return null; }
+}
+
+/**
+ * Persist server-returned period binding (periodId + originLocalDate).
+ * Prefer this over setCurrentShiftId alone under enforced explicit shift.
+ */
+export async function setCurrentShiftBinding(
+  periodId: string,
+  originLocalDate: string,
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(SHIFT_ID_KEY, periodId);
+    await AsyncStorage.setItem(SHIFT_ORIGIN_KEY, originLocalDate);
+  } catch {}
+}
+
 /** Clear the active shiftId — called on shift end / logout. */
 export async function clearCurrentShiftId(): Promise<void> {
-  try { await AsyncStorage.removeItem(SHIFT_ID_KEY); } catch {}
+  try {
+    await AsyncStorage.multiRemove([SHIFT_ID_KEY, SHIFT_ORIGIN_KEY]);
+  } catch {
+    try { await AsyncStorage.removeItem(SHIFT_ID_KEY); } catch {}
+    try { await AsyncStorage.removeItem(SHIFT_ORIGIN_KEY); } catch {}
+  }
 }
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
@@ -386,6 +420,13 @@ async function readLastEventType(path: string): Promise<string | null | 'UNKNOWN
  *
  * On login: also checks for stale open shifts from previous days and auto-closes them.
  */
+/**
+ * Direct REST lifecycle writer for driver_shifts.
+ *
+ * Under enforced explicit_shift, WB-S must use server callables instead.
+ * Callers pass `serverAuthority: true` only on the legacy/inert path.
+ * If a caller mistakenly routes enforced lifecycle here, refuse the write.
+ */
 export async function recordShiftEvent(
   type: 'login' | 'logout' | 'depart_return',
   driverId: string,
@@ -393,7 +434,14 @@ export async function recordShiftEvent(
   companyId?: string,
   source: 'wbt' | 'wbm' | 'wbs' = 'wbs',
   shiftId?: string,
+  opts?: { allowDirectWrite?: boolean; enforcedExplicit?: boolean },
 ): Promise<boolean> {
+  if (opts?.enforcedExplicit && !opts?.allowDirectWrite) {
+    console.warn(
+      `[shiftTracking] refused direct ${type} write under enforced explicit_shift — use server callables`,
+    );
+    return false;
+  }
   try {
     const gps = await captureGPS();
     if (!gps) {
@@ -630,8 +678,21 @@ export async function fetchLastYardLocation(
 /**
  * Write odometer miles to today's shift doc for Day Summary.
  */
-export async function writeOdometerMiles(driverId: string, miles: number): Promise<void> {
-  const date = dateString(new Date());
+/**
+ * Write odometer miles to a shift day doc (legacy / non-explicit path).
+ * Under enforced explicit_shift, odometer is carried on closeDriverShift — do not call this.
+ * Prefer originLocalDate when known (cross-midnight).
+ */
+export async function writeOdometerMiles(
+  driverId: string,
+  miles: number,
+  opts?: { originLocalDate?: string; enforcedExplicit?: boolean },
+): Promise<void> {
+  if (opts?.enforcedExplicit) {
+    console.warn('[shiftTracking] refused direct odometerMiles write under enforced explicit_shift');
+    return;
+  }
+  const date = opts?.originLocalDate || dateString(new Date());
   const patchUrl = `https://firestore.googleapis.com/v1/${docPath(driverId, date)}?updateMask.fieldPaths=odometerMiles&key=${FIREBASE_API_KEY}`;
   await fetch(patchUrl, {
     method: 'PATCH',
@@ -694,7 +755,13 @@ export async function checkShiftOnResume(
    *  restore the doc's currentShiftId scope key, never leave a
    *  scope-less shift that JSA/DVIR cannot bind to. */
   cachedShiftId?: string | null,
+  opts?: { enforcedExplicit?: boolean },
 ): Promise<void> {
+  // Enforced explicit_shift: server owns lifecycle — never resume-login or synthetic close.
+  if (opts?.enforcedExplicit) {
+    console.log('[shiftTracking] checkShiftOnResume skipped under enforced explicit_shift (server resolve only)');
+    return;
+  }
   try {
     await autoCloseStaleShift(driverId, source, companyId);
 
