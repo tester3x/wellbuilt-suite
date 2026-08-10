@@ -364,7 +364,8 @@ describe('WB-S runtime registration', () => {
   it('the real Linking lifecycle routes SSO first, on BOTH paths', () => {
     const layout = strip(readFileSync(join(ROOT, 'app', '_layout.tsx'), 'utf8'));
     assert.match(layout, /const route = async \(url: string \| null \| undefined\) => \{/);
-    assert.match(layout, /if \(await dispatchSsoUrl\(url\)\) return;/);
+    assert.match(layout, /isSsoRouteClaimed/);
+    assert.match(layout, /dispatchSsoUrl\(url\)/);
     assert.match(layout, /Linking\.addEventListener\('url', \(e\) => \{\s*void route\(e\.url\);/);
     assert.match(layout, /Linking\.getInitialURL\(\)\.then\(\(url\) => \{\s*void route\(url\);/);
   });

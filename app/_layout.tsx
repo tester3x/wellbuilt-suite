@@ -81,8 +81,10 @@ function DvirReceiptListener() {
     // same URL arriving on both paths.
     const route = async (url: string | null | undefined) => {
       if (!url) return;
-      const { dispatchSsoUrl } = await import('../src/core/services/ssoRuntime');
-      if (await dispatchSsoUrl(url)) return;
+      const { dispatchSsoUrl, isSsoRouteClaimed } = await import('../src/core/services/ssoRuntime');
+      // Full adapter outcome; claimed = any SSO kind (including duplicate/busy).
+      const sso = await dispatchSsoUrl(url);
+      if (isSsoRouteClaimed(sso)) return;
       void handleUrl(url);
     };
 

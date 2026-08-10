@@ -19,6 +19,10 @@ test('app/sso-authorize.tsx exists and forwards to dispatchSsoUrl', () => {
   assert.ok(src.includes('SSO_AUTHORIZE_SCHEME') || src.includes('wellbuilt-suite'));
   assert.ok(src.includes('sso-authorize'));
   assert.ok(src.includes('ran.current'), 'must single-execute on mount');
+  // Dead-end fix: always leave route for Home; never park on equipment return copy.
+  assert.ok(src.includes('router.replace'));
+  assert.ok(src.includes("'/home'") || src.includes('"/home"'));
+  assert.ok(!src.includes('Returning to equipment'));
 });
 
 test('dvir-complete pattern preserved (no regression of existing thin route)', () => {

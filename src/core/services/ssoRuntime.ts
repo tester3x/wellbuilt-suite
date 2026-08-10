@@ -91,10 +91,22 @@ export function getSsoRouteAdapter(
   return adapter;
 }
 
-/** Dispatch one incoming URL. Returns true when the SSO route claimed it. */
-export async function dispatchSsoUrl(url: string | null | undefined): Promise<boolean> {
-  if (!url) return false;
-  const result = await getSsoRouteAdapter().handle(url);
+/**
+ * Dispatch one incoming URL through the SSO adapter.
+ * Returns the full route result so callers can navigate/de-dupe without guessing.
+ * `kind: 'not-sso'` when the URL is not the authorize route (or empty).
+ */
+export async function dispatchSsoUrl(
+  url: string | null | undefined,
+): Promise<import('./ssoRouteAdapter').SsoRouteResult | { kind: 'not-sso' }> {
+  if (!url) return { kind: 'not-sso' };
+  return getSsoRouteAdapter().handle(url);
+}
+
+/** True when the URL was claimed by the SSO adapter (any non-not-sso outcome). */
+export function isSsoRouteClaimed(
+  result: import('./ssoRouteAdapter').SsoRouteResult | { kind: 'not-sso' },
+): boolean {
   return result.kind !== 'not-sso';
 }
 

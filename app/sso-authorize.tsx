@@ -6,22 +6,35 @@
  * listeners also dispatch the URL via dispatchSsoUrl / ssoRouteAdapter.
  *
  * Semantic owner remains ssoRuntime.dispatchSsoUrl (duplicate-safe).
- * This screen only reconstructs the deep link and forwards once so the
- * authorization UI is not an Unmatched flash.
+ * This screen reconstructs the deep link, forwards once, then ALWAYS
+ * leaves /sso-authorize for Home so a completed authorize cannot park
+ * the user on a dead-end route after external SSO callbacks.
  */
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import { colors } from '@/core/theme';
 import {
   SSO_AUTHORIZE_HOST,
   SSO_AUTHORIZE_SCHEME,
 } from '../src/core/services/ssoProtocol.generated';
+import {
+  audienceFromAuthorizeParams,
+  authorizeWorkingCopy,
+  decideAfterAuthorizeDispatch,
+  type AuthorizeScreenStatus,
+} from '../src/core/services/ssoAuthorizeScreenPolicy';
 
 export default function SsoAuthorizeScreen() {
   const params = useLocalSearchParams();
   const ran = useRef(false);
-  const [status, setStatus] = useState<'working' | 'done' | 'error'>('working');
+  const [status, setStatus] = useState<AuthorizeScreenStatus>('working');
+  const [message, setMessage] = useState<string | null>(null);
+
+  const audience = audienceFromAuthorizeParams(
+    params.aud as string | string[] | undefined,
+  );
+  const workingCopy = authorizeWorkingCopy(audience);
 
   useEffect(() => {
     if (ran.current) return;
@@ -37,10 +50,33 @@ export default function SsoAuthorizeScreen() {
         }
         const url = `${SSO_AUTHORIZE_SCHEME}://${SSO_AUTHORIZE_HOST}?${qs.toString()}`;
         const { dispatchSsoUrl } = await import('../src/core/services/ssoRuntime');
-        await dispatchSsoUrl(url);
-        setStatus('done');
+        // Full adapter outcome — not a guessed boolean.
+        const result = await dispatchSsoUrl(url);
+        const decision = decideAfterAuthorizeDispatch(result);
+
+        if (decision.status === 'error') {
+          setStatus('error');
+          setMessage(decision.errorMessage);
+        } else {
+          setStatus('leaving');
+          setMessage(null);
+        }
+
+        if (decision.navigateHome) {
+          if (decision.homeDelayMs > 0) {
+            setTimeout(() => {
+              router.replace('/home');
+            }, decision.homeDelayMs);
+          } else {
+            router.replace('/home');
+          }
+        }
       } catch {
         setStatus('error');
+        setMessage('Authorization could not complete.');
+        setTimeout(() => {
+          router.replace('/home');
+        }, 900);
       }
     })();
   }, [params]);
@@ -50,12 +86,13 @@ export default function SsoAuthorizeScreen() {
       {status === 'working' ? (
         <>
           <ActivityIndicator color={colors.brand.primary} size="large" />
-          <Text style={styles.text}>Authorizing equipment…</Text>
+          <Text style={styles.text}>{workingCopy}</Text>
         </>
       ) : status === 'error' ? (
-        <Text style={styles.text}>Authorization could not complete.</Text>
+        <Text style={styles.text}>{message || 'Authorization could not complete.'}</Text>
       ) : (
-        <Text style={styles.text}>Returning to equipment…</Text>
+        // Brief leaving state while replace(Home) runs — no success/return copy.
+        <ActivityIndicator color={colors.brand.primary} size="large" />
       )}
     </View>
   );
