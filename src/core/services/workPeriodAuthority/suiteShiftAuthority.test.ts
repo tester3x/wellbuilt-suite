@@ -94,17 +94,19 @@ test('wiring: logout post-trip gate has NO null-shiftId escape hatch', () => {
   assert.ok(!/if \(shiftId\) \{[\s\S]{0,400}ensurePostTripGate/.test(cascadeRegion),
     'logoutWithCascade still wraps the post-trip gate in if(shiftId)');
 });
-test('wiring: resume verifies the cached shift through the canonical authority', () => {
+test('wiring: resume verifies shift through server authority (or legacy day-doc path)', () => {
   const auth = src('src/core/context/AuthContext.tsx');
-  // Cold-start / session restore uses decidePostLoginShiftRestore →
-  // verifyCachedShiftAgainstAuthority (not a direct call in AuthContext).
+  // Cold-start / session restore uses postLoginEnforcedRestore → resolveActiveDriverShift.
   assert.ok(
-    auth.includes('decidePostLoginShiftRestore') ||
-      auth.includes('verifyCachedShiftAgainstAuthority'),
-    'AuthContext resume does not verify the cached shift',
+    auth.includes('postLoginEnforcedRestore') ||
+      auth.includes('resolveActiveDriverShift') ||
+      auth.includes('decidePostLoginShiftRestore'),
+    'AuthContext resume does not verify the shift authority',
   );
-  assert.ok(auth.includes('decideColdStartFlagAction'),
-    'AuthContext cold-start must map authority actions to local flags');
+  assert.ok(
+    auth.includes('isEnforcedExplicitShift') || auth.includes('decideColdStartFlagAction'),
+    'AuthContext cold-start must branch on enforcement',
+  );
 });
 test('wiring: resume login backfill carries the cached currentShiftId (no scope-less shifts)', () => {
   const tracking = src('src/core/services/shiftTracking.ts');

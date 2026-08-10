@@ -5,13 +5,15 @@
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Animated, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAppLauncher } from '@/core/hooks/useAppLauncher';
 import { type JsaMode } from '@/core/services/companyConfig';
+import { useAuth } from '@/core/context/AuthContext';
+import { mayOpenStartShiftChecklist } from '@/core/services/workPeriodAuthority/postLoginShiftRestoration';
 import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
@@ -22,7 +24,7 @@ interface ActionCardRowProps {
   returning: boolean;
   returnStartTime: string | null;
   shiftStartTime: string | null;
-  onStartShift: (packageId?: string) => Promise<void>;
+  onStartShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string } | void>;
   onStartReturn: () => Promise<void>;
   onArrived: (odometerMiles?: number) => Promise<void>;
   jsaMode?: JsaMode;
@@ -73,12 +75,14 @@ function getShiftColor(startIso: string | null): string {
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
+  const { shiftAuthorityUi, refreshShiftAuthority } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
+  const canOpenChecklist = mayOpenStartShiftChecklist(shiftAuthorityUi);
   // (Pre-shift JSA preview breadcrumb + banner removed 2026-05-01. The
   // Preview-JSA-from-Start-Shift-modal flow caused two field-confirmed
   // bugs: signed JSAs scoped to the wrong shiftId, and the modal closing
@@ -114,30 +118,58 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       // Active shift — show end shift modal
       setShowEndModal(true);
     } else {
-      // Not started — show start shift modal
+      // Authority must clear before checklist (enforced explicit_shift).
+      if (shiftAuthorityUi.kind === 'checking') {
+        Alert.alert('Shift status', 'Checking shift status…');
+        return;
+      }
+      if (shiftAuthorityUi.kind === 'unavailable') {
+        Alert.alert(
+          'Shift unavailable',
+          'Could not verify shift status. Check your connection and try again.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Retry', onPress: () => { void refreshShiftAuthority(); } },
+          ],
+        );
+        return;
+      }
+      if (shiftAuthorityUi.kind === 'open') {
+        // Server says open but local UI inactive — refresh to restore.
+        void refreshShiftAuthority();
+        return;
+      }
+      if (!canOpenChecklist) return;
       setShowStartModal(true);
     }
   };
 
   // ── Start shift confirmed ──
   const handleStartConfirm = async (data: ShiftStartData) => {
+    // Keep modal open until claim succeeds — never Pre-Trip on failed claim.
+    const result = await onStartShift(data.packageId || undefined);
+    const ok = result == null || result === undefined
+      ? true
+      : typeof result === 'object' && 'ok' in result
+        ? !!(result as { ok: boolean }).ok
+        : true;
+    if (!ok) {
+      const reason =
+        typeof result === 'object' && result && 'reason' in result
+          ? String((result as { reason?: string }).reason || 'claim_failed')
+          : 'claim_failed';
+      Alert.alert('Could not start shift', reason.replace(/_/g, ' '));
+      return;
+    }
     setShowStartModal(false);
-    await onStartShift(data.packageId || undefined);
-    // Force Pre-Trip at the beginning of every shift (Suite durable gate).
-    // Tickets stay blocked until eQuipment returns a matching receipt.
+    // Force Pre-Trip only after successful claim/adoption.
     try {
       const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
-      // Governed Pre-Trip: metadata + PKCE only (no hash/name getter).
       const gate = createSuiteDvirGate({ isShiftActive: () => true });
       await gate.ensurePreTripGate({ alertOnBlock: true });
     } catch (err) {
       console.warn('[ActionCardRow] Pre-Trip gate launch failed:', err);
     }
-    // 4/24/2026 — JsaChoiceModal at shift start retired. The per-job-close
-    // JSA gate in WB T now catches every driver who didn't pre-fill the
-    // JSA at the start of the shift, so a separate Now/Later prompt at
-    // shift start is redundant. Drivers who WANT to do their JSA up-front
-    // can still tap the JSA tile in the application grid.
   };
 
   // ── End shift: return to yard ──
@@ -154,6 +186,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   let shiftColor: string = colors.brand.accent;
   let shiftBorder = `${colors.brand.accent}30`;
   let showDot = false;
+  let shiftDisabled = false;
 
   if (returning) {
     shiftIcon = 'truck';
@@ -168,6 +201,17 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     shiftColor = dotColor;
     shiftBorder = `${dotColor}40`;
     showDot = true;
+  } else if (shiftAuthorityUi.kind === 'checking') {
+    shiftLabel = 'Checking…';
+    shiftSub = 'Shift status';
+    shiftColor = colors.text.muted;
+    shiftBorder = colors.border.subtle;
+    shiftDisabled = true;
+  } else if (shiftAuthorityUi.kind === 'unavailable') {
+    shiftLabel = 'Unavailable';
+    shiftSub = 'Tap to retry';
+    shiftColor = '#F59E0B';
+    shiftBorder = 'rgba(245, 158, 11, 0.3)';
   }
 
   // When returning to yard, show full-width en route card instead of 3-card row
@@ -220,7 +264,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         {/* Shift Card */}
         <Pressable
           onPress={handleShiftPress}
-          style={[s.card, { borderColor: shiftBorder }]}
+          disabled={shiftDisabled && shiftAuthorityUi.kind === 'checking'}
+          style={[s.card, { borderColor: shiftBorder, opacity: shiftDisabled ? 0.7 : 1 }]}
         >
           <MaterialCommunityIcons name={shiftIcon} size={28} color={shiftColor} />
           <Text style={[s.label, { color: shiftColor }]}>{shiftLabel}</Text>

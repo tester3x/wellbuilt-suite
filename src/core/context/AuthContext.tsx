@@ -18,11 +18,12 @@ import {
   completeRegistration,
   firebasePatch,
 } from '../services/driverAuth';
-import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, clearCurrentShiftId, getCurrentShiftId, observeEnforcementSafety } from '../services/shiftTracking';
+import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, setCurrentShiftBinding, clearCurrentShiftId, getCurrentShiftId, observeEnforcementSafety } from '../services/shiftTracking';
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { clearSSOLaunchedApps } from '../services/appLauncher';
 import { wbDiagLog } from '../services/wbDiagLog';
+import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/postLoginShiftRestoration';
 
 export interface AuthUser {
   driverId: string;
@@ -53,10 +54,20 @@ interface AuthContextType {
   returningToYard: boolean;
   /** ISO timestamp when return drive started (for elapsed timer) */
   returnDepartTime: string | null;
+  /**
+   * Server-authoritative shift UI gate (enforced explicit_shift).
+   * checking | none | open | unavailable | legacy
+   */
+  shiftAuthorityUi: ShiftAuthorityUiState;
+  /** Re-run resolveActiveDriverShift under enforced explicit (retry after unavailable). */
+  refreshShiftAuthority: () => Promise<void>;
   /** Login with name + passcode. Returns error string or null on success. */
   login: (displayName: string, passcode: string) => Promise<{ success: boolean; error?: string }>;
-  /** Start shift manually — records GPS login event, activates shift. Optional packageId overrides default. */
-  startShift: (packageId?: string) => Promise<void>;
+  /**
+   * Start shift — under enforced explicit_shift claims via server callable.
+   * Returns ok:false when claim/authority refuses (caller must not launch Pre-Trip).
+   */
+  startShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string }>;
   /** The active package for this shift (set at shift start) */
   activePackageId: string | null;
   /** Full logout — clears SecureStore session. If shift is active, ends it first. */
@@ -142,6 +153,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [returningToYard, setReturningToYard] = useState(false);
   const [returnDepartTime, setReturnDepartTime] = useState<string | null>(null);
   const [activePackageId, setActivePackageId] = useState<string | null>(null);
+  /** Default legacy until company enforcement is known. */
+  const [shiftAuthorityUi, setShiftAuthorityUi] = useState<ShiftAuthorityUiState>({ kind: 'legacy' });
   /**
    * The identity the last reconciliation was started for.
    *
@@ -218,9 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           // Local flags are hints only. Under explicit_shift, cold start must
-          // consult origin-day authority even when shiftStarted is missing —
-          // otherwise an open overnight shift shows "Start Shift" until a tap.
-          // Does not mint, write day docs, or append login events.
+          // consult server resolveActiveDriverShift (never resume-login write).
           const shiftStarted = await SecureStore.getItemAsync('shiftStarted');
           const shiftEnded = await SecureStore.getItemAsync('shiftEnded');
           const priorLocalActive = shiftStarted === 'true' && shiftEnded !== 'true';
@@ -246,6 +257,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             try {
               const companyId = session.companyId || '';
               if (!companyId) {
+                setShiftAuthorityUi({ kind: 'legacy' });
                 if (priorLocalActive) {
                   checkShiftOnResume(
                     session.driverId,
@@ -258,27 +270,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               const [
                 { fetchCompanyConfig },
                 { parseSuiteEnforcement },
-                {
-                  decidePostLoginShiftRestore,
-                  decideColdStartFlagAction,
-                  shiftStartIsoFromShiftId,
-                },
-                { fetchShiftDayDoc },
+                { isEnforcedExplicitShift },
+                { postLoginEnforcedRestore },
               ] = await Promise.all([
                 import('../services/companyConfig'),
                 import('../services/workPeriodAuthority/suiteShiftAuthority'),
                 import('../services/workPeriodAuthority/postLoginShiftRestoration'),
-                import('../services/shiftTracking'),
+                import('../services/workPeriodAuthority/explicitShiftLifecycle'),
               ]);
               const cfg = await fetchCompanyConfig(companyId);
               const enforcement = parseSuiteEnforcement(cfg ?? undefined);
-              const n = new Date();
-              const localDate = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
               const cached = await getCurrentShiftId();
 
-              // Only enforced explicit_shift uses authority restore on cold start.
+              // Only enforced explicit_shift uses server authority on cold start.
               // Legacy/inert keeps priorLocalActive flags as before.
-              if (enforcement.state !== 'active' || enforcement.mode !== 'explicit_shift') {
+              if (!isEnforcedExplicitShift(enforcement)) {
+                setShiftAuthorityUi({ kind: 'legacy' });
                 if (priorLocalActive) {
                   checkShiftOnResume(
                     session.driverId,
@@ -286,90 +293,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     session.companyId,
                     'wbs',
                     cached,
+                    { enforcedExplicit: false },
                   ).catch(() => {});
                 }
                 return;
               }
 
-              const action = await decidePostLoginShiftRestore({
+              setShiftAuthorityUi({ kind: 'checking' });
+              const ui = await postLoginEnforcedRestore({
                 enforcement,
-                cachedShiftId: cached,
-                localDate,
-                nowMs: Date.now(),
-                companyId,
-                driverId: session.driverId,
-                fetchDayDoc: (date) => fetchShiftDayDoc(session.driverId, date),
-                localShiftStarted: priorLocalActive,
+                flags: {
+                  setShiftActive,
+                  setShiftStartTime,
+                },
               });
-              const flag = decideColdStartFlagAction({
-                priorLocalActive,
-                action,
-              });
-
-              if (flag === 'set_active' && action.kind === 'restore_active' && action.periodId) {
-                await setCurrentShiftId(action.periodId);
-                await SecureStore.setItemAsync('shiftStarted', 'true');
-                await SecureStore.deleteItemAsync('shiftEnded');
-                const startIso =
-                  action.shiftStartTimeIso ||
-                  shiftStartIsoFromShiftId(action.periodId) ||
-                  (await SecureStore.getItemAsync('shiftStartTime'));
-                if (startIso) {
-                  await SecureStore.setItemAsync('shiftStartTime', startIso);
-                  setShiftStartTime(startIso);
-                }
-                setShiftActive(true);
-                console.log(
-                  '[AuthContext] Cold-start restored explicit shift periodId=' + action.periodId,
-                );
-                checkShiftOnResume(
-                  session.driverId,
-                  session.legalName || session.displayName,
-                  session.companyId,
-                  'wbs',
-                  action.periodId,
-                ).catch(() => {});
-              } else if (flag === 'set_inactive') {
-                await SecureStore.deleteItemAsync('shiftStarted');
-                await SecureStore.setItemAsync('shiftEnded', 'true');
-                await clearCurrentShiftId();
-                setShiftActive(false);
-                setShiftStartTime(null);
-                console.log(
-                  '[AuthContext] Cold-start authority: no open shift (' +
-                    (action.kind === 'inactive_allow_start' ? action.reason : 'inactive') +
-                    ')',
-                );
-              } else if (flag === 'preserve_active_offline') {
-                // UNVERIFIED_OFFLINE — keep local active, do not mint.
-                console.log(
-                  '[AuthContext] Cold-start UNVERIFIED_OFFLINE — preserving local active shift',
-                );
-                checkShiftOnResume(
-                  session.driverId,
-                  session.legalName || session.displayName,
-                  session.companyId,
-                  'wbs',
-                  cached,
-                ).catch(() => {});
+              setShiftAuthorityUi(ui);
+              // Never checkShiftOnResume (no login write / auto-close) under enforcement.
+              if (ui.kind === 'open') {
+                console.log('[AuthContext] Cold-start restored explicit shift via server resolve');
+              } else if (ui.kind === 'none') {
+                console.log('[AuthContext] Cold-start authority: no open shift (server_none)');
               } else {
-                // leave_inactive — keep cache for later retry; no mint
-                setShiftActive(false);
                 console.log(
                   '[AuthContext] Cold-start leave inactive (' +
-                    (action.kind === 'block_start' ? action.reason : 'leave') +
+                    (ui.kind === 'unavailable' ? ui.reason : 'leave') +
                     ')',
                 );
               }
             } catch (err) {
               console.warn('[AuthContext] Cold-start shift restore failed closed:', err);
-              // Fail closed without mint; if we had local active, keep offline continuity.
-              if (priorLocalActive) {
-                checkShiftOnResume(
-                  session.driverId,
-                  session.legalName || session.displayName,
-                  session.companyId,
-                ).catch(() => {});
+              // Fail closed: no mint, no resume-login write. Preserve local timer only.
+              setShiftAuthorityUi({ kind: 'unavailable', reason: 'cold_start_error' });
+              if (!priorLocalActive) {
+                setShiftActive(false);
               }
             }
           })();
@@ -459,88 +415,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setReturningToYard(false);
       setReturnDepartTime(null);
 
-      // ── Explicit-shift restoration (do NOT blind-clear under enforcement) ──
-      // clearDriverSession never clears AsyncStorage currentShiftId; login must
-      // re-verify that cache against origin-day authority (cross-midnight safe).
+      // ── Explicit-shift restoration via server resolve (never mint on login) ──
       try {
         const companyId = result.companyId || '';
-        const [{ fetchCompanyConfig }, { parseSuiteEnforcement, mayUseDateFallback }, { decidePostLoginShiftRestore, shiftStartIsoFromShiftId }, { fetchShiftDayDoc }] =
+        const [{ fetchCompanyConfig }, { parseSuiteEnforcement, mayUseDateFallback }, { isEnforcedExplicitShift }, { postLoginEnforcedRestore }] =
           await Promise.all([
             import('../services/companyConfig'),
             import('../services/workPeriodAuthority/suiteShiftAuthority'),
             import('../services/workPeriodAuthority/postLoginShiftRestoration'),
-            import('../services/shiftTracking'),
+            import('../services/workPeriodAuthority/explicitShiftLifecycle'),
           ]);
         const cfg = companyId ? await fetchCompanyConfig(companyId) : null;
         const enforcement = parseSuiteEnforcement(cfg ?? undefined);
-        const n = new Date();
-        const localDate = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-        const cached = await getCurrentShiftId();
-        const priorStarted = (await SecureStore.getItemAsync('shiftStarted')) === 'true';
 
-        if (enforcement.state === 'active' && enforcement.mode === 'explicit_shift') {
-          const action = await decidePostLoginShiftRestore({
-            enforcement,
-            cachedShiftId: cached,
-            localDate,
-            nowMs: Date.now(),
-            companyId,
-            driverId: result.driverId!,
-            fetchDayDoc: (date) => fetchShiftDayDoc(result.driverId!, date),
-            localShiftStarted: priorStarted,
-          });
-          if (action.kind === 'restore_active' && action.periodId) {
-            await setCurrentShiftId(action.periodId);
-            await SecureStore.setItemAsync('shiftStarted', 'true');
-            await SecureStore.deleteItemAsync('shiftEnded');
-            const startIso =
-              action.shiftStartTimeIso ||
-              shiftStartIsoFromShiftId(action.periodId) ||
-              (await SecureStore.getItemAsync('shiftStartTime'));
-            if (startIso) {
-              await SecureStore.setItemAsync('shiftStartTime', startIso);
-              setShiftStartTime(startIso);
+        if (isEnforcedExplicitShift(enforcement)) {
+          if (!result.authVerified) {
+            // Legacy dual-run login cannot call shift authority callables.
+            setShiftAuthorityUi({ kind: 'unavailable', reason: 'driver_session_required' });
+            await SecureStore.deleteItemAsync('shiftStarted');
+            setShiftActive(false);
+            setShiftStartTime(null);
+            console.log(
+              '[AuthContext] Post-login shift blocked — secure SDK session required for explicit_shift',
+            );
+          } else {
+            setShiftAuthorityUi({ kind: 'checking' });
+            const ui = await postLoginEnforcedRestore({
+              enforcement,
+              flags: { setShiftActive, setShiftStartTime },
+            });
+            setShiftAuthorityUi(ui);
+            if (ui.kind === 'open') {
+              const savedPkgId = await SecureStore.getItemAsync('activePackageId');
+              if (savedPkgId) setActivePackageId(savedPkgId);
+              console.log('[AuthContext] Restored explicit shift after login via server resolve');
+            } else if (ui.kind === 'none') {
+              setActivePackageId(null);
+              await SecureStore.deleteItemAsync('activePackageId');
+              console.log('[AuthContext] Post-login authority: no open shift (server_none)');
+            } else {
+              console.log(
+                '[AuthContext] Post-login shift restore blocked (' +
+                  (ui.kind === 'unavailable' ? ui.reason : 'blocked') +
+                  ') — Start Shift disabled until authority clears',
+              );
             }
-            // Keep package if still present; do not invent one
-            const savedPkgId = await SecureStore.getItemAsync('activePackageId');
-            if (savedPkgId) setActivePackageId(savedPkgId);
-            setShiftActive(true);
-            console.log(
-              '[AuthContext] Restored explicit shift after login periodId=' + action.periodId,
-            );
-            // Resume hygiene only — must not mint or append a new login event.
-            checkShiftOnResume(
-              result.driverId!,
-              result.legalName || result.displayName || '',
-              result.companyId,
-              'wbs',
-              action.periodId,
-            ).catch(() => {});
-          } else if (action.kind === 'inactive_allow_start') {
-            await SecureStore.deleteItemAsync('shiftStarted');
-            await SecureStore.setItemAsync('shiftEnded', 'true');
-            await clearCurrentShiftId();
-            setShiftActive(false);
-            setShiftStartTime(null);
-            setActivePackageId(null);
-            await SecureStore.deleteItemAsync('activePackageId');
-            console.log(
-              '[AuthContext] Post-login authority: no open shift (' + action.reason + ')',
-            );
-          } else if (action.kind === 'block_start') {
-            // Unreadable / mismatch / missing-cache discovery gap
-            await SecureStore.deleteItemAsync('shiftStarted');
-            await SecureStore.deleteItemAsync('shiftEnded');
-            setShiftActive(false);
-            setShiftStartTime(null);
-            // Keep currentShiftId cache if present for a later retry; do not mint.
-            console.log(
-              '[AuthContext] Post-login shift restore blocked (' + action.reason + ') — Start Shift disabled until authority clears',
-            );
-            // startShift pre-mint gate refuses when open/unknown.
           }
         } else if (mayUseDateFallback(enforcement)) {
           // Legacy/inert: established clean-slate on fresh login.
+          setShiftAuthorityUi({ kind: 'legacy' });
           await SecureStore.deleteItemAsync('shiftEnded');
           await SecureStore.deleteItemAsync('shiftStarted');
           await SecureStore.deleteItemAsync('activePackageId');
@@ -550,12 +473,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setActivePackageId(null);
         } else {
           // invalid / unknown contract — fail closed (no mint from local flags)
+          setShiftAuthorityUi({ kind: 'unavailable', reason: 'enforcement_invalid' });
           await SecureStore.deleteItemAsync('shiftStarted');
           setShiftActive(false);
           setShiftStartTime(null);
         }
       } catch (err) {
         console.warn('[AuthContext] Post-login shift restore failed closed:', err);
+        setShiftAuthorityUi({ kind: 'unavailable', reason: 'post_login_error' });
         await SecureStore.deleteItemAsync('shiftStarted');
         setShiftActive(false);
         setShiftStartTime(null);
@@ -579,28 +504,92 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: false, error: result.error || 'Invalid name or passcode' };
   }, []);
 
-  const startShift = useCallback(async (packageId?: string) => {
-    if (!user) return;
+  const startShift = useCallback(async (packageId?: string): Promise<{ ok: boolean; reason?: string }> => {
+    if (!user) return { ok: false, reason: 'no_user' };
     // Capture timestamp FIRST — before any awaits steal seconds
     const startTime = new Date().toISOString();
-    // Local date used for driver_shifts/{driverHash}_{localDate} doc id.
-    // Computed here so the diagnostic log lets us match this Start Shift
-    // event to the WB JSA refresh log byte-for-byte.
     const _now = new Date();
     const localDate = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+    const pkg = packageId || user.defaultPackageId || null;
 
-    // Pre-mint authority gate: never rely solely on React shiftActive.
-    // Under explicit_shift, refuse if an open period exists or authority is unknown.
     try {
-      const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { decidePreMintShiftGate }, { fetchShiftDayDoc }] =
+      const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { claimEnforcedExplicitStart }] =
         await Promise.all([
           import('../services/companyConfig'),
           import('../services/workPeriodAuthority/suiteShiftAuthority'),
           import('../services/workPeriodAuthority/postLoginShiftRestoration'),
-          import('../services/shiftTracking'),
+          import('../services/workPeriodAuthority/explicitShiftLifecycle'),
         ]);
       const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
       const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+
+      // ── Enforced explicit_shift: server claim only (no client login REST) ──
+      if (isEnforcedExplicitShift(enforcement)) {
+        if (shiftAuthorityUi.kind !== 'none' && shiftAuthorityUi.kind !== 'checking') {
+          // Still allow claim attempt if UI is stale none-check; resolve re-runs inside claim.
+          if (shiftAuthorityUi.kind === 'open' || shiftAuthorityUi.kind === 'unavailable') {
+            console.log('[startShift] refused — authority UI kind=' + shiftAuthorityUi.kind);
+            return { ok: false, reason: shiftAuthorityUi.kind === 'unavailable' ? shiftAuthorityUi.reason : 'open_explicit_shift_exists' };
+          }
+        }
+        const claim = await claimEnforcedExplicitStart({
+          flags: { setShiftActive, setShiftStartTime },
+          packageId: pkg,
+          startTimeIso: startTime,
+        });
+        if (!claim.ok) {
+          if (claim.openPeriodId) {
+            setShiftAuthorityUi({
+              kind: 'open',
+              periodId: claim.openPeriodId,
+              originLocalDate: claim.openPeriodId.slice(0, 10),
+            });
+          } else {
+            setShiftAuthorityUi({ kind: 'unavailable', reason: claim.reason });
+          }
+          console.log('[startShift] refused claim — ' + claim.reason);
+          return { ok: false, reason: claim.reason };
+        }
+        setShiftAuthorityUi({
+          kind: 'open',
+          periodId: claim.periodId,
+          originLocalDate: claim.originLocalDate,
+        });
+        import('../services/dvirGate')
+          .then(({ createSuiteDvirGate }) =>
+            createSuiteDvirGate({ isShiftActive: () => true }).clearDvirRoutingAfterFinalization(),
+          )
+          .catch(() => {});
+        if (user.companyId) {
+          sendShiftStartToChat(user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+        }
+        if (pkg) {
+          await SecureStore.setItemAsync('activePackageId', pkg);
+          setActivePackageId(pkg);
+        }
+        wbDiagLog({
+          area: 'shift',
+          event: 'shiftId.claimed',
+          source: 'AuthContext.startShift',
+          result: 'ok',
+          reason: claim.claimed ? 'server claim' : 'adopted existing binding',
+          shiftId: claim.periodId,
+          extra: {
+            startTime,
+            originLocalDate: claim.originLocalDate,
+            claimed: claim.claimed,
+            packageId: pkg,
+          },
+        });
+        console.log('[AuthContext] Shift claimed for:', user.displayName, 'package:', pkg || 'none');
+        return { ok: true };
+      }
+
+      // ── Legacy / inert: local mint + direct REST login (unchanged) ──
+      const [{ decidePreMintShiftGate }, { fetchShiftDayDoc }] = await Promise.all([
+        import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+        import('../services/shiftTracking'),
+      ]);
       const cached = await getCurrentShiftId();
       const gate = await decidePreMintShiftGate({
         enforcement,
@@ -613,86 +602,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       if (!gate.allowMint) {
         if (gate.openPeriodId) {
-          // Heal UI: restore the open period instead of dual-opening.
           await setCurrentShiftId(gate.openPeriodId);
           await SecureStore.setItemAsync('shiftStarted', 'true');
           await SecureStore.deleteItemAsync('shiftEnded');
           setShiftActive(true);
-          console.log(
-            '[startShift] refused mint — open explicit shift restored periodId=' + gate.openPeriodId,
-          );
+          console.log('[startShift] refused mint — open restored periodId=' + gate.openPeriodId);
         } else {
           console.log('[startShift] refused mint — ' + gate.reason);
         }
-        return;
+        return { ok: false, reason: gate.reason };
       }
-      // Closed/stale cache may be cleared before mint
       if (cached) await clearCurrentShiftId();
-    } catch (err) {
-      console.warn('[startShift] pre-mint authority check failed closed:', err);
-      return;
-    }
 
-    // Mint a fresh shiftId for the new shift. JSA is keyed by this id
-    // across WB S / WB T / WB JSA — closing a shift "freezes" its JSA
-    // because the next shift gets a new id. SSO deep links pass it down
-    // to WB T / WB JSA on launch (see appLauncher.ts).
-    const shiftId = mintShiftId();
-    let asyncStorageWriteOk = false;
-    try {
-      await setCurrentShiftId(shiftId);
-      asyncStorageWriteOk = true;
+      const shiftId = mintShiftId();
+      let asyncStorageWriteOk = false;
+      try {
+        await setCurrentShiftBinding(shiftId, shiftId.slice(0, 10));
+        asyncStorageWriteOk = true;
+      } catch (err) {
+        console.warn('[startShift] setCurrentShiftBinding failed:', err);
+      }
+      import('../services/dvirGate')
+        .then(({ createSuiteDvirGate }) =>
+          createSuiteDvirGate({ isShiftActive: () => true }).clearDvirRoutingAfterFinalization(),
+        )
+        .catch(() => {});
+      wbDiagLog({
+        area: 'shift',
+        event: 'shiftId.minted',
+        source: 'AuthContext.startShift',
+        result: 'ok',
+        reason: 'legacy path local mint',
+        shiftId,
+        extra: { startTime, localDate, asyncStorageWriteOk, packageId: pkg },
+      });
+      setShiftActive(true);
+      setShiftStartTime(startTime);
+      setShiftAuthorityUi({ kind: 'legacy' });
+      recordShiftEvent(
+        'login',
+        user.driverId,
+        user.legalName || user.displayName,
+        user.companyId,
+        'wbs',
+        shiftId,
+        { enforcedExplicit: false, allowDirectWrite: true },
+      ).catch((err) => console.warn('[startShift] recordShiftEvent failed:', err));
+      if (user.companyId) {
+        sendShiftStartToChat(user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+      }
+      await SecureStore.setItemAsync('shiftStarted', 'true');
+      await SecureStore.setItemAsync('shiftStartTime', startTime);
+      await SecureStore.deleteItemAsync('shiftEnded');
+      if (pkg) {
+        await SecureStore.setItemAsync('activePackageId', pkg);
+        setActivePackageId(pkg);
+      }
+      console.log('[AuthContext] Shift started (legacy) for:', user.displayName);
+      return { ok: true };
     } catch (err) {
-      console.warn('[startShift] setCurrentShiftId failed:', err);
+      console.warn('[startShift] failed closed:', err);
+      return { ok: false, reason: 'start_shift_error' };
     }
-    // Drop any pending Post-Trip end-shift flag from a prior shift so the
-    // new shift cannot inherit prior-shift DVIR routing state.
-    import('../services/dvirGate')
-      .then(({ createSuiteDvirGate }) =>
-        createSuiteDvirGate({ isShiftActive: () => true }).clearDvirRoutingAfterFinalization(),
-      )
-      .catch(() => {});
-    // (Pre-shift JSA preview breadcrumb cleanup removed — the Preview-JSA
-    // launcher was retired 2026-05-01. Logout now wipes any lingering
-    // breadcrumb on existing installs via LOGOUT_ASYNCSTORAGE_KEYS.)
-    wbDiagLog({
-      area: 'shift',
-      event: 'shiftId.minted',
-      source: 'AuthContext.startShift',
-      result: 'ok',
-      reason: 'fresh shiftId minted at Start Shift',
-      driverHash: user.passcodeHash,
-      shiftId,
-      extra: {
-        startTime,
-        localDate,
-        docId: `${user.driverId}_${localDate}`,
-        asyncStorageWriteOk,
-        companyId: user.companyId || null,
-        packageId: packageId || user.defaultPackageId || null,
-      },
-    });
-    // Set React state immediately so timer starts from the correct moment
-    setShiftActive(true);
-    setShiftStartTime(startTime);
-    // Record login GPS event for DOT drive time (fire-and-forget)
-    recordShiftEvent('login', user.driverId, user.legalName || user.displayName, user.companyId, 'wbs', shiftId).catch(err => console.warn('[startShift] recordShiftEvent failed:', err));
-    // Notify dispatch via chat (fire-and-forget)
-    if (user.companyId) {
-      sendShiftStartToChat(user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
-    }
-    // Persist to SecureStore (survives app kill) — non-blocking for UI
-    await SecureStore.setItemAsync('shiftStarted', 'true');
-    await SecureStore.setItemAsync('shiftStartTime', startTime);
-    await SecureStore.deleteItemAsync('shiftEnded');
-    // Save the selected package for this shift
-    const pkg = packageId || user.defaultPackageId || null;
-    if (pkg) {
-      await SecureStore.setItemAsync('activePackageId', pkg);
-      setActivePackageId(pkg);
-    }
-    console.log('[AuthContext] Shift started for:', user.displayName, 'package:', pkg || 'none');
-  }, [user]);
+  }, [user, shiftAuthorityUi]);
 
   // In-flight guards (6/11/2026) — block a double-tap from appending a duplicate
   // depart_return / logout while the first invocation is still resolving. The
@@ -710,8 +682,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     returnInFlight.current = true;
     try {
       const now = new Date().toISOString();
-      // Record depart_return GPS event
-      recordShiftEvent('depart_return', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => {});
+      const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { recordEnforcedDepartReturn }] =
+        await Promise.all([
+          import('../services/companyConfig'),
+          import('../services/workPeriodAuthority/suiteShiftAuthority'),
+          import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+          import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+        ]);
+      const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+      const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+
+      if (isEnforcedExplicitShift(enforcement)) {
+        const periodId = await getCurrentShiftId();
+        const result = await recordEnforcedDepartReturn({ periodId });
+        if (!result.ok) {
+          console.warn('[AuthContext] recordDepartReturn failed — not entering return state:', result.reason);
+          return;
+        }
+      } else {
+        recordShiftEvent(
+          'depart_return',
+          user.driverId,
+          user.legalName || user.displayName,
+          user.companyId,
+          'wbs',
+          undefined,
+          { enforcedExplicit: false, allowDirectWrite: true },
+        ).catch(() => {});
+      }
       await SecureStore.setItemAsync('returnDepartTime', now);
       setReturningToYard(true);
       setReturnDepartTime(now);
@@ -732,40 +730,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (arrivalInFlight.current) return;
     arrivalInFlight.current = true;
     try {
-    // Record logout GPS event (arrival at yard = shift end)
-    // Must await so day-summary screen can read the shift end time.
-    // recordShiftEvent now retries once internally and returns a success flag —
-    // observe it (was a swallowed .catch) so a failed shift-close is visible in
-    // the logs instead of silently leaving the shift open.
-    const shiftEndOk = await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => false);
-    if (!shiftEndOk) {
-      console.warn('[confirmArrival] logout shift event did not persist after retry — shift may show open until next-login auto-close');
+    const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { closeEnforcedExplicit }] =
+      await Promise.all([
+        import('../services/companyConfig'),
+        import('../services/workPeriodAuthority/suiteShiftAuthority'),
+        import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+        import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+      ]);
+    const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+    const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+    const periodId = await getCurrentShiftId();
+
+    let shiftEndOk = false;
+    if (isEnforcedExplicitShift(enforcement)) {
+      // Server close: periodId + optional total miles (0..5000). No client logout/REST.
+      const miles =
+        odometerMiles != null && Number.isFinite(odometerMiles)
+          ? Math.round(odometerMiles)
+          : undefined;
+      const bounded =
+        miles !== undefined && miles >= 0 && miles <= 5000 ? miles : undefined;
+      const closed = await closeEnforcedExplicit({
+        periodId,
+        odometerMiles: bounded,
+      });
+      shiftEndOk = closed.ok;
+      if (!shiftEndOk) {
+        console.warn(
+          '[confirmArrival] closeDriverShift failed — retaining active local state:',
+          closed.reason,
+        );
+        // Do not clear local active flags on failed close.
+        return;
+      }
+    } else {
+      shiftEndOk = await recordShiftEvent(
+        'logout',
+        user.driverId,
+        user.legalName || user.displayName,
+        user.companyId,
+        'wbs',
+        periodId || undefined,
+        { enforcedExplicit: false, allowDirectWrite: true },
+      ).catch(() => false);
+      if (!shiftEndOk) {
+        console.warn('[confirmArrival] logout shift event did not persist after retry — shift may show open until next-login auto-close');
+      }
+      // Legacy: odometer via REST on day doc
+      if (odometerMiles != null && odometerMiles > 0) {
+        import('../services/shiftTracking').then(({ writeOdometerMiles }) =>
+          writeOdometerMiles(user.driverId, odometerMiles, { enforcedExplicit: false }).catch(() => {}));
+      }
     }
     // NOTE: shiftId is intentionally NOT cleared here. Day Summary needs
     // it to scope the JSA query (jsa_day_status WHERE shiftId == X).
-    // Clearing on confirmArrival caused getCurrentShiftId() to return
-    // null on the Day Summary screen, scope fell back to the date string,
-    // and the JSA wells/locations count rendered as 0 even when JSAs
-    // were signed. The next shift's startShift mints a fresh shiftId and
-    // overwrites this key — no risk of stale carryover. Real cleanup
-    // happens on full logout (logoutWithCascade / logout below).
-    // Everything below is fire-and-forget — don't block navigation to Day Summary
-    // Write odometer miles to shift doc
-    if (odometerMiles != null && odometerMiles > 0) {
-      import('../services/shiftTracking').then(({ writeOdometerMiles }) =>
-        writeOdometerMiles(user.driverId, odometerMiles).catch(() => {}));
-    }
-    // Cache yard GPS — recordShiftEvent already captured GPS, so just grab last known
+    // Real cleanup happens on full logout (logoutWithCascade / logout below).
     Location.getLastKnownPositionAsync().then(loc => {
       if (loc) saveYardLocation(loc.coords.latitude, loc.coords.longitude).catch(() => {});
     }).catch(() => {});
-    // Update local state + SecureStore in parallel
+    // Update local state + SecureStore only after successful close (enforced) or best-effort (legacy)
     setShiftActive(false);
     setReturningToYard(false);
     setReturnDepartTime(null);
-    // Clear pending Post-Trip routing + persist DVIR summary for Shift Complete.
-    // Must await finalize so day-summary does not open on a stale Pre-Trip-only
-    // Partial while Post-Trip receipt is already durable (fire-and-forget race).
+    setShiftAuthorityUi(isEnforcedExplicitShift(enforcement) ? { kind: 'none' } : { kind: 'legacy' });
     try {
       const { createSuiteDvirGate } = await import('../services/dvirGate');
       const { getCurrentShiftId: getSid } = await import('../services/shiftTracking');
@@ -809,14 +836,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
     }
-    // Safety net: normally End Shift (confirmArrival) already closed the shift,
-    // so shiftActive is false here and this is skipped. If a shift is somehow
-    // still active when the full cascade logout runs, close the record first so
-    // it doesn't linger open. Awaited + observed; never blocks the cascade.
+    // Safety net: normally End Shift (confirmArrival) already closed the shift.
+    // If still active, close via server callable under enforcement (no dual REST).
     if (shiftActive && user) {
-      const shiftEndOk = await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => false);
-      if (!shiftEndOk) {
-        console.warn('[logoutWithCascade] logout shift event did not persist after retry — shift may show open until next-login auto-close');
+      try {
+        const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { closeEnforcedExplicit }] =
+          await Promise.all([
+            import('../services/companyConfig'),
+            import('../services/workPeriodAuthority/suiteShiftAuthority'),
+            import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+            import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+          ]);
+        const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+        const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+        if (isEnforcedExplicitShift(enforcement)) {
+          const periodId = await getCurrentShiftId();
+          const closed = await closeEnforcedExplicit({ periodId });
+          if (!closed.ok) {
+            console.warn('[logoutWithCascade] closeDriverShift failed:', closed.reason);
+          }
+        } else {
+          const shiftEndOk = await recordShiftEvent(
+            'logout',
+            user.driverId,
+            user.legalName || user.displayName,
+            user.companyId,
+            'wbs',
+            undefined,
+            { enforcedExplicit: false, allowDirectWrite: true },
+          ).catch(() => false);
+          if (!shiftEndOk) {
+            console.warn('[logoutWithCascade] logout shift event did not persist after retry');
+          }
+        }
+      } catch (err) {
+        console.warn('[logoutWithCascade] shift close safety net error:', err);
       }
     }
     if (user) {
@@ -896,13 +950,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     // If shift is still active, end it as safety net before logging out.
-    // Awaited + observed (was fire-and-forget) so the shift record is closed
-    // before the cascade signal + cleanup. Bounded by recordShiftEvent's own
-    // timeouts; logout always proceeds even if this write ultimately fails.
     if (shiftActive && user) {
-      const shiftEndOk = await recordShiftEvent('logout', user.driverId, user.legalName || user.displayName, user.companyId).catch(() => false);
-      if (!shiftEndOk) {
-        console.warn('[logout] logout shift event did not persist after retry — shift may show open until next-login auto-close');
+      try {
+        const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { closeEnforcedExplicit }] =
+          await Promise.all([
+            import('../services/companyConfig'),
+            import('../services/workPeriodAuthority/suiteShiftAuthority'),
+            import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+            import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+          ]);
+        const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+        const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+        if (isEnforcedExplicitShift(enforcement)) {
+          const periodId = await getCurrentShiftId();
+          const closed = await closeEnforcedExplicit({ periodId });
+          if (!closed.ok) {
+            console.warn('[logout] closeDriverShift failed:', closed.reason);
+          }
+        } else {
+          const shiftEndOk = await recordShiftEvent(
+            'logout',
+            user.driverId,
+            user.legalName || user.displayName,
+            user.companyId,
+            'wbs',
+            undefined,
+            { enforcedExplicit: false, allowDirectWrite: true },
+          ).catch(() => false);
+          if (!shiftEndOk) {
+            console.warn('[logout] logout shift event did not persist after retry');
+          }
+        }
+      } catch (err) {
+        console.warn('[logout] shift close safety net error:', err);
       }
     }
     if (user) {
@@ -991,6 +1071,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [reconcileForIdentity]);
 
+  const refreshShiftAuthority = useCallback(async () => {
+    if (!user?.companyId) return;
+    try {
+      const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { postLoginEnforcedRestore }] =
+        await Promise.all([
+          import('../services/companyConfig'),
+          import('../services/workPeriodAuthority/suiteShiftAuthority'),
+          import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+          import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+        ]);
+      const cfg = await fetchCompanyConfig(user.companyId);
+      const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+      if (!isEnforcedExplicitShift(enforcement)) {
+        setShiftAuthorityUi({ kind: 'legacy' });
+        return;
+      }
+      setShiftAuthorityUi({ kind: 'checking' });
+      const ui = await postLoginEnforcedRestore({
+        enforcement,
+        flags: { setShiftActive, setShiftStartTime },
+      });
+      setShiftAuthorityUi(ui);
+    } catch (err) {
+      console.warn('[AuthContext] refreshShiftAuthority failed:', err);
+      setShiftAuthorityUi({ kind: 'unavailable', reason: 'refresh_failed' });
+    }
+  }, [user]);
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -1001,6 +1109,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       activePackageId,
       returningToYard,
       returnDepartTime,
+      shiftAuthorityUi,
+      refreshShiftAuthority,
       login,
       startShift,
       logout,

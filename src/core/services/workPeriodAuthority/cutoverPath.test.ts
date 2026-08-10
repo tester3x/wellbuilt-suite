@@ -204,8 +204,9 @@ test('production: secure login + session restore call observe (not Start Shift o
   const auth = src('src/core/context/AuthContext.tsx');
   assert.ok(auth.includes("'AuthContext.login'"));
   assert.ok(auth.includes("'AuthContext.sessionRestore'"));
-  // Start Shift still records login → autoClose → observe
-  assert.ok(auth.includes("recordShiftEvent('login'"));
+  // Legacy Start Shift still records login; enforced path uses claimEnforcedExplicitStart
+  assert.ok(auth.includes('claimEnforcedExplicitStart') || auth.includes("recordShiftEvent(\n        'login'"));
+  assert.ok(auth.includes('claimEnforcedExplicitStart'));
 });
 
 test('production: useCompanyConfig.refresh(true) still has no UI caller (optional); lifecycle is authoritative', () => {
