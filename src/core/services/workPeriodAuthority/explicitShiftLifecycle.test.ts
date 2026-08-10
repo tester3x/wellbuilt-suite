@@ -67,7 +67,7 @@ test('wiring: ActionCardRow gates checklist and Pre-Trip on claim ok', () => {
   const row = src('src/ui/shared/ActionCardRow.tsx');
   assert.ok(row.includes('mayOpenStartShiftChecklist'));
   assert.ok(row.includes('ensurePreTripGate'));
-  assert.ok(row.includes('if (!ok)'));
+  assert.ok(row.includes('isExplicitStartShiftSuccess'));
   assert.ok(row.includes('Checking shift status'));
   assert.ok(row.includes('refreshShiftAuthority'));
 });

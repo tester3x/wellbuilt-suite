@@ -26,8 +26,10 @@ export default function HomeScreen() {
 
   // All hooks MUST run before any early return (logout / revalidation null user).
   const handleArrived = useCallback(async (odometerMiles?: number) => {
-    await confirmArrival(odometerMiles);
+    const ok = await confirmArrival(odometerMiles);
+    if (ok === false) return false;
     router.push('/day-summary');
+    return true;
   }, [confirmArrival]);
 
   // ── JSA shift-start gate ──────────────────────────────────────

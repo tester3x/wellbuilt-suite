@@ -14,6 +14,10 @@ import { useAppLauncher } from '@/core/hooks/useAppLauncher';
 import { type JsaMode } from '@/core/services/companyConfig';
 import { useAuth } from '@/core/context/AuthContext';
 import { mayOpenStartShiftChecklist } from '@/core/services/workPeriodAuthority/postLoginShiftRestoration';
+import {
+  isExplicitStartShiftSuccess,
+  startShiftFailureReason,
+} from '@/core/services/workPeriodAuthority/shiftSessionGuards';
 import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
@@ -24,9 +28,9 @@ interface ActionCardRowProps {
   returning: boolean;
   returnStartTime: string | null;
   shiftStartTime: string | null;
-  onStartShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string } | void>;
+  onStartShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string }>;
   onStartReturn: () => Promise<void>;
-  onArrived: (odometerMiles?: number) => Promise<void>;
+  onArrived: (odometerMiles?: number) => Promise<boolean | void>;
   jsaMode?: JsaMode;
   jsaPending?: boolean;
   onJsaLaunch?: () => void;
@@ -75,14 +79,16 @@ function getShiftColor(startIso: string | null): string {
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
-  const { shiftAuthorityUi, refreshShiftAuthority } = useAuth();
+  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
+  const [startConfirmBusy, setStartConfirmBusy] = useState(false);
   const canOpenChecklist = mayOpenStartShiftChecklist(shiftAuthorityUi);
+  const claimBusy = startShiftBusy || startConfirmBusy;
   // (Pre-shift JSA preview breadcrumb + banner removed 2026-05-01. The
   // Preview-JSA-from-Start-Shift-modal flow caused two field-confirmed
   // bugs: signed JSAs scoped to the wrong shiftId, and the modal closing
@@ -145,30 +151,39 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   };
 
   // ── Start shift confirmed ──
+  // Only explicit { ok: true } proceeds. null/undefined/malformed = failure.
+  // Single-flight: in-flight second confirms are no-ops (AuthContext + local busy).
   const handleStartConfirm = async (data: ShiftStartData) => {
-    // Keep modal open until claim succeeds — never Pre-Trip on failed claim.
-    const result = await onStartShift(data.packageId || undefined);
-    const ok = result == null || result === undefined
-      ? true
-      : typeof result === 'object' && 'ok' in result
-        ? !!(result as { ok: boolean }).ok
-        : true;
-    if (!ok) {
-      const reason =
-        typeof result === 'object' && result && 'reason' in result
-          ? String((result as { reason?: string }).reason || 'claim_failed')
-          : 'claim_failed';
-      Alert.alert('Could not start shift', reason.replace(/_/g, ' '));
-      return;
-    }
-    setShowStartModal(false);
-    // Force Pre-Trip only after successful claim/adoption.
+    if (claimBusy) return;
+    setStartConfirmBusy(true);
     try {
-      const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
-      const gate = createSuiteDvirGate({ isShiftActive: () => true });
-      await gate.ensurePreTripGate({ alertOnBlock: true });
-    } catch (err) {
-      console.warn('[ActionCardRow] Pre-Trip gate launch failed:', err);
+      let result: { ok: boolean; reason?: string };
+      try {
+        result = await onStartShift(data.packageId || undefined);
+      } catch (err) {
+        console.warn('[ActionCardRow] startShift threw:', err);
+        Alert.alert('Could not start shift', 'start failed');
+        return;
+      }
+      if (!isExplicitStartShiftSuccess(result)) {
+        const reason = startShiftFailureReason(result);
+        // in_flight: silent (first confirm owns the op)
+        if (reason !== 'in_flight') {
+          Alert.alert('Could not start shift', reason.replace(/_/g, ' '));
+        }
+        return;
+      }
+      setShowStartModal(false);
+      // Force Pre-Trip only after successful claim/adoption (still under busy).
+      try {
+        const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
+        const gate = createSuiteDvirGate({ isShiftActive: () => true });
+        await gate.ensurePreTripGate({ alertOnBlock: true });
+      } catch (err) {
+        console.warn('[ActionCardRow] Pre-Trip gate launch failed:', err);
+      }
+    } finally {
+      setStartConfirmBusy(false);
     }
   };
 
@@ -229,9 +244,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           onClose={() => setShowArrivalModal(false)}
           onConfirm={async (miles) => {
             // Hold the modal open with its busy spinner while end-of-shift
-            // work runs (GPS + Firestore commit + state updates). Closing
-            // eagerly made drivers think the tap missed.
-            // Post-Trip gate: do NOT end shift until eQuipment receipt is durable.
+            // work runs. Do not close on close failure or invalid odometer.
             try {
               const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
               // Governed Post-Trip: PKCE only (no hash/name URI material).
@@ -245,11 +258,20 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
                 setShowArrivalModal(false);
                 return;
               }
-              await onArrived(miles);
+              const closed = await onArrived(miles);
+              if (closed === false) {
+                Alert.alert(
+                  'Could not end shift',
+                  'Check total miles (0–5000 whole miles) and try again. Your shift is still open.',
+                );
+                return; // keep arrival modal open
+              }
               // Arrival finalizes the shift — clear pending Post-Trip routing.
               await gate.clearDvirRoutingAfterFinalization();
-            } finally {
               setShowArrivalModal(false);
+            } catch (err) {
+              console.warn('[ActionCardRow] arrival confirm failed:', err);
+              Alert.alert('Could not end shift', 'Try again. Your shift is still open.');
             }
           }}
           returnStartTime={returnStartTime}
@@ -303,8 +325,12 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       {/* ── Enhanced Shift Start Modal ── */}
       <ShiftStartModal
         visible={showStartModal}
-        onClose={() => setShowStartModal(false)}
+        onClose={() => {
+          if (claimBusy) return;
+          setShowStartModal(false);
+        }}
         onConfirm={handleStartConfirm}
+        confirming={claimBusy}
       />
 
       {/* ── Enhanced Shift End Modal ── */}

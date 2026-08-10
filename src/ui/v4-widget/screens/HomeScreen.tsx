@@ -25,8 +25,10 @@ export default function HomeScreen() {
   React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
 
   const handleArrived = useCallback(async (odometerMiles?: number) => {
-    await confirmArrival(odometerMiles);
+    const ok = await confirmArrival(odometerMiles);
+    if (ok === false) return false;
     router.push('/day-summary');
+    return true;
   }, [confirmArrival]);
 
   if (!user) return null;

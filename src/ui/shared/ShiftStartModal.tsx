@@ -54,7 +54,9 @@ const ODOMETER_KEY = 'wellbuilt-last-odometer';
 interface ShiftStartModalProps {
   visible: boolean;
   onClose: () => void;
-  onConfirm: (data: ShiftStartData) => void;
+  onConfirm: (data: ShiftStartData) => void | Promise<void>;
+  /** Single-flight claim in progress — disable confirm and block dismiss. */
+  confirming?: boolean;
 }
 
 export interface ShiftStartData {
@@ -69,7 +71,7 @@ export interface ShiftStartData {
   };
 }
 
-export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftStartModalProps) {
+export default function ShiftStartModal({ visible, onClose, onConfirm, confirming = false }: ShiftStartModalProps) {
   const { user } = useAuth();
 
   // Form state
@@ -131,6 +133,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
   const allChecked = cdlMedCard && preTripDone && vehicleOk;
 
   const handleConfirm = useCallback(async () => {
+    if (confirming || loading) return;
     // Save vehicle info for next time + SSO relay
     if (user?.passcodeHash) {
       saveVehicleInfo(user.passcodeHash, {
@@ -143,17 +146,17 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
       await AsyncStorage.setItem('wellbuilt-shift-start-odometer', startOdometer.trim()).catch(() => {});
     }
 
-    onConfirm({
+    await onConfirm({
       packageId: selectedPkg,
       truckNumber: truckNumber.trim(),
       trailerNumber: trailerNumber.trim(),
       startOdometer: startOdometer.trim(),
       preTrip: { cdlMedCard, preTripDone, vehicleOk },
     });
-  }, [selectedPkg, truckNumber, trailerNumber, startOdometer, cdlMedCard, preTripDone, vehicleOk, user, onConfirm]);
+  }, [selectedPkg, truckNumber, trailerNumber, startOdometer, cdlMedCard, preTripDone, vehicleOk, user, onConfirm, confirming, loading]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={confirming ? () => {} : onClose}>
       <KeyboardAvoidingView
         style={s.overlay}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -290,13 +293,21 @@ export default function ShiftStartModal({ visible, onClose, onConfirm }: ShiftSt
           <View style={s.buttons}>
             <Pressable
               onPress={handleConfirm}
-              disabled={loading || !selectedPkg || !allChecked}
-              style={[s.btn, s.btnStart, (loading || !selectedPkg || !allChecked) && { opacity: 0.4 }]}
+              disabled={loading || confirming || !selectedPkg || !allChecked}
+              style={[s.btn, s.btnStart, (loading || confirming || !selectedPkg || !allChecked) && { opacity: 0.4 }]}
             >
-              <MaterialCommunityIcons name="play-circle-outline" size={20} color="#000" />
-              <Text style={s.btnStartText}>Start Shift</Text>
+              {confirming ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <MaterialCommunityIcons name="play-circle-outline" size={20} color="#000" />
+              )}
+              <Text style={s.btnStartText}>{confirming ? 'Starting…' : 'Start Shift'}</Text>
             </Pressable>
-            <Pressable onPress={onClose} style={[s.btn, s.btnCancel]}>
+            <Pressable
+              onPress={onClose}
+              disabled={confirming}
+              style={[s.btn, s.btnCancel, confirming && { opacity: 0.4 }]}
+            >
               <Text style={s.btnCancelText}>Cancel</Text>
             </Pressable>
           </View>
