@@ -68,6 +68,15 @@ export function getSsoRouteAdapter(
     getReconciliationState: () => getAuthReconciliationState(),
     // forceRefresh: verify the server's CURRENT view, not a cached one.
     getVerifiedIdentity: () => getOwnedVerifiedIdentity(getFirebaseApp(), true),
+    // Real timer for the refresh bound. The core owns the race; this only
+    // supplies the delay so the decision stays node-testable.
+    waitMs: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
+    // Sanitized boundary telemetry. Phase and category are closed sets
+    // declared in the core, so this line cannot carry a token, code, state,
+    // PKCE value, URL, claim, or identifier — only two enum words.
+    log: (phase, category) => {
+      console.log(`[sso] ${phase}${category ? `: ${category}` : ''}`);
+    },
     requestCode: (request) => issuance.requestCode(request),
     currentIdentityEpoch: () => identityEpoch,
     getEquipmentShiftBinding: async () => {

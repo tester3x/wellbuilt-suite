@@ -41,6 +41,41 @@ export interface SsoIssuerVerifiedIdentity {
   companyId: string | null;
 }
 
+/**
+ * Bound on the forced claims refresh.
+ *
+ * DEVICE-PROVEN NEED (2026-08-11): in two failed handoffs Suite claimed the
+ * authorize route and then went silent — no issuance reached the backend at
+ * all (`ssoIssueAuthorizationCode` logged invocations for the three healthy
+ * runs and NOTHING for the two failures). The chain therefore died before
+ * `requestCode`, and the only unbounded network operation ahead of it is
+ * this forced refresh: `getIdTokenResult(true)` has no timeout, no abort,
+ * and no race anywhere in the boundary. An unbounded network call in an
+ * authorization path is a latent indefinite hang, and this is what it looks
+ * like in the field.
+ *
+ * The three healthy runs completed the ENTIRE authorize+issue chain in
+ * 1.0-4.8 s. Against that, 10 s is 10x the FASTEST complete path but only
+ * ~2.1x the SLOWEST — a deliberately modest margin over the worst observed
+ * healthy case, not an order of magnitude over it. Sequentially with the
+ * existing 15 s issuance bound it totals 25 s, which stays inside WB-T's
+ * 45 s pending-bridge bound, so a stalled refresh surfaces as Suite's own
+ * bounded failure rather than as WB-T timing out on an app that never
+ * answered.
+ */
+export const SSO_VERIFIED_IDENTITY_TIMEOUT_MS = 10_000;
+
+/** Closed set. Nothing else may be logged from this boundary. */
+export type SsoRefreshPhase =
+  | 'refresh.started'
+  | 'refresh.completed'
+  | 'refresh.failed'
+  | 'refresh.timeout'
+  | 'refresh.lateDiscarded';
+
+/** Closed set. Coarse by design — never an error message or identifier. */
+export type SsoRefreshCategory = 'ok' | 'error' | 'timeout' | 'superseded';
+
 export interface SsoAuthorizationOps {
   /** WB-S's durable local identity, or null when signed out. */
   getLocalIdentity(): Promise<SsoIssuerLocalIdentity | null>;
@@ -67,6 +102,17 @@ export interface SsoAuthorizationOps {
    * for the driver who just left.
    */
   currentIdentityEpoch(): number;
+  /**
+   * Bounded delay, injected so the refresh timeout is testable under node.
+   * Only ever raced against getVerifiedIdentity — never awaited alone.
+   */
+  waitMs?(ms: number): Promise<void>;
+  /**
+   * Sanitized boundary telemetry. Phase and category are CLOSED SETS
+   * declared in this file; nothing else may be passed, so no token, code,
+   * state, PKCE material, URL, claim, or identifier can reach a log.
+   */
+  log?(phase: SsoRefreshPhase, category?: SsoRefreshCategory): void;
   /**
    * Authoritative equipment shift binding from WB-S governed state.
    * Required when audience is equipment; ignored for tickets.
@@ -151,11 +197,68 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
 
       // 4. Fresh claims from the boundary — not the reconciliation verdict,
       //    which is a cached judgement about an earlier moment.
+      //
+      //    BOUNDED. The forced refresh is a network call with no timeout of
+      //    its own; unbounded, it hangs this attempt forever and the driver
+      //    sees nothing until the far app's own bound expires. Racing it
+      //    against a delay converts that into the existing bounded failure.
+      //
+      //    The epoch is captured BEFORE the refresh, not after it, so a
+      //    logout or driver switch that lands DURING the refresh invalidates
+      //    the attempt too. Previously the first capture happened after this
+      //    await, leaving the refresh window unguarded.
+      const epochBeforeRefresh = ops.currentIdentityEpoch();
       let verified: SsoIssuerVerifiedIdentity | null;
-      try {
-        verified = await ops.getVerifiedIdentity();
-      } catch {
-        return errorOut('unavailable', 'claims unreadable', request.state, aud);
+      {
+        ops.log?.('refresh.started');
+        type RefreshResult =
+          | { kind: 'ok'; value: SsoIssuerVerifiedIdentity | null }
+          | { kind: 'error' }
+          | { kind: 'timeout' };
+        let settled = false;
+        const refresh: Promise<RefreshResult> = ops.getVerifiedIdentity()
+          .then((value): RefreshResult => {
+            // A resolution arriving AFTER the timeout won the race is inert:
+            // this attempt already returned, so nothing downstream can be
+            // reached. Recorded so a late completion is visible rather than
+            // silent — it is the signature of a slow, not dead, refresh.
+            if (settled) ops.log?.('refresh.lateDiscarded', 'timeout');
+            return { kind: 'ok', value };
+          })
+          .catch((): RefreshResult => {
+            if (settled) ops.log?.('refresh.lateDiscarded', 'error');
+            return { kind: 'error' };
+          });
+        const timeout: Promise<RefreshResult> = ops.waitMs
+          ? ops.waitMs(SSO_VERIFIED_IDENTITY_TIMEOUT_MS).then((): RefreshResult => ({ kind: 'timeout' }))
+          // No waiter injected (older callers/tests): behave exactly as
+          // before rather than inventing an unbounded timer.
+          : new Promise<RefreshResult>(() => {});
+        const outcome = await Promise.race([refresh, timeout]);
+        settled = true;
+        if (outcome.kind === 'timeout') {
+          ops.log?.('refresh.timeout', 'timeout');
+          // INVALIDATION: return through the existing bounded failure path.
+          // Because this returns before step 7, a late refresh resolution
+          // has no path to requestCode, to a success callback, or to any
+          // later terminal mutation — the attempt is over. Recovery is a
+          // deliberate fresh attempt, never an automatic retry: Firebase's
+          // refresh promise is not cancellable, and retrying could overlap
+          // a still-running one.
+          return errorOut('unavailable', 'claims refresh timed out', request.state, aud);
+        }
+        if (outcome.kind === 'error') {
+          ops.log?.('refresh.failed', 'error');
+          return errorOut('unavailable', 'claims unreadable', request.state, aud);
+        }
+        ops.log?.('refresh.completed', 'ok');
+        verified = outcome.value;
+      }
+      // A driver switch that landed while the refresh was in flight makes
+      // these claims describe a session this attempt no longer owns.
+      if (ops.currentIdentityEpoch() !== epochBeforeRefresh) {
+        ops.log?.('refresh.lateDiscarded', 'superseded');
+        return errorOut('superseded', 'identity changed during claims refresh', request.state, aud);
       }
       if (!verified) {
         return errorOut('not_authorized', 'no owned session', request.state, aud);
