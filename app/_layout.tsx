@@ -16,6 +16,7 @@ import { allSkins, defaultSkinId } from '@/ui/skins';
 import { startConnectivityMonitor, stopConnectivityMonitor } from '@/core/services/connectivity';
 import { createSuiteDvirGate, makeDvirSsoGetter } from '@/core/services/dvirGate';
 import DvirHandoffHost from '@/ui/shared/DvirHandoffHost';
+import SsoHandoffOverlay from '@/core/components/SsoHandoffOverlay';
 
 // Keep the native splash screen visible until we're ready
 // This prevents the black flicker between native splash and React render
@@ -138,6 +139,12 @@ export default function RootLayout() {
                   animation: 'fade',
                 }}
               />
+              {/* Continuous outbound-handoff surface. Rendered AFTER the
+                  Stack so it draws above every screen — armed at the
+                  Tickets tap, it rides the backgrounded tree and is already
+                  covering Home when the authorize intent re-fronts Suite,
+                  which is what removes the cold double-Home artifact. */}
+              <SsoHandoffOverlay />
             </View>
           </FirstLaunchProvider>
         </AuthProvider>

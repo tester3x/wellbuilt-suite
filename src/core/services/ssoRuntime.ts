@@ -20,6 +20,12 @@ import {
   SSO_ISSUE_TIMEOUT_MS,
   type SsoCallableTransport,
 } from './ssoIssuanceClient';
+import { parseSsoAuthorizationUrl } from './ssoProtocol.generated';
+import {
+  noteSsoHandoffCallbackLaunched,
+  noteSsoHandoffClaim,
+  noteSsoHandoffTerminalError,
+} from './ssoHandoffOverlayStore';
 
 /**
  * WB-S identity epoch.
@@ -100,7 +106,37 @@ export async function dispatchSsoUrl(
   url: string | null | undefined,
 ): Promise<import('./ssoRouteAdapter').SsoRouteResult | { kind: 'not-sso' }> {
   if (!url) return { kind: 'not-sso' };
-  return getSsoRouteAdapter().handle(url);
+  // HANDOFF OVERLAY (visual only, both calls fire-and-forget). The claim
+  // note is the HYBRID FALLBACK arm: for a process-preserved outbound
+  // handoff the overlay is already up ('opening' → 'authorizing'); for a
+  // counterpart-originated leg or a Suite that died mid-handoff it arms
+  // here, honestly accepting one pre-JS Home frame in that recovery case.
+  // Neither call is awaited by, or can influence, the route adapter.
+  try {
+    const parsed = parseSsoAuthorizationUrl(url);
+    if (parsed.ok) noteSsoHandoffClaim(parsed.value.audience, Date.now());
+  } catch { /* pixels only */ }
+  const result = await getSsoRouteAdapter().handle(url);
+  try {
+    // answered/success = issuance completed AND the callback intent was
+    // opened by the handler — the overlay moves to callback_launched and
+    // DELIBERATELY DOES NOT CLEAR: the trace shows a possible Home frame
+    // between callback launch and WB-T taking the foreground, so clearing
+    // waits for the AppState departure (or the bounded timeout).
+    if (result.kind === 'answered' && result.status === 'success') {
+      noteSsoHandoffCallbackLaunched();
+    } else if (
+      (result.kind === 'answered' && result.status === 'error')
+      || result.kind === 'abandoned'
+      || result.kind === 'callback-failed'
+    ) {
+      // Terminal with no callback: uncover so the bounded error UI shows.
+      noteSsoHandoffTerminalError();
+    }
+    // duplicate / busy / not-sso: no overlay change — the live handoff's
+    // state still belongs to the first claimer.
+  } catch { /* pixels only */ }
+  return result;
 }
 
 /** True when the URL was claimed by the SSO adapter (any non-not-sso outcome). */

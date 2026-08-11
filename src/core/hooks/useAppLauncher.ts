@@ -15,6 +15,11 @@ import {
   isCredentialFreeLaunchTarget,
   WBT_SSO_START_HOST,
 } from '../services/ssoLaunchPolicy';
+import {
+  armSsoHandoffOutbound,
+  noteSsoHandoffLaunchFailure,
+} from '../services/ssoHandoffOverlayStore';
+import { SSO_AUDIENCE_WBT } from '../services/ssoProtocol.generated';
 
 export function useAppLauncher() {
   const { user, activePackageId, shiftStartTime, shiftActive } = useAuth();
@@ -51,7 +56,31 @@ export function useAppLauncher() {
     // eQuipment still receive the legacy params — migrating them needs a
     // bridge each and is out of scope here. See ssoLaunchPolicy.ts.
     if (isCredentialFreeLaunchTarget(options.scheme)) {
-      return launchWBApp({ ...options, sso: undefined, startHost: WBT_SSO_START_HOST });
+      // CONTINUOUS HANDOFF OVERLAY — armed BEFORE openURL, then one
+      // committed frame, so the tree Suite backgrounds with is already the
+      // covered tree. Android redraws that exact tree when the authorize
+      // intent re-fronts Suite, which is what makes "Home never visibly
+      // uncovered" hold by construction for a process-preserved handoff
+      // (a returned-claim overlay always loses that first frame to the
+      // resumed native tree). Purely visual: failure to arm changes pixels
+      // only, so it is swallowed and the launch proceeds regardless.
+      try {
+        armSsoHandoffOutbound(SSO_AUDIENCE_WBT, Date.now());
+        // Double-rAF: the first fires before the commit paints; the second
+        // guarantees a frame containing the overlay has been committed.
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      } catch { /* visual only — never block the launch */ }
+      try {
+        return await launchWBApp({ ...options, sso: undefined, startHost: WBT_SSO_START_HOST });
+      } catch (err) {
+        // Launch failed before leaving Suite: uncover Home immediately and
+        // let launchWBApp's existing alert handling stand. (Failures that
+        // launchWBApp absorbs internally without throwing fall to the
+        // bounded stale timeout instead — documented, not hidden.)
+        noteSsoHandoffLaunchFailure();
+        throw err;
+      }
     }
 
     let sso = user

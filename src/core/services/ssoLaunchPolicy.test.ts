@@ -53,7 +53,14 @@ describe('WB-T launches credential-free', () => {
     assert.ok(ssoAt > -1, 'the legacy sso construction still exists for other apps');
     assert.ok(guardAt < ssoAt,
       'the WB-T guard must return BEFORE the passcode hash is ever assembled');
-    assert.match(hook, /isCredentialFreeLaunchTarget\(options\.scheme\)\)\s*\{\s*return launchWBApp\(\{ \.\.\.options, sso: undefined, startHost: WBT_SSO_START_HOST \}\)/);
+    // Widened for the handoff overlay: the guard's body now arms the visual
+    // overlay and commits a frame before launching, but the PROPERTY is
+    // unchanged — the branch still launches credential-free (sso: undefined,
+    // start host) and still returns before any legacy param is assembled
+    // (asserted positionally above). The bounded gap tolerates the overlay
+    // block; a change that reordered the launch out of the guard would
+    // still fail here.
+    assert.match(hook, /isCredentialFreeLaunchTarget\(options\.scheme\)\)\s*\{[\s\S]{0,900}return await launchWBApp\(\{ \.\.\.options, sso: undefined, startHost: WBT_SSO_START_HOST \}\)/);
   });
 
   it('launchWBApp builds a bare start route when startHost is set', () => {
