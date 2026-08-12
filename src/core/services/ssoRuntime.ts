@@ -68,14 +68,18 @@ export function getSsoRouteAdapter(
     getReconciliationState: () => getAuthReconciliationState(),
     // forceRefresh: verify the server's CURRENT view, not a cached one.
     getVerifiedIdentity: () => getOwnedVerifiedIdentity(getFirebaseApp(), true),
-    // Real timer for the refresh bound. The core owns the race; this only
-    // supplies the delay so the decision stays node-testable.
-    waitMs: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
+    // Wall clock for refresh-duration telemetry only. Nothing is bounded,
+    // cancelled, or decided by it — a timer cannot bound an operation that
+    // freezes together with the timer, which is exactly what the device
+    // proved when Suite loses the foreground.
+    nowMs: () => Date.now(),
     // Sanitized boundary telemetry. Phase and category are closed sets
-    // declared in the core, so this line cannot carry a token, code, state,
-    // PKCE value, URL, claim, or identifier — only two enum words.
-    log: (phase, category) => {
-      console.log(`[sso] ${phase}${category ? `: ${category}` : ''}`);
+    // declared in the core and the only other value is an elapsed
+    // millisecond count, so this line cannot carry a token, code, state,
+    // PKCE value, URL, claim, or identifier.
+    log: (phase, category, elapsed) => {
+      const ms = typeof elapsed === 'number' ? ` (${elapsed}ms)` : '';
+      console.log(`[sso] ${phase}${category ? `: ${category}` : ''}${ms}`);
     },
     requestCode: (request) => issuance.requestCode(request),
     currentIdentityEpoch: () => identityEpoch,

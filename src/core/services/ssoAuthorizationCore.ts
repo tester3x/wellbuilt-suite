@@ -42,39 +42,40 @@ export interface SsoIssuerVerifiedIdentity {
 }
 
 /**
- * Bound on the forced claims refresh.
+ * Observability for the forced claims refresh — and why there is NO timeout.
  *
- * DEVICE-PROVEN NEED (2026-08-11): in two failed handoffs Suite claimed the
- * authorize route and then went silent — no issuance reached the backend at
- * all (`ssoIssueAuthorizationCode` logged invocations for the three healthy
- * runs and NOTHING for the two failures). The chain therefore died before
- * `requestCode`, and the only unbounded network operation ahead of it is
- * this forced refresh: `getIdTokenResult(true)` has no timeout, no abort,
- * and no race anywhere in the boundary. An unbounded network call in an
- * authorization path is a latent indefinite hang, and this is what it looks
- * like in the field.
+ * WHAT THE TELEMETRY FOUND (device-proven 2026-08-11, three consecutive
+ * runs). Two earlier handoffs had gone silent with no issuance reaching the
+ * backend, and this refresh was the last unbounded operation before
+ * `requestCode`. Instrumenting it settled that: the failing run logged
+ * `refresh.started` and no completion. So the stall really is here.
  *
- * The three healthy runs completed the ENTIRE authorize+issue chain in
- * 1.0-4.8 s. Against that, 10 s is 10x the FASTEST complete path but only
- * ~2.1x the SLOWEST — a deliberately modest margin over the worst observed
- * healthy case, not an order of magnitude over it. Sequentially with the
- * existing 15 s issuance bound it totals 25 s, which stays inside WB-T's
- * 45 s pending-bridge bound, so a stalled refresh surfaces as Suite's own
- * bounded failure rather than as WB-T timing out on an app that never
- * answered.
+ * WHY A TIMEOUT IS THE WRONG TOOL — and was actively harmful. The same run
+ * proved the refresh is not HUNG, it is FROZEN: Suite loses the foreground
+ * to the arbitration race, and Android suspends the whole JS context. A
+ * `setTimeout` bound freezes with it, so a nominal 10 s bound fired at
+ * ~50 s of wall clock — it cannot enforce a wall-clock deadline it is
+ * itself suspended by. Worse, on unfreeze the overdue timer drained BEFORE
+ * the settling promise and killed a refresh that resolved successfully
+ * 19 ms later, converting a recoverable handoff into a failed
+ * authorization. A bound that can only fire when the thing it bounds is
+ * also about to succeed is not a safety net; it is a coin flip that loses.
+ *
+ * So the refresh is awaited plainly again. The freeze is a foreground
+ * lifecycle defect and must be fixed there, not papered over with a timer
+ * that shares its fate. What remains here is truthful observability —
+ * started / completed / failed with elapsed wall-clock — which is what
+ * made the diagnosis possible in the first place and costs nothing.
  */
-export const SSO_VERIFIED_IDENTITY_TIMEOUT_MS = 10_000;
 
 /** Closed set. Nothing else may be logged from this boundary. */
 export type SsoRefreshPhase =
   | 'refresh.started'
   | 'refresh.completed'
-  | 'refresh.failed'
-  | 'refresh.timeout'
-  | 'refresh.lateDiscarded';
+  | 'refresh.failed';
 
 /** Closed set. Coarse by design — never an error message or identifier. */
-export type SsoRefreshCategory = 'ok' | 'error' | 'timeout' | 'superseded';
+export type SsoRefreshCategory = 'ok' | 'error' | 'superseded';
 
 export interface SsoAuthorizationOps {
   /** WB-S's durable local identity, or null when signed out. */
@@ -103,16 +104,18 @@ export interface SsoAuthorizationOps {
    */
   currentIdentityEpoch(): number;
   /**
-   * Bounded delay, injected so the refresh timeout is testable under node.
-   * Only ever raced against getVerifiedIdentity — never awaited alone.
+   * Wall clock, injected for testability. Used ONLY to measure elapsed
+   * refresh duration for telemetry — never to bound, cancel, or decide
+   * anything. Absent clock simply means no duration is reported.
    */
-  waitMs?(ms: number): Promise<void>;
+  nowMs?(): number;
   /**
    * Sanitized boundary telemetry. Phase and category are CLOSED SETS
-   * declared in this file; nothing else may be passed, so no token, code,
-   * state, PKCE material, URL, claim, or identifier can reach a log.
+   * declared in this file, and the only other value is an elapsed
+   * millisecond count — so no token, code, state, PKCE material, URL,
+   * claim, or identifier can reach a log.
    */
-  log?(phase: SsoRefreshPhase, category?: SsoRefreshCategory): void;
+  log?(phase: SsoRefreshPhase, category?: SsoRefreshCategory, elapsedMs?: number): void;
   /**
    * Authoritative equipment shift binding from WB-S governed state.
    * Required when audience is equipment; ignored for tickets.
@@ -127,6 +130,12 @@ export interface SsoAuthorizationOutcome {
   internalReason?: string;
   /** Drives fixed callback scheme selection (tickets vs equipment). */
   audience?: typeof SSO_AUDIENCE_WBT | typeof SSO_AUDIENCE_EQUIPMENT;
+}
+
+/** Elapsed ms when both readings exist; undefined when no clock was injected. */
+function elapsedMs(startedAtMs?: number, endedAtMs?: number): number | undefined {
+  if (typeof startedAtMs !== 'number' || typeof endedAtMs !== 'number') return undefined;
+  return endedAtMs - startedAtMs;
 }
 
 function errorOut(
@@ -198,10 +207,11 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
       // 4. Fresh claims from the boundary — not the reconciliation verdict,
       //    which is a cached judgement about an earlier moment.
       //
-      //    BOUNDED. The forced refresh is a network call with no timeout of
-      //    its own; unbounded, it hangs this attempt forever and the driver
-      //    sees nothing until the far app's own bound expires. Racing it
-      //    against a delay converts that into the existing bounded failure.
+      //    NOT BOUNDED BY A TIMER — deliberately. See the note above
+      //    SsoRefreshPhase: the observed stall is a FREEZE, not a hang, and
+      //    a JS timer freezes with it. The 10 s bound tried here fired at
+      //    ~50 s and killed a refresh that succeeded 19 ms later. Awaited
+      //    plainly; the freeze is fixed in the foreground lifecycle.
       //
       //    The epoch is captured BEFORE the refresh, not after it, so a
       //    logout or driver switch that lands DURING the refresh invalidates
@@ -211,53 +221,21 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
       let verified: SsoIssuerVerifiedIdentity | null;
       {
         ops.log?.('refresh.started');
-        type RefreshResult =
-          | { kind: 'ok'; value: SsoIssuerVerifiedIdentity | null }
-          | { kind: 'error' }
-          | { kind: 'timeout' };
-        let settled = false;
-        const refresh: Promise<RefreshResult> = ops.getVerifiedIdentity()
-          .then((value): RefreshResult => {
-            // A resolution arriving AFTER the timeout won the race is inert:
-            // this attempt already returned, so nothing downstream can be
-            // reached. Recorded so a late completion is visible rather than
-            // silent — it is the signature of a slow, not dead, refresh.
-            if (settled) ops.log?.('refresh.lateDiscarded', 'timeout');
-            return { kind: 'ok', value };
-          })
-          .catch((): RefreshResult => {
-            if (settled) ops.log?.('refresh.lateDiscarded', 'error');
-            return { kind: 'error' };
-          });
-        const timeout: Promise<RefreshResult> = ops.waitMs
-          ? ops.waitMs(SSO_VERIFIED_IDENTITY_TIMEOUT_MS).then((): RefreshResult => ({ kind: 'timeout' }))
-          // No waiter injected (older callers/tests): behave exactly as
-          // before rather than inventing an unbounded timer.
-          : new Promise<RefreshResult>(() => {});
-        const outcome = await Promise.race([refresh, timeout]);
-        settled = true;
-        if (outcome.kind === 'timeout') {
-          ops.log?.('refresh.timeout', 'timeout');
-          // INVALIDATION: return through the existing bounded failure path.
-          // Because this returns before step 7, a late refresh resolution
-          // has no path to requestCode, to a success callback, or to any
-          // later terminal mutation — the attempt is over. Recovery is a
-          // deliberate fresh attempt, never an automatic retry: Firebase's
-          // refresh promise is not cancellable, and retrying could overlap
-          // a still-running one.
-          return errorOut('unavailable', 'claims refresh timed out', request.state, aud);
-        }
-        if (outcome.kind === 'error') {
-          ops.log?.('refresh.failed', 'error');
+        const startedAtMs = ops.nowMs?.();
+        try {
+          verified = await ops.getVerifiedIdentity();
+        } catch {
+          ops.log?.('refresh.failed', 'error', elapsedMs(startedAtMs, ops.nowMs?.()));
           return errorOut('unavailable', 'claims unreadable', request.state, aud);
         }
-        ops.log?.('refresh.completed', 'ok');
-        verified = outcome.value;
+        // Elapsed wall-clock is the one number that made the freeze legible:
+        // a healthy refresh is ~100-330 ms, and the frozen one spanned ~50 s.
+        ops.log?.('refresh.completed', 'ok', elapsedMs(startedAtMs, ops.nowMs?.()));
       }
       // A driver switch that landed while the refresh was in flight makes
       // these claims describe a session this attempt no longer owns.
       if (ops.currentIdentityEpoch() !== epochBeforeRefresh) {
-        ops.log?.('refresh.lateDiscarded', 'superseded');
+        ops.log?.('refresh.failed', 'superseded');
         return errorOut('superseded', 'identity changed during claims refresh', request.state, aud);
       }
       if (!verified) {
