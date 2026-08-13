@@ -12,6 +12,7 @@
  */
 import {
   SSO_AUDIENCE_EQUIPMENT,
+  SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
   SSO_PROTOCOL_VERSION,
   isSsoAudience,
@@ -114,9 +115,14 @@ export function createSsoIssuanceClient(transport: SsoCallableTransport): SsoIss
         if (!isSsoShiftBinding(request.shiftBinding)) {
           throw new SsoIssuanceError('malformed_request', 'equipment issuance requires shiftBinding');
         }
-      } else if (request.audience === SSO_AUDIENCE_WBT) {
+      } else if (request.audience === SSO_AUDIENCE_WBT || request.audience === SSO_AUDIENCE_JSA) {
         if (request.shiftBinding !== undefined) {
-          throw new SsoIssuanceError('malformed_request', 'tickets issuance forbids shiftBinding');
+          throw new SsoIssuanceError(
+            'malformed_request',
+            request.audience === SSO_AUDIENCE_JSA
+              ? 'jsa issuance forbids client shiftBinding'
+              : 'tickets issuance forbids shiftBinding',
+          );
         }
       }
       let raw: unknown;

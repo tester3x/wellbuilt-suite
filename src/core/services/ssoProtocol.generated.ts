@@ -3,7 +3,7 @@
  *
  * Verbatim copy of the canonical SSO protocol from
  * @tester3x/wellbuilt-contracts src/sso/protocol.ts at version
- * 0.3.0-dev.0 (UNPUBLISHED).
+ * 0.5.0-dev.0 (UNPUBLISHED, feat/jsa-sso-audience@fdc741d).
  *
  * Regenerate:  node tools/mirror-sso-protocol.mjs --regenerate
  * Verify:      node tools/mirror-sso-protocol.mjs --verify
@@ -15,7 +15,7 @@
  */
 // @generated from wellbuilt-contracts/src/sso/protocol.ts
 /**
- * Canonical WB-S → WB-T SSO authorization-code protocol (vc51.9J).
+ * Canonical WB-S ΓåÆ WB-T SSO authorization-code protocol (vc51.9J).
  *
  * An OAuth-style authorization-code exchange with PKCE, carried over
  * device deep links. It replaces the legacy scheme in which WB-S passed a
@@ -33,8 +33,8 @@
  *
  * SINGLE FIREBASE PROJECT. WB-S and WB-T are the same Firebase project
  * (wellbuilt-sync) and one driver is one Auth UID. `audience` is
- * therefore a PROTOCOL-level binding — it stops a code issued for WB-T
- * being redeemed by another app — not a cryptographic project boundary.
+ * therefore a PROTOCOL-level binding ΓÇö it stops a code issued for WB-T
+ * being redeemed by another app ΓÇö not a cryptographic project boundary.
  * The exchange adds a per-session `app` claim so a consumer can tell
  * which application is acting; see SSO_SESSION_APP_CLAIM.
  *
@@ -68,21 +68,34 @@ export function isSsoProtocolVersion(v: unknown): v is SsoProtocolVersion {
   return v === SSO_PROTOCOL_VERSION;
 }
 
-// ── audience ──────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ audience ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 /** The only audience this protocol version issues codes for. */
 export const SSO_AUDIENCE_WBT = 'wellbuilt-tickets' as const;
 /**
- * vc51.9AE — WB eQuipment. Added because eQuipment's DVIR handoff
+ * vc51.9AE ΓÇö WB eQuipment. Added because eQuipment's DVIR handoff
  * previously carried a passcode-derived hash in its launch URI and treated
  * possession of it as identity. It joins the same authorization-code
  * exchange rather than getting a parallel protocol.
  */
 export const SSO_AUDIENCE_EQUIPMENT = 'wellbuilt-equipment' as const;
-export type SsoAudience = typeof SSO_AUDIENCE_WBT | typeof SSO_AUDIENCE_EQUIPMENT;
+/**
+ * JSA-audience addendum ΓÇö WB-JSA. Added because WB-JSA's launch previously
+ * carried a passcode-derived hash and display name in `jsaapp://start` and
+ * treated possession of them as identity ΓÇö which is how a stale legacy
+ * session reused a June shift during an active August one. WB-JSA joins
+ * the same authorization-code exchange; its launch link (see
+ * ./jsaLaunch.ts) carries only non-authoritative request metadata.
+ */
+export const SSO_AUDIENCE_JSA = 'wellbuilt-jsa' as const;
+export type SsoAudience =
+  | typeof SSO_AUDIENCE_WBT
+  | typeof SSO_AUDIENCE_EQUIPMENT
+  | typeof SSO_AUDIENCE_JSA;
 export const SSO_AUDIENCES: readonly SsoAudience[] = Object.freeze([
   SSO_AUDIENCE_WBT,
   SSO_AUDIENCE_EQUIPMENT,
+  SSO_AUDIENCE_JSA,
 ]);
 
 export function isSsoAudience(v: unknown): v is SsoAudience {
@@ -100,18 +113,21 @@ export function isSsoAudience(v: unknown): v is SsoAudience {
 export const SSO_SESSION_APP_CLAIM = 'app' as const;
 export const SSO_SESSION_APP_WBT = 'wbt' as const;
 export const SSO_SESSION_APP_EQUIPMENT = 'equipment' as const;
+/** Matches the established 'wbjsa' switcher alias family; claim stays short. */
+export const SSO_SESSION_APP_JSA = 'jsa' as const;
 
 /**
- * Audience → per-session app claim. A map rather than a conditional so a
+ * Audience ΓåÆ per-session app claim. A map rather than a conditional so a
  * new audience cannot be added without deciding what it is called in the
  * minted token.
  */
 export const SSO_SESSION_APP_BY_AUDIENCE: Readonly<Record<SsoAudience, string>> = Object.freeze({
   [SSO_AUDIENCE_WBT]: SSO_SESSION_APP_WBT,
   [SSO_AUDIENCE_EQUIPMENT]: SSO_SESSION_APP_EQUIPMENT,
+  [SSO_AUDIENCE_JSA]: SSO_SESSION_APP_JSA,
 });
 
-// ── PKCE ──────────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ PKCE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 /** Only S256. `plain` is never acceptable. */
 export const SSO_CHALLENGE_METHOD = 'S256' as const;
@@ -121,7 +137,7 @@ export function isSsoChallengeMethod(v: unknown): v is SsoChallengeMethod {
   return v === SSO_CHALLENGE_METHOD;
 }
 
-// ── sizes and encodings ───────────────────────────────────────────────────
+// ΓöÇΓöÇ sizes and encodings ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 /** Every protocol secret is 256 bits. Nothing weaker is representable. */
 export const SSO_STATE_BYTES = 32;
@@ -142,7 +158,7 @@ export const SSO_STATE_PATTERN = `^[A-Za-z0-9_-]{${SSO_B64URL_32_LENGTH}}$`;
 export const SSO_CODE_PATTERN = `^[A-Za-z0-9_-]{${SSO_B64URL_32_LENGTH}}$`;
 export const SSO_CHALLENGE_PATTERN = `^[A-Za-z0-9_-]{${SSO_B64URL_32_LENGTH}}$`;
 /**
- * RFC 7636 §4.1 code verifier: 43–128 characters of the unreserved set
+ * RFC 7636 ┬º4.1 code verifier: 43ΓÇô128 characters of the unreserved set
  * ALPHA / DIGIT / "-" / "." / "_" / "~". We always mint exactly 43
  * (base64url of 256 bits) but accept the full legal range so a future
  * client is not locked out by our own generator's choice.
@@ -174,7 +190,7 @@ export function isSsoVerifier(v: unknown): v is string {
   return matches(SSO_VERIFIER_PATTERN, v);
 }
 
-// ── fixed routes ──────────────────────────────────────────────────────────
+// ΓöÇΓöÇ fixed routes ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Fixed identities, NOT arbitrary redirect URIs. The callback destination
 // is a protocol constant so a malicious authorization request cannot
 // redirect the code anywhere. Nothing in any message names a URL.
@@ -184,11 +200,13 @@ export const SSO_AUTHORIZE_HOST = 'sso-authorize' as const;
 export const SSO_CALLBACK_SCHEME = 'wellbuilt-tickets' as const;
 export const SSO_CALLBACK_HOST = 'sso-callback' as const;
 
-/** vc51.9AE — eQuipment's fixed callback identity. Same host, own scheme. */
+/** vc51.9AE ΓÇö eQuipment's fixed callback identity. Same host, own scheme. */
 export const SSO_CALLBACK_SCHEME_EQUIPMENT = 'wbequipment' as const;
+/** JSA addendum ΓÇö WB-JSA's registered scheme. Same fixed host, own scheme. */
+export const SSO_CALLBACK_SCHEME_JSA = 'jsaapp' as const;
 
 /**
- * Audience → fixed callback route. Still constants, never a client-supplied
+ * Audience ΓåÆ fixed callback route. Still constants, never a client-supplied
  * redirect URI: the destination is chosen by the audience the code was
  * issued for, so a code cannot be steered to a different application.
  */
@@ -200,16 +218,20 @@ export const SSO_CALLBACK_BY_AUDIENCE: Readonly<
     scheme: SSO_CALLBACK_SCHEME_EQUIPMENT,
     host: SSO_CALLBACK_HOST,
   }),
+  [SSO_AUDIENCE_JSA]: Object.freeze({
+    scheme: SSO_CALLBACK_SCHEME_JSA,
+    host: SSO_CALLBACK_HOST,
+  }),
 });
 
-// ── DVIR shift binding (equipment audience only) ──────────────────────────
+// ΓöÇΓöÇ DVIR shift binding (equipment audience only) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 /**
  * DVIR phase, kept textually identical to the 0.2.0 DVIR_PHASES enum.
  *
  * Deliberately NOT re-exported and NOT imported from ../dvir: this module
  * documents itself as having no runtime imports, and duplicating the export
- * would put two names for one enum on the public surface — the exact drift
+ * would put two names for one enum on the public surface ΓÇö the exact drift
  * this package exists to prevent. tools/test-sso-protocol.mjs asserts the
  * two agree, so a change to either is caught rather than silently tolerated.
  */
@@ -227,7 +249,7 @@ function isPhase(v: unknown): v is SsoDvirPhase {
  * exact period rather than letting the app infer one from a launch URI it
  * cannot authenticate. The SERVER validates this against the authenticated
  * driver's authoritative shift before binding it into the code, and returns
- * it on exchange — so the app binds its DVIR to a server-verified period,
+ * it on exchange ΓÇö so the app binds its DVIR to a server-verified period,
  * never to a value it was handed in a deep link.
  *
  * `shiftId` is opaque here: WB-S owns its format and this protocol only
@@ -251,22 +273,97 @@ export function isSsoShiftBinding(v: unknown): v is SsoShiftBinding {
     && isPhase(o.phase);
 }
 
-/** Shift binding is mandatory for equipment and forbidden for every other audience. */
+/**
+ * Shift binding is mandatory for equipment and forbidden for every other
+ * audience. WB-JSA deliberately does NOT take a client-proposed binding:
+ * the SERVER derives the authoritative shift state itself at issuance (see
+ * SsoJsaBinding below), so there is nothing a client could propose that
+ * the server would not have to discard.
+ */
 export function audienceRequiresShiftBinding(audience: SsoAudience): boolean {
   return audience === SSO_AUDIENCE_EQUIPMENT;
+}
+
+// ΓöÇΓöÇ JSA authority binding (jsa audience only, server-authored) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+/**
+ * Textually identical to the shift-authority formats in the backend's
+ * shiftAuthority module (PERIOD_ID_PATTERN / LOCAL_DATE_PATTERN).
+ * Deliberately NOT imported ΓÇö this module documents itself as having no
+ * runtime imports ΓÇö and the conformance test asserts the two agree, so a
+ * change to either is caught rather than silently tolerated.
+ */
+export const SSO_JSA_PERIOD_ID_PATTERN = '^\\d{4}-\\d{2}-\\d{2}_\\d{6}$';
+export const SSO_JSA_LOCAL_DATE_PATTERN = '^\\d{4}-\\d{2}-\\d{2}$';
+
+/**
+ * The authoritative binding a JSA exchange returns.
+ *
+ * AUTHORED BY THE SERVER at issuance, from the driver's shift-authority
+ * record and the company's effective plan + app configuration ΓÇö never from
+ * the request, a launch URI, a cached client value, or a clock-derived
+ * date. This is what makes WB-JSA a governed destination: the app binds
+ * its records to a server-verified period (or to none), so a stale local
+ * session cannot resurrect a June shift in August.
+ *
+ *  - shiftState 'open'  ΓåÆ periodId + originLocalDate are REQUIRED and name
+ *    the exact authoritative open period. originLocalDate is the period's
+ *    frozen origin day ΓÇö never a UTC-derived date.
+ *  - shiftState 'none'  ΓåÆ both period fields are ABSENT. Legal only when
+ *    the effective policy does not require an active shift (the
+ *    owner-operator / free-plan case) ΓÇö a shift-required company with no
+ *    open period is refused at issuance, not represented here.
+ *  - requiresActiveShift / jsaEnabled describe the effective company
+ *    policy the server decided under, so the app renders the right
+ *    experience without re-deriving policy from unverified data.
+ */
+export interface SsoJsaBinding {
+  shiftState: 'open' | 'none';
+  periodId?: string;
+  originLocalDate?: string;
+  requiresActiveShift: boolean;
+  jsaEnabled: boolean;
+}
+
+export function isSsoJsaBinding(v: unknown): v is SsoJsaBinding {
+  const o = v as Record<string, unknown> | null;
+  if (typeof o !== 'object' || o === null || Array.isArray(o)) return false;
+  if (typeof o.requiresActiveShift !== 'boolean') return false;
+  if (typeof o.jsaEnabled !== 'boolean') return false;
+  const keys = Object.keys(o);
+  if (o.shiftState === 'open') {
+    if (keys.length !== 5) return false;
+    if (!matches(SSO_JSA_PERIOD_ID_PATTERN, o.periodId)) return false;
+    if (!matches(SSO_JSA_LOCAL_DATE_PATTERN, o.originLocalDate)) return false;
+    // Internal consistency: the period id's day IS its origin day.
+    return (o.periodId as string).slice(0, 10) === o.originLocalDate;
+  }
+  if (o.shiftState === 'none') {
+    // Half a binding is not a binding ΓÇö no period fields may ride along.
+    return keys.length === 3;
+  }
+  return false;
+}
+
+/** The JSA audience returns a server-authored binding; no other audience does. */
+export function audienceCarriesJsaBinding(audience: SsoAudience): boolean {
+  return audience === SSO_AUDIENCE_JSA;
 }
 
 /** Upper bound on an authoritative display name carried in a response. */
 export const SSO_DISPLAY_NAME_MAX = 120;
 
 /**
- * The tickets app persists a local identity and therefore needs a name;
- * no other audience does. Keeping this a predicate rather than an inline
- * comparison means the server and the client cannot disagree about which
- * audiences carry the field.
+ * Audiences whose apps persist a local identity and therefore need a name.
+ * WB-JSA joins WB-T here: it supports governed DIRECT start (no Suite hop)
+ * on later launches, which requires a persisted identity ΓÇö and that
+ * identity needs a server-resolved name, never one from a launch URI.
+ * Keeping this a predicate rather than an inline comparison means the
+ * server and the client cannot disagree about which audiences carry the
+ * field.
  */
 export function audienceCarriesDisplayName(audience: SsoAudience): boolean {
-  return audience === SSO_AUDIENCE_WBT;
+  return audience === SSO_AUDIENCE_WBT || audience === SSO_AUDIENCE_JSA;
 }
 
 /**
@@ -275,7 +372,7 @@ export function audienceCarriesDisplayName(audience: SsoAudience): boolean {
  * Shared by the server (before sending) and the client (before persisting)
  * so a name can never be stored in a shape the server would not have sent.
  *
- * Rejects control characters outright — a name reaches a receipt, a print
+ * Rejects control characters outright ΓÇö a name reaches a receipt, a print
  * sheet and a log line, and a newline, tab, or escape sequence in any of
  * those is a defect waiting to happen. Tab counts as a control character and
  * is refused rather than quietly collapsed, so the only whitespace that can
@@ -296,7 +393,7 @@ export function normalizeSsoDisplayName(v: unknown): string | null {
   return collapsed;
 }
 
-// ── error codes ───────────────────────────────────────────────────────────
+// ΓöÇΓöÇ error codes ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Deliberately coarse. A caller must not be able to tell "no such code"
 // from "wrong verifier" from "already consumed".
 
@@ -320,9 +417,9 @@ export function isSsoErrorCode(v: unknown): v is SsoErrorCode {
   return typeof v === 'string' && (SSO_ERROR_CODES as readonly string[]).includes(v);
 }
 
-// ── messages ──────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ messages ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-/** WB-T → WB-S, over the fixed authorization deep link. Non-secret only. */
+/** WB-T ΓåÆ WB-S, over the fixed authorization deep link. Non-secret only. */
 export interface SsoAuthorizationRequest {
   protocolVersion: number;
   audience: SsoAudience;
@@ -331,7 +428,7 @@ export interface SsoAuthorizationRequest {
   state: string;
 }
 
-/** WB-S → server callable. Identity comes from Auth context, never here. */
+/** WB-S ΓåÆ server callable. Identity comes from Auth context, never here. */
 export interface SsoIssueCodeRequest {
   protocolVersion: number;
   audience: SsoAudience;
@@ -340,13 +437,13 @@ export interface SsoIssueCodeRequest {
   /**
    * Required for the equipment audience, rejected for any other. Supplied
    * by the AUTHORIZING app (WB-S), which owns the shift lifecycle and holds
-   * the authenticated session — never echoed back from the launch URI by
+   * the authenticated session ΓÇö never echoed back from the launch URI by
    * the target. The server revalidates it before binding.
    */
   shiftBinding?: SsoShiftBinding;
 }
 
-/** Server → WB-S. */
+/** Server ΓåÆ WB-S. */
 export interface SsoIssueCodeResponse {
   protocolVersion: number;
   code: string;
@@ -354,7 +451,7 @@ export interface SsoIssueCodeResponse {
   expiresInSeconds: number;
 }
 
-/** WB-S → WB-T, over the fixed callback deep link. */
+/** WB-S ΓåÆ WB-T, over the fixed callback deep link. */
 export type SsoCallback =
   | {
       protocolVersion: number;
@@ -370,7 +467,7 @@ export type SsoCallback =
       state?: string;
     };
 
-/** WB-T → server callable. Runs BEFORE WB-T has any Auth session. */
+/** WB-T ΓåÆ server callable. Runs BEFORE WB-T has any Auth session. */
 export interface SsoExchangeRequest {
   protocolVersion: number;
   audience: SsoAudience;
@@ -378,7 +475,7 @@ export interface SsoExchangeRequest {
   codeVerifier: string;
 }
 
-/** Server → WB-T. */
+/** Server ΓåÆ WB-T. */
 export interface SsoExchangeResponse {
   protocolVersion: number;
   customToken: string;
@@ -393,6 +490,13 @@ export interface SsoExchangeResponse {
    */
   shiftBinding?: SsoShiftBinding;
   /**
+   * Present only for the jsa audience: the SERVER-AUTHORED authority
+   * binding decided at issuance (see SsoJsaBinding). WB-JSA scopes its
+   * records to this ΓÇö never to a launch URI, a cached shift id, or a
+   * UTC-derived date.
+   */
+  jsaBinding?: SsoJsaBinding;
+  /**
    * Present only for the tickets audience: the driver's authoritative display
    * name, resolved SERVER-SIDE from the same canonical profile the exchange
    * already revalidates against.
@@ -400,7 +504,7 @@ export interface SsoExchangeResponse {
    * WHY IT IS HERE AT ALL. WB-T decides its logged-in state from a locally
    * persisted identity, and that identity needs a name as well as an id. The
    * name is not in the token claims, so without this field WB-T had to go
-   * find one itself — and it looked in the legacy hash-keyed namespace, which
+   * find one itself ΓÇö and it looked in the legacy hash-keyed namespace, which
    * holds nothing for a canonical driver id. A cryptographically verified
    * driver was therefore left unable to persist a session.
    *
@@ -420,7 +524,7 @@ export interface SsoExchangeResponse {
   displayName?: string;
 }
 
-// ── validation ────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ validation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 export type SsoValidation<T> =
   | { ok: true; value: T }
@@ -483,7 +587,7 @@ export function validateSsoIssueCodeRequest(input: unknown): SsoValidation<SsoIs
   if (!isSsoChallenge(o.codeChallenge)) {
     return { ok: false, errorCode: 'malformed_request', field: 'codeChallenge' };
   }
-  // vc51.9AE — shift binding is exactly-required for equipment and exactly
+  // vc51.9AE ΓÇö shift binding is exactly-required for equipment and exactly
   // -forbidden elsewhere. Both directions are enforced so WB-T cannot start
   // smuggling a binding, and an equipment request cannot omit one and be
   // silently bound to nothing.
@@ -563,13 +667,13 @@ export function validateSsoCallback(input: unknown): SsoValidation<SsoCallback> 
   return { ok: false, errorCode: 'malformed_request', field: 'status' };
 }
 
-// ── forbidden payload guard ───────────────────────────────────────────────
+// ΓöÇΓöÇ forbidden payload guard ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 /**
  * Never legal in a deep-link message, in either direction.
  *
  * The PKCE verifier is on this list deliberately: it is the one secret
- * that must travel ONLY in the direct client→server exchange body. If it
+ * that must travel ONLY in the direct clientΓåÆserver exchange body. If it
  * ever appeared in a URL, PKCE would provide no protection at all.
  */
 export const SSO_FORBIDDEN_DEEPLINK_KEYS: readonly string[] = Object.freeze([
@@ -632,15 +736,15 @@ export function hasOnlyKeys(input: unknown, allowed: readonly string[]): boolean
   return Object.keys(o).every((k) => allowed.includes(k));
 }
 
-// ── provisional TTL ───────────────────────────────────────────────────────
+// ΓöÇΓöÇ provisional TTL ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 /**
  * PROVISIONAL, NOT PRODUCTION-APPROVED.
  *
- * The real bound is how long a physical WB-T → WB-S → WB-T app switch
+ * The real bound is how long a physical WB-T ΓåÆ WB-S ΓåÆ WB-T app switch
  * takes on the slowest supported device, including a cold WB-S start, the
  * driver reading any confirmation, and the OS returning to WB-T. That has
- * NOT been measured — no device timing exists yet. 120s is a deliberately
+ * NOT been measured ΓÇö no device timing exists yet. 120s is a deliberately
  * conservative placeholder: long enough that the first physical trial is
  * unlikely to fail spuriously, short enough that a captured code is not
  * useful for long.
@@ -658,7 +762,7 @@ export const SSO_CODE_TTL_MS_PROVISIONAL = 120_000;
  */
 export const SSO_ATTEMPT_TTL_MS_PROVISIONAL = 180_000;
 
-// ── deep-link URLs ────────────────────────────────────────────────────────
+// ΓöÇΓöÇ deep-link URLs ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Built and parsed HERE so both apps share one implementation. The scheme
 // and host are protocol constants: a message never names a destination,
 // so there is no redirect to inject.
@@ -667,7 +771,7 @@ function enc(v: string): string {
   return encodeURIComponent(v);
 }
 
-/** `wellbuilt-suite://sso-authorize?...` — non-secret protocol inputs only. */
+/** `wellbuilt-suite://sso-authorize?...` ΓÇö non-secret protocol inputs only. */
 export function buildSsoAuthorizationUrl(request: SsoAuthorizationRequest): string {
   const q = [
     `v=${enc(String(request.protocolVersion))}`,
@@ -697,7 +801,7 @@ export function buildSsoCallbackUrl(callback: SsoCallback): string {
  * Hand-rolled rather than using URL: React Native's URL polyfill does not
  * treat custom schemes consistently, and this must behave identically on
  * both platforms and in node tests. Rejects anything with a path segment,
- * userinfo, or port — none are legal here, and accepting them would widen
+ * userinfo, or port ΓÇö none are legal here, and accepting them would widen
  * what "the fixed route" means.
  */
 function splitDeepLink(

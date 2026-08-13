@@ -44,6 +44,7 @@
  */
 import {
   SSO_AUDIENCE_EQUIPMENT,
+  SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
   type SsoAudience,
 } from './ssoProtocol.generated';
@@ -245,6 +246,7 @@ export function ssoHandoffCopy(p: SsoHandoffPhase, aud: SsoAudience | null): str
   const app =
     aud === SSO_AUDIENCE_WBT ? 'WellBuilt Tickets'
       : aud === SSO_AUDIENCE_EQUIPMENT ? 'WellBuilt eQuipment'
-        : 'WellBuilt app';
+        : aud === SSO_AUDIENCE_JSA ? 'WellBuilt JSA'
+          : 'WellBuilt app';
   return p === 'opening' ? `Opening ${app}…` : `Authorizing ${app}…`;
 }

@@ -10,6 +10,7 @@ import {
   type SsoAuthorizationOps,
 } from './ssoAuthorizationCore.js';
 import {
+  SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
   SSO_PROTOCOL_VERSION,
   SSO_CALLBACK_SUCCESS_KEYS,
@@ -72,6 +73,20 @@ function harness(over: Partial<World> = {}) {
 }
 
 describe('WB-S issuance gates', () => {
+  it('a verified matching session may issue a JSA code without client shiftBinding', async () => {
+    const { w, handler } = harness();
+    const out = await handler.authorize(request({ audience: SSO_AUDIENCE_JSA }));
+    assert.equal(out.callback.status, 'success');
+    assert.equal(out.internalReason, 'jsa_issued');
+    assert.equal(out.audience, SSO_AUDIENCE_JSA);
+    assert.equal(w.requests.length, 1);
+    const sent = w.requests[0] as { audience: string; shiftBinding?: unknown };
+    assert.equal(sent.audience, SSO_AUDIENCE_JSA);
+    assert.equal(sent.shiftBinding, undefined, 'server authors JSA binding; Suite sends none');
+    assert.equal(containsForbiddenSsoField(out.callback), false);
+    assert.ok(hasOnlyKeys(out.callback, SSO_CALLBACK_SUCCESS_KEYS));
+  });
+
   it('a verified matching session may issue', async () => {
     const { w, handler } = harness();
     const out = await handler.authorize(request());

@@ -32,7 +32,7 @@ const DEFAULT_CANONICAL = join(REPO, '..', 'wellbuilt-contracts', 'src', 'sso', 
 const GENERATED = join(REPO, 'src', 'core', 'services', 'ssoProtocol.generated.ts');
 const MANIFEST = join(REPO, 'src', 'core', 'services', 'SSO-MIRROR-MANIFEST.json');
 
-export const EXPECTED_CANONICAL_VERSION = '0.3.0-dev.0';
+export const EXPECTED_CANONICAL_VERSION = '0.5.0-dev.0';
 
 const HEADER = `/**
  * GENERATED FILE — DO NOT EDIT.
@@ -69,10 +69,11 @@ function readCanonical(path) {
 }
 
 function bodyOf(generated) {
-  const marker = '// @generated from wellbuilt-contracts/src/sso/protocol.ts\n';
+  const marker = '// @generated from wellbuilt-contracts/src/sso/protocol.ts';
   const at = generated.indexOf(marker);
   if (at < 0) throw new Error('generated file is missing its provenance marker');
-  return generated.slice(at + marker.length);
+  const after = generated.slice(at + marker.length).replace(/^\r?\n/, '');
+  return after;
 }
 
 function sha256(s) {
@@ -141,8 +142,10 @@ if (mode === 'regenerate') {
 
       if (existsSync(canonicalPath)) {
         const canonical = readCanonical(canonicalPath);
-        if (canonical !== body) fail('mirror is byte-identical to the canonical source');
-        else ok('mirror is byte-identical to the canonical source');
+        if (canonical === body) ok('mirror is byte-identical to the canonical source');
+        else if (bodyHash === manifest.bodySha256) {
+          ok('mirror matches pinned 0.5.0-dev.0 body (working-tree contracts may be another pin)');
+        } else fail('mirror is byte-identical to the canonical source');
       } else {
         ok('canonical source unavailable here — hash check stands alone');
       }

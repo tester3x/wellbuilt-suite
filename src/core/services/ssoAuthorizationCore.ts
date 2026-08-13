@@ -17,12 +17,14 @@
  */
 import {
   SSO_AUDIENCE_EQUIPMENT,
+  SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
   SSO_CHALLENGE_METHOD,
   SSO_PROTOCOL_VERSION,
   audienceRequiresShiftBinding,
   isSsoAudience,
   validateSsoAuthorizationRequest,
+  type SsoAudience,
   type SsoAuthorizationRequest,
   type SsoCallback,
   type SsoErrorCode,
@@ -129,7 +131,7 @@ export interface SsoAuthorizationOutcome {
   /** Operator-facing only; never transmitted. */
   internalReason?: string;
   /** Drives fixed callback scheme selection (tickets vs equipment). */
-  audience?: typeof SSO_AUDIENCE_WBT | typeof SSO_AUDIENCE_EQUIPMENT;
+  audience?: SsoAudience;
 }
 
 /** Elapsed ms when both readings exist; undefined when no clock was injected. */
@@ -142,7 +144,7 @@ function errorOut(
   errorCode: SsoErrorCode,
   internalReason: string,
   state?: string,
-  audience?: typeof SSO_AUDIENCE_WBT | typeof SSO_AUDIENCE_EQUIPMENT,
+  audience?: SsoAudience,
 ): SsoAuthorizationOutcome {
   const callback: SsoCallback = {
     protocolVersion: SSO_PROTOCOL_VERSION,
@@ -178,6 +180,7 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
       if (
         request.audience !== SSO_AUDIENCE_WBT
         && request.audience !== SSO_AUDIENCE_EQUIPMENT
+        && request.audience !== SSO_AUDIENCE_JSA
       ) {
         return errorOut('unsupported_audience', 'audience not allowlisted', request.state, undefined);
       }
@@ -300,7 +303,11 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
           code,
           state: request.state,
         },
-        internalReason: aud === SSO_AUDIENCE_EQUIPMENT ? 'equipment_issued' : 'tickets_issued',
+        internalReason: aud === SSO_AUDIENCE_EQUIPMENT
+          ? 'equipment_issued'
+          : aud === SSO_AUDIENCE_JSA
+            ? 'jsa_issued'
+            : 'tickets_issued',
         audience: aud,
       };
     },

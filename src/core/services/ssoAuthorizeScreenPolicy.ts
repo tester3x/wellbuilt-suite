@@ -4,6 +4,7 @@
  */
 import {
   SSO_AUDIENCE_EQUIPMENT,
+  SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
   isSsoAudience,
   type SsoAudience,
@@ -25,6 +26,7 @@ export function audienceFromAuthorizeParams(
 export function authorizeWorkingCopy(audience: SsoAudience | null): string {
   if (audience === SSO_AUDIENCE_WBT) return 'Authorizing WellBuilt Tickets…';
   if (audience === SSO_AUDIENCE_EQUIPMENT) return 'Authorizing WellBuilt eQuipment…';
+  if (audience === SSO_AUDIENCE_JSA) return 'Authorizing WellBuilt JSA…';
   return 'Authorizing app…';
 }
 
