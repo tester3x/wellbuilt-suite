@@ -6,8 +6,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'expo-router';
 import {
-  isDriverVerified,
-  isPasscodeAvailable,
   getPendingRegistration,
   checkRegistrationStatus,
   clearPendingRegistration,
@@ -32,8 +30,8 @@ const validatePasscode = (code: string): { valid: boolean; error?: string } => {
   if (!code.trim()) {
     return { valid: false, error: 'Please create a passcode' };
   }
-  if (code.length < 4) {
-    return { valid: false, error: 'Passcode must be at least 4 characters' };
+  if (code.length < 6) {
+    return { valid: false, error: 'Passcode must be at least 6 characters' };
   }
   if (code.length > 12) {
     return { valid: false, error: 'Passcode must be 12 characters or less' };
@@ -118,11 +116,8 @@ export function useLogin(): UseLoginReturn {
           const status = await checkRegistrationStatus();
           if (status === 'approved') {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-            const result = await auth.completeReg();
-            if (!result.success) {
-              setMode('approved');
-            }
-            // On success, isAuthenticated effect handles navigation
+            setMode('login');
+            setError('Registration approved. Please sign in.');
           } else if (status === 'rejected') {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             setMode('rejected');
@@ -151,7 +146,8 @@ export function useLogin(): UseLoginReturn {
         setPendingName(pending.displayName);
         const status = await checkRegistrationStatus();
         if (status === 'approved') {
-          setMode('approved');
+          setMode('login');
+          setError('Registration approved. Please sign in.');
         } else if (status === 'rejected') {
           setMode('rejected');
         } else {
@@ -222,13 +218,6 @@ export function useLogin(): UseLoginReturn {
     setError('');
 
     try {
-      const available = await isPasscodeAvailable(passcode.trim(), displayName.trim());
-      if (!available.available) {
-        setMode('register');
-        setError(available.reason || 'This passcode is not available');
-        return;
-      }
-
       const result = await auth.register(
         displayName.trim(),
         passcode.trim(),
@@ -251,21 +240,9 @@ export function useLogin(): UseLoginReturn {
   }, [displayName, passcode, companyName, legalName, auth]);
 
   const handleCompleteRegistration = useCallback(async () => {
-    setMode('verifying');
-
-    try {
-      const result = await auth.completeReg();
-      if (!result.success) {
-        setMode('error');
-        setError(result.error || 'Could not complete registration');
-      }
-      // On success, isAuthenticated effect handles navigation
-    } catch (err) {
-      console.error('[useLogin] Complete registration error:', err);
-      setMode('error');
-      setError('Connection error. Please try again.');
-    }
-  }, [auth]);
+    setMode('login');
+    setError('Registration approved. Please sign in.');
+  }, []);
 
   const handleCancelRegistration = useCallback(async () => {
     await clearPendingRegistration();

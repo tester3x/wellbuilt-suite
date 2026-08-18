@@ -75,6 +75,14 @@ export function invalidateAuthEpoch(): void {
   authSession.invalidateEpoch();
 }
 
+function classifyRegistrationError(error: unknown): string {
+  const msg = typeof (error as { message?: unknown })?.message === 'string'
+    ? String((error as { message: string }).message)
+    : '';
+  if (!msg) return 'Connection error';
+  return msg;
+}
+
 export async function secureSubmitRegistration(params: {
   displayName: string;
   passcode: string;
@@ -83,19 +91,20 @@ export async function secureSubmitRegistration(params: {
   source?: string;
 }): Promise<{ success: boolean; pendingId?: string; error?: string }> {
   try {
-    const result = await callCallable<{ pendingId: string }>('requestDriverRegistration', {
+    const result = await callCallable<{ pendingId?: string }>('requestDriverRegistration', {
       displayName: params.displayName,
       passcode: params.passcode,
       companyName: params.companyName,
       legalName: params.legalName,
       source: params.source || 'wbs',
     });
-    if (result.pendingId) {
-      await SecureStore.setItemAsync(PENDING_ID_KEY, result.pendingId);
+    const pendingId = typeof result?.pendingId === 'string' ? result.pendingId.trim() : '';
+    if (!pendingId) {
+      return { success: false, error: 'Registration did not return a pending request' };
     }
-    return { success: true, pendingId: result.pendingId };
-  } catch (e: any) {
-    return { success: false, error: e?.message || 'Registration failed' };
+    return { success: true, pendingId };
+  } catch (e: unknown) {
+    return { success: false, error: classifyRegistrationError(e) };
   }
 }
 

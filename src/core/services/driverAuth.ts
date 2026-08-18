@@ -9,7 +9,7 @@
 // 1. Driver enters name + passcode
 // 2. App SHA-256 hashes the passcode client-side
 // 3. Login: Find driver by passcode hash, verify name matches
-// 4. Registration: Post to drivers/pending/, admin approves to drivers/approved/
+// 4. Registration: requestDriverRegistration only. Never POST drivers/pending.
 //
 // Security:
 // - Passcode is never sent in plaintext
@@ -18,7 +18,7 @@
 //
 // Structure:
 // - drivers/approved/{passcodeHash}/ = { displayName, active, approvedAt, isAdmin? }
-// - drivers/pending/{key}/ = { displayName, passcodeHash, requestedAt }
+// - pending_credentials/{pendingId} + drivers/pending_secure/{pendingId} (server)
 
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
@@ -108,22 +108,6 @@ export const firebaseGet = async (path: string): Promise<any> => {
   }
 
   return response.json();
-};
-
-const firebasePost = async (path: string, data: any): Promise<string> => {
-  const url = buildFirebaseUrl(path);
-  const response = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Firebase POST failed (${response.status})`);
-  }
-
-  const result = await response.json();
-  return result.name; // Firebase returns {"name": "generated-key"}
 };
 
 export const firebasePatch = async (path: string, data: any): Promise<void> => {
@@ -579,149 +563,83 @@ export const isPasscodeAvailable = async (
   }
 };
 
+/** Server contract: passcode 6–128. Suite UI also caps at 12. */
+export const SUITE_PASSCODE_MIN_LEN = 6;
+
 /**
- * Submit a registration request
- * Creates entry in Firebase drivers/pending/
+ * Submit a pending registration through requestDriverRegistration only.
+ * Never POSTs drivers/pending. Never stores a passcode hash.
  */
 export const submitRegistration = async (params: {
   passcode: string;
   displayName: string;
   companyName?: string;
   legalName?: string;
-}): Promise<{ success: boolean; error?: string }> => {
-  console.log("[DriverAuth-Suite] Submitting registration for:", params.displayName, "company:", params.companyName);
-
-  // Prefer secure callable (server scrypt + rate limit). No client write to pending.
-  try {
-    const { secureSubmitRegistration } = await import('./secureDriverAuth');
-    const secure = await secureSubmitRegistration({
-      ...params,
-      source: 'wbs',
-    });
-    if (secure.success) {
-      const hash = await hashPasscode(params.passcode, params.displayName);
-      await SecureStore.setItemAsync("pendingPasscodeHash", hash);
-      await SecureStore.setItemAsync("pendingDisplayName", params.displayName);
-      await SecureStore.setItemAsync("pendingRegistrationTime", Date.now().toString());
-      if (params.companyName) {
-        await SecureStore.setItemAsync("pendingCompanyName", params.companyName);
-      }
-      if (secure.pendingId) {
-        await SecureStore.setItemAsync("pendingSecureId", secure.pendingId);
-      }
-      console.log("[DriverAuth-Suite] Secure registration submitted");
-      return { success: true };
-    }
-    // If validation/rate-limit from server, surface it (do not silent-legacy spam)
-    if (secure.error && /too many|invalid|already/i.test(secure.error)) {
-      return { success: false, error: secure.error };
-    }
-    console.warn("[DriverAuth-Suite] Secure registration failed, legacy fallback:", secure.error);
-  } catch (e) {
-    console.warn("[DriverAuth-Suite] Secure registration unavailable, legacy fallback", e);
+}): Promise<{ success: boolean; pending?: boolean; pendingId?: string; error?: string }> => {
+  if (params.passcode.length < SUITE_PASSCODE_MIN_LEN || params.passcode.length > 128) {
+    return { success: false, error: 'Passcode must be 6–128 characters' };
   }
 
   try {
-    const hash = await hashPasscode(params.passcode, params.displayName);
-
-    const registrationData: Record<string, string> = {
+    const { secureSubmitRegistration } = await import('./secureDriverAuth');
+    const secure = await secureSubmitRegistration({
       displayName: params.displayName,
-      passcodeHash: hash,
-      requestedAt: new Date().toISOString(),
+      passcode: params.passcode,
+      companyName: params.companyName,
+      legalName: params.legalName,
       source: 'wbs',
-    };
+    });
+    if (!secure.success || !secure.pendingId) {
+      return {
+        success: false,
+        error: secure.error || 'Registration did not return a pending request',
+      };
+    }
+    await SecureStore.setItemAsync('pendingSecureId', secure.pendingId);
+    await SecureStore.setItemAsync('pendingDisplayName', params.displayName);
+    await SecureStore.setItemAsync('pendingRegistrationTime', Date.now().toString());
     if (params.companyName) {
-      registrationData.companyName = params.companyName;
+      await SecureStore.setItemAsync('pendingCompanyName', params.companyName);
     }
-    if (params.legalName) {
-      registrationData.legalName = params.legalName;
-    }
-
-    await firebasePost(DRIVERS_PENDING, registrationData);
-
-    // Save pending registration locally
-    await SecureStore.setItemAsync("pendingPasscodeHash", hash);
-    await SecureStore.setItemAsync("pendingDisplayName", params.displayName);
-    await SecureStore.setItemAsync("pendingRegistrationTime", Date.now().toString());
-    if (params.companyName) {
-      await SecureStore.setItemAsync("pendingCompanyName", params.companyName);
-    }
-
-    console.log("[DriverAuth-Suite] Registration submitted successfully (legacy)");
-    return { success: true };
-  } catch (error) {
-    console.error("[DriverAuth-Suite] Error submitting registration:", error);
-    return { success: false, error: "Connection error" };
+    return { success: true, pending: true, pendingId: secure.pendingId };
+  } catch (error: unknown) {
+    const msg = typeof (error as { message?: unknown })?.message === 'string'
+      ? String((error as { message: string }).message)
+      : 'Connection error';
+    return { success: false, error: msg };
   }
 };
 
 /**
- * Get pending registration info
+ * Get pending registration info (pendingId lifecycle only).
  */
 export const getPendingRegistration = async (): Promise<{
   passcodeHash: string;
   displayName: string;
   companyName?: string;
 } | null> => {
-  const passcodeHash = await SecureStore.getItemAsync("pendingPasscodeHash");
-  const displayName = await SecureStore.getItemAsync("pendingDisplayName");
-  const companyName = await SecureStore.getItemAsync("pendingCompanyName");
+  const displayName = await SecureStore.getItemAsync('pendingDisplayName');
+  const companyName = await SecureStore.getItemAsync('pendingCompanyName');
+  const secureId = await SecureStore.getItemAsync('pendingSecureId');
 
-  if (passcodeHash && displayName) {
-    return { passcodeHash, displayName, companyName: companyName || undefined };
+  if (secureId && displayName) {
+    return { passcodeHash: '', displayName, companyName: companyName || undefined };
   }
   return null;
 };
 
 /**
- * Check registration status
+ * Check registration status by server-issued pendingId only.
  */
 export const checkRegistrationStatus = async (): Promise<
   "pending" | "approved" | "rejected" | "none"
 > => {
-  try {
-    const { secureCheckRegistrationStatus } = await import('./secureDriverAuth');
-    const secureStatus = await secureCheckRegistrationStatus();
-    if (secureStatus !== 'none') {
-      return secureStatus;
-    }
-  } catch {
-    /* fall through */
-  }
-
-  const pending = await getPendingRegistration();
-  if (!pending) {
-    return "none";
-  }
-
-  try {
-    // Check if approved
-    const driver = await firebaseGet(`${DRIVERS_APPROVED}/${pending.passcodeHash}`);
-    if (driver) {
-      return "approved";
-    }
-
-    // Check if still in pending
-    const pendingDrivers = await firebaseGet(DRIVERS_PENDING);
-    if (pendingDrivers) {
-      for (const key of Object.keys(pendingDrivers)) {
-        const registration = pendingDrivers[key];
-        if (registration.passcodeHash === pending.passcodeHash) {
-          return "pending";
-        }
-      }
-    }
-
-    // Not in approved, not in pending = rejected
-    return "rejected";
-  } catch (error) {
-    console.error("[DriverAuth-Suite] Error checking registration status:", error);
-    return "pending";
-  }
+  const { secureCheckRegistrationStatus } = await import('./secureDriverAuth');
+  return secureCheckRegistrationStatus();
 };
 
 /**
- * Complete registration after approval
+ * Approval never mints a local hash session. The driver must sign in normally.
  */
 export const completeRegistration = async (): Promise<{
   success: boolean;
@@ -729,35 +647,10 @@ export const completeRegistration = async (): Promise<{
   displayName?: string;
   error?: string;
 }> => {
-  const pending = await getPendingRegistration();
-  if (!pending) {
-    return { success: false, error: "No pending registration" };
-  }
-
-  try {
-    const driverData = await firebaseGet(`${DRIVERS_APPROVED}/${pending.passcodeHash}`);
-
-    if (!driverData) {
-      return { success: false, error: "Driver not found in approved list" };
-    }
-
-    const displayName = driverData.displayName || pending.displayName;
-    const legalName = driverData.legalName || undefined;
-    const isAdmin = driverData.isAdmin === true;
-    const isViewer = driverData.isViewer === true;
-    const companyId = driverData.companyId || undefined;
-    const companyName = driverData.companyName || undefined;
-
-    await saveDriverSession(pending.passcodeHash, displayName, pending.passcodeHash, isAdmin, isViewer, companyId, companyName, legalName);
-    return {
-      success: true,
-      driverId: pending.passcodeHash,
-      displayName,
-    };
-  } catch (error) {
-    console.error("[DriverAuth-Suite] Error completing registration:", error);
-    return { success: false, error: "Connection error" };
-  }
+  return {
+    success: false,
+    error: 'Registration approved. Please sign in.',
+  };
 };
 
 /**
@@ -768,4 +661,5 @@ export const clearPendingRegistration = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("pendingDisplayName");
   await SecureStore.deleteItemAsync("pendingRegistrationTime");
   await SecureStore.deleteItemAsync("pendingCompanyName");
+  await SecureStore.deleteItemAsync("pendingSecureId");
 };
