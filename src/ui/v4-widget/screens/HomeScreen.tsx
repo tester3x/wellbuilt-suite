@@ -1,49 +1,28 @@
-import React, { useCallback } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
-import { useAuth } from '@/core/context/AuthContext';
-import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useGreeting } from '@/core/hooks/useGreeting';
+import { useHomeWorkhorse } from '@/core/context/HomeWorkhorseContext';
 import { TileGrid } from '../components/TileGrid';
 import { AppTile } from '../components/AppTile';
 import { StatTile } from '../components/StatTile';
 import { TileContainer } from '../components/TileContainer';
 import { ActionCardRow } from '@/ui/shared/ActionCardRow';
+import type { WellBuiltApp } from '@/core/data/apps';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
+  const home = useHomeWorkhorse();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
 
-  React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
+  if (!home.session) return null;
 
-  const handleArrived = useCallback(async (odometerMiles?: number) => {
-    const ok = await confirmArrival(odometerMiles);
-    if (ok === false) return false;
-    router.push('/day-summary');
-    return true;
-  }, [confirmArrival]);
-
-  if (!user) return null;
-
-  const roleLabel = t(`home.roles.${user.role}`);
-  // Filter out WB M for unrouted-only drivers
-  const companyApps = wellbuiltApps.filter(app => {
-    if (app.id === 'wellbuilt-mobile' && user.companyId) {
-      const routes = user.assignedRoutes;
-      if (routes === undefined) return true;
-      if (routes.length === 0) return false;
-      return routes.some(r => !r.startsWith('Unrouted'));
-    }
-    return true;
-  });
+  const session = home.session;
+  const roleLabel = t(`home.roles.${session.role}`);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -52,50 +31,54 @@ export default function HomeScreen() {
           <Image source={require('../../../../assets/wellbuilt-logo.png')} style={styles.headerLogo} resizeMode="contain" />
           <View>
             <Text style={styles.headerGreeting}>{greeting}</Text>
-            <Text style={styles.headerName}>{user.displayName}</Text>
+            <Text style={styles.headerName}>{session.displayName}</Text>
           </View>
         </View>
         <View style={styles.headerRight}>
           <View style={styles.roleBadge}>
             <Text style={styles.roleText}>{roleLabel}</Text>
           </View>
-          <Pressable onPress={() => router.push('/settings')} style={styles.headerBtn}>
-            <MaterialCommunityIcons name="cog-outline" size={20} color={colors.text.muted} />
-          </Pressable>
-          <Pressable onPress={logout} style={[styles.headerBtn, styles.logoutHeaderBtn]}>
-            <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
-          </Pressable>
+          {home.groups.chrome.map((action) => (
+            <Pressable
+              key={action.id}
+              onPress={() => { void home.invoke(action.id); }}
+              style={[styles.headerBtn, action.role === 'logout' && styles.logoutHeaderBtn]}
+            >
+              <MaterialCommunityIcons
+                name={action.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                size={20}
+                color={action.role === 'logout' ? '#EF4444' : colors.text.muted}
+              />
+            </Pressable>
+          ))}
         </View>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
+        <ActionCardRow />
 
         <TileContainer title={t('home.stats.apps').toUpperCase()}>
           <TileGrid>
-            <StatTile icon="apps" label={t('home.stats.apps')} value={String(companyApps.length)} color={colors.brand.primary} />
-            <StatTile icon="check-circle" label={t('home.stats.active')} value={String(companyApps.filter(a => a.status === 'active').length)} color={colors.status.online} />
+            <StatTile icon="apps" label={t('home.stats.apps')} value={String(home.live.applicationCount)} color={colors.brand.primary} />
+            <StatTile icon="check-circle" label={t('home.stats.active')} value={String(home.live.activeApplicationCount)} color={colors.status.online} />
             <StatTile icon="account-group" label={t('home.stats.platform')} value="v1.0" color={colors.brand.accent} />
           </TileGrid>
         </TileContainer>
 
         <TileContainer title={t('home.sections.applications').toUpperCase()}>
           <TileGrid>
-            {companyApps.map((app, idx) => (
-              <AppTile
-                key={app.id}
-                app={app}
-                size={idx === 0 ? 'large' : idx < 3 ? 'medium' : 'small'}
-                onPress={() => {
-                  if (hasLaunched(app.id)) {
-                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-                  } else {
-                    router.push(`/app-detail?id=${app.id}`);
-                  }
-                }}
-                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
-              />
-            ))}
+            {home.groups.applications.map((action, idx) => {
+              if (!action.app) return null;
+              return (
+                <AppTile
+                  key={action.id}
+                  app={action.app as WellBuiltApp}
+                  size={idx === 0 ? 'large' : idx < 3 ? 'medium' : 'small'}
+                  onPress={() => { void home.invoke(action.id); }}
+                  onLongPress={() => { void home.invoke(action.id, 'inspect'); }}
+                />
+              );
+            })}
           </TileGrid>
         </TileContainer>
 

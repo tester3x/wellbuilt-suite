@@ -1,66 +1,50 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { router } from 'expo-router';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
-import { useAuth } from '@/core/context/AuthContext';
-import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useGreeting } from '@/core/hooks/useGreeting';
+import { useHomeWorkhorse } from '@/core/context/HomeWorkhorseContext';
 import { Sidebar } from '../components/Sidebar';
 import { ActionCardRow } from '@/ui/shared/ActionCardRow';
+import type { WellBuiltApp } from '@/core/data/apps';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
+  const home = useHomeWorkhorse();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
-  React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
+  if (!home.session) return null;
 
-  const handleArrived = useCallback(async (odometerMiles?: number) => {
-    const ok = await confirmArrival(odometerMiles);
-    if (ok === false) return false;
-    router.push('/day-summary');
-    return true;
-  }, [confirmArrival]);
-
-  if (!user) return null;
-
-  const roleLabel = t(`home.roles.${user.role}`);
-  // Filter out WB M for unrouted-only drivers
-  const companyApps = wellbuiltApps.filter(app => {
-    if (app.id === 'wellbuilt-mobile' && user.companyId) {
-      const routes = user.assignedRoutes;
-      if (routes === undefined) return true;
-      if (routes.length === 0) return false;
-      return routes.some(r => !r.startsWith('Unrouted'));
-    }
-    return true;
-  });
+  const session = home.session;
+  const roleLabel = t(`home.roles.${session.role}`);
+  const apps = home.groups.applications.map((action) => action.app).filter((app): app is WellBuiltApp => !!app);
+  const settingsAction = home.groups.chrome.find((action) => action.role === 'open-settings');
+  const logoutAction = home.groups.chrome.find((action) => action.role === 'logout');
+  const extraChrome = home.groups.chrome.filter(
+    (action) => action.role !== 'open-settings' && action.role !== 'logout',
+  );
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.body}>
         <Sidebar
-          apps={companyApps}
-          companyName={user.companyName || 'WellBuilt'}
-          userName={user.legalName || user.displayName}
+          apps={apps}
+          companyName={session.companyName || 'WellBuilt'}
+          userName={session.legalName || session.displayName}
           roleLabel={roleLabel}
           onAppPress={(appId) => {
-            const app = companyApps.find(a => a.id === appId);
-            if (app && hasLaunched(app.id)) {
-              launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-            } else {
-              router.push(`/app-detail?id=${appId}`);
-            }
+            const action = home.groups.applications.find((entry) => entry.appId === appId);
+            if (action) void home.invoke(action.id);
           }}
-          onAppLongPress={(appId) => router.push(`/app-detail?id=${appId}`)}
-          onSettings={() => router.push('/settings')}
-          onLogout={logout}
+          onAppLongPress={(appId) => {
+            const action = home.groups.applications.find((entry) => entry.appId === appId);
+            if (action) void home.invoke(action.id, 'inspect');
+          }}
+          onSettings={() => { if (settingsAction) void home.invoke(settingsAction.id); }}
+          onLogout={() => { if (logoutAction) void home.invoke(logoutAction.id); }}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
@@ -69,7 +53,7 @@ export default function HomeScreen() {
           <View style={styles.contentHeader}>
             <View>
               <Text style={styles.greeting}>{greeting},</Text>
-              <Text style={styles.userName}>{user.displayName}</Text>
+              <Text style={styles.userName}>{session.displayName}</Text>
             </View>
             <View style={styles.headerMeta}>
               <View style={styles.roleBadge}>
@@ -79,7 +63,10 @@ export default function HomeScreen() {
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
+            {extraChrome.map((action) => (
+              <Pressable key={action.id} onPress={() => { void home.invoke(action.id); }} />
+            ))}
+            <ActionCardRow />
 
             <View style={styles.footer}>
               <Text style={styles.footerText}>{t('home.footer.version')}</Text>

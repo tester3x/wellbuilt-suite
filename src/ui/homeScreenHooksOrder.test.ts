@@ -1,5 +1,5 @@
 /**
- * Structural proof: HomeScreen hooks run before any `if (!user) return null`.
+ * Structural proof: HomeScreen hooks run before any session early return.
  */
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -17,18 +17,21 @@ const SKINS = [
 ];
 
 for (const rel of SKINS) {
-  test(`${rel}: no hooks after if (!user) return null`, () => {
+  test(`${rel}: no hooks after session guard; workhorse is the only functional source`, () => {
     const src = readFileSync(join(root, rel), 'utf8');
-    const guard = src.indexOf('if (!user) return null');
+    const guardCandidates = [
+      'if (!home.session) return null',
+      'if (!user) return null',
+      'if (!session) return null',
+    ];
+    const guard = Math.max(...guardCandidates.map((needle) => src.indexOf(needle)));
     assert.ok(guard > 0, 'early return present');
     const after = src.slice(guard);
-    // Hooks that must not appear after the guard
     assert.ok(!/\buseCallback\s*\(/.test(after), 'useCallback after guard');
     assert.ok(!/\buseState\s*\(/.test(after), 'useState after guard');
     assert.ok(!/\buseEffect\s*\(/.test(after), 'useEffect after guard');
     assert.ok(!/\buseRef\s*\(/.test(after), 'useRef after guard');
-    // handleArrived must be defined before guard
-    const arrived = src.indexOf('const handleArrived = useCallback');
-    assert.ok(arrived > 0 && arrived < guard, 'handleArrived before guard');
+    const workhorse = src.indexOf('useHomeWorkhorse');
+    assert.ok(workhorse > 0 && workhorse < guard, 'useHomeWorkhorse before guard');
   });
 }

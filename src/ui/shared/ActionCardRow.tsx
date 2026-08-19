@@ -8,11 +8,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, Animated, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
-import { router } from 'expo-router';
 import { colors, spacing, radius, typography } from '@/core/theme';
-import { useAppLauncher } from '@/core/hooks/useAppLauncher';
-import { type JsaMode } from '@/core/services/companyConfig';
-import { useAuth } from '@/core/context/AuthContext';
+import { useHomeWorkhorse } from '@/core/context/HomeWorkhorseContext';
 import { mayOpenStartShiftChecklist } from '@/core/services/workPeriodAuthority/postLoginShiftRestoration';
 import {
   isExplicitStartShiftSuccess,
@@ -22,19 +19,6 @@ import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
-
-interface ActionCardRowProps {
-  active: boolean;
-  returning: boolean;
-  returnStartTime: string | null;
-  shiftStartTime: string | null;
-  onStartShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string }>;
-  onStartReturn: () => Promise<void>;
-  onArrived: (odometerMiles?: number) => Promise<boolean | void>;
-  jsaMode?: JsaMode;
-  jsaPending?: boolean;
-  onJsaLaunch?: () => void;
-}
 
 function formatElapsed(startIso: string): string {
   const ms = Date.now() - new Date(startIso).getTime();
@@ -76,10 +60,15 @@ function getShiftColor(startIso: string | null): string {
   return '#34D399';
 }
 
-export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
+export function ActionCardRow() {
   const { t } = useTranslation();
-  const { launchWBApp } = useAppLauncher();
-  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
+  const home = useHomeWorkhorse();
+  const { active, returning, returnStartTime, shiftStartTime, startShiftBusy } = home.shift;
+  const onStartShift = home.shiftActions.startShift;
+  const onStartReturn = home.shiftActions.startReturn;
+  const onArrived = home.shiftActions.confirmArrival;
+  const refreshShiftAuthority = home.shiftActions.refreshShiftAuthority;
+  const shiftAuthorityUi = home.shiftAuthorityUi;
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
@@ -296,7 +285,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         </Pressable>
 
         {/* Timesheet Card */}
-        <Pressable onPress={() => router.push('/timesheet')} style={[s.card, s.cardTimesheet]}>
+        <Pressable onPress={() => { void home.invoke('timesheet'); }} style={[s.card, s.cardTimesheet]}>
           <MaterialCommunityIcons name="cash-multiple" size={28} color="#34D399" />
           <Text style={[s.label, { color: '#34D399' }]}>{t('actionCard.timesheet')}</Text>
           <Text style={[s.sub, { color: 'rgba(52, 211, 153, 0.6)' }]}>{t('actionCard.viewPay')}</Text>
@@ -304,11 +293,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
         {/* WellBuilt eQuipment — launches com.wellbuilt.equipment only (no eWallet fallback) */}
         <Pressable
-          onPress={() => launchWBApp({
-            name: 'WellBuilt eQuipment',
-            scheme: 'wbequipment',
-            androidPackage: 'com.wellbuilt.equipment',
-          })}
+          onPress={() => { void home.invoke('equipment'); }}
           style={[s.card, s.cardWallet]}
         >
           <MaterialCommunityIcons name="truck" size={28} color={colors.brand.accent} />

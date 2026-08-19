@@ -1,146 +1,65 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Alert, TouchableOpacity, AppState } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
-import { useAuth } from '@/core/context/AuthContext';
-import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch, useCompanyConfig } from '@/core/hooks';
-import { TIER_DESCRIPTIONS } from '@/core/services/companyConfig';
+import { useGreeting } from '@/core/hooks/useGreeting';
+import { useHomeWorkhorse } from '@/core/context/HomeWorkhorseContext';
 import { WellBuiltLogo } from '@/ui/shared/WellBuiltLogo';
 import { AppCard } from '../components/AppCard';
 import { ActionCardRow } from '@/ui/shared/ActionCardRow';
+import type { WellBuiltApp } from '@/core/data/apps';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
-  const { isWBAppEnabled, config: companyConfig, tierLabel } = useCompanyConfig(user?.companyId);
+  const home = useHomeWorkhorse();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
 
-  React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
+  if (!home.session) return null;
 
-  // All hooks MUST run before any early return (logout / revalidation null user).
-  const handleArrived = useCallback(async (odometerMiles?: number) => {
-    const ok = await confirmArrival(odometerMiles);
-    if (ok === false) return false;
-    router.push('/day-summary');
-    return true;
-  }, [confirmArrival]);
-
-  // ── JSA shift-start gate ──────────────────────────────────────
-  const jsaMode = companyConfig?.jsaMode || 'off';
-  const jsaRequired = jsaMode !== 'off';
-  const [jsaPending, setJsaPending] = useState(false);
-
-  // Check Firestore for today's JSA completion when shift is active
-  const checkJsaCompletion = useCallback(async () => {
-    if (!jsaRequired || !shiftActive || !user) return;
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const driverName = user.legalName || user.displayName;
-      const url = `https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents:runQuery?key=AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI`;
-      const body = {
-        structuredQuery: {
-          from: [{ collectionId: 'jsas' }],
-          where: {
-            compositeFilter: {
-              op: 'AND',
-              filters: [
-                { fieldFilter: { field: { fieldPath: 'driverName' }, op: 'EQUAL', value: { stringValue: driverName } } },
-                { fieldFilter: { field: { fieldPath: 'date' }, op: 'EQUAL', value: { stringValue: today } } },
-              ],
-            },
-          },
-          limit: 1,
-        },
-      };
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal });
-      clearTimeout(timer);
-      if (!res.ok) return;
-      const results = await res.json();
-      const found = results.some((r: any) => r.document);
-      setJsaPending(!found);
-    } catch {
-      // Network error — don't block, just leave pending state as-is
-    }
-  }, [jsaRequired, shiftActive, user]);
-
-  // Check on mount, foreground resume, and when shift becomes active
-  useEffect(() => {
-    if (!jsaRequired || !shiftActive) {
-      setJsaPending(false);
-      return;
-    }
-    setJsaPending(true); // Assume pending until we confirm
-    checkJsaCompletion();
-
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') checkJsaCompletion();
-    });
-    return () => sub.remove();
-  }, [jsaRequired, shiftActive, checkJsaCompletion]);
-
-  const handleJsaLaunch = useCallback(() => {
-    launchWBApp({
-      name: 'WB JSA',
-      scheme: 'jsaapp',
-      androidPackage: 'com.syconik801.jsaapp',
-    });
-  }, [launchWBApp]);
-
-  if (!user) return null;
-
-  const roleLabel = t(`home.roles.${user.role}`);
-  // Filter out WB M for unrouted-only drivers (completely hidden, not greyed)
-  const companyApps = wellbuiltApps.filter(app => {
-    if (app.id === 'wellbuilt-mobile' && user.companyId) {
-      const routes = user.assignedRoutes;
-      if (routes === undefined) return true; // legacy driver — show
-      if (routes.length === 0) return false;
-      return routes.some(r => !r.startsWith('Unrouted'));
-    }
-    return true;
-  });
-  const showTierBanner = companyConfig && companyConfig.tier !== 'suite';
-  const enabledCount = companyApps.filter(a => isWBAppEnabled(a.id)).length;
+  const session = home.session;
+  const roleLabel = t(`home.roles.${session.role}`);
+  const showTierBanner = home.live.showTierBanner;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <WellBuiltLogo />
         <View style={styles.headerRight}>
-          <Pressable onPress={() => router.push('/settings')} style={styles.headerButton}>
-            <MaterialCommunityIcons name="cog-outline" size={20} color={colors.text.muted} />
-          </Pressable>
-          <Pressable onPress={logout} style={[styles.headerButton, styles.logoutHeaderButton]}>
-            <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
-          </Pressable>
+          {home.groups.chrome.map((action) => (
+            <Pressable
+              key={action.id}
+              onPress={() => { void home.invoke(action.id); }}
+              style={[styles.headerButton, action.role === 'logout' && styles.logoutHeaderButton]}
+            >
+              <MaterialCommunityIcons
+                name={action.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                size={20}
+                color={action.role === 'logout' ? '#EF4444' : colors.text.muted}
+              />
+            </Pressable>
+          ))}
         </View>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.welcomeSection}>
           <Text style={styles.greeting}>{greeting},</Text>
-          <Text style={styles.userName}>{user.displayName}</Text>
+          <Text style={styles.userName}>{session.displayName}</Text>
           <View style={styles.roleRow}>
             <View style={[styles.roleBadge, {
-              backgroundColor: user.role === 'admin' ? `${colors.brand.accent}20` :
-                user.role === 'viewer' ? `${colors.status.online}20` : `${colors.brand.primary}20`,
+              backgroundColor: session.role === 'admin' ? `${colors.brand.accent}20` :
+                session.role === 'viewer' ? `${colors.status.online}20` : `${colors.brand.primary}20`,
             }]}>
               <Text style={[styles.roleText, {
-                color: user.role === 'admin' ? colors.brand.accent :
-                  user.role === 'viewer' ? colors.status.online : colors.brand.primary,
+                color: session.role === 'admin' ? colors.brand.accent :
+                  session.role === 'viewer' ? colors.status.online : colors.brand.primary,
               }]}>{roleLabel}</Text>
             </View>
-            {user.companyName ? (
-              <Text style={styles.companyText}>{user.companyName}</Text>
+            {session.companyName ? (
+              <Text style={styles.companyText}>{session.companyName}</Text>
             ) : null}
           </View>
         </View>
@@ -150,46 +69,36 @@ export default function HomeScreen() {
             <View style={styles.tierBannerLeft}>
               <MaterialCommunityIcons name="shield-star-outline" size={18} color={colors.brand.accent} />
               <View style={{ marginLeft: spacing.sm, flex: 1 }}>
-                <Text style={styles.tierBannerTitle}>{tierLabel} {t('home.tier.plan')}</Text>
+                <Text style={styles.tierBannerTitle}>{home.live.tierLabel} {t('home.tier.plan')}</Text>
                 <Text style={styles.tierBannerDesc}>
-                  {TIER_DESCRIPTIONS[companyConfig!.tier]}
+                  {home.live.tierDescription}
                 </Text>
               </View>
             </View>
             <View style={styles.tierBadge}>
-              <Text style={styles.tierBadgeText}>{enabledCount}/{companyApps.length}</Text>
+              <Text style={styles.tierBadgeText}>{home.live.enabledApplicationCount}/{home.live.applicationCount}</Text>
             </View>
           </View>
         )}
 
-        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} jsaMode={jsaMode} jsaPending={jsaPending} onJsaLaunch={handleJsaLaunch} />
-
+        <ActionCardRow />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t('home.sections.applications')}</Text>
-          <Text style={styles.sectionCount}>{t('home.sections.appCount', { count: companyApps.length })}</Text>
+          <Text style={styles.sectionCount}>{t('home.sections.appCount', { count: home.live.applicationCount })}</Text>
         </View>
 
         <View style={styles.appGrid}>
-          {companyApps.map((app, index) => {
-            const locked = !isWBAppEnabled(app.id);
+          {home.groups.applications.map((action, index) => {
+            if (!action.app) return null;
             return (
-              <AppCard key={app.id} app={app} index={index} locked={locked}
-                onPress={() => {
-                  if (locked) {
-                    Alert.alert(
-                      t('home.tier.lockedTitle'),
-                      t('home.tier.lockedMessage', { name: app.name, tier: tierLabel }),
-                    );
-                    return;
-                  }
-                  if (hasLaunched(app.id)) {
-                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-                  } else {
-                    router.push(`/app-detail?id=${app.id}`);
-                  }
-                }}
-                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
+              <AppCard
+                key={action.id}
+                app={action.app as WellBuiltApp}
+                index={index}
+                locked={action.locked}
+                onPress={() => { void home.invoke(action.id); }}
+                onLongPress={() => { void home.invoke(action.id, 'inspect'); }}
               />
             );
           })}

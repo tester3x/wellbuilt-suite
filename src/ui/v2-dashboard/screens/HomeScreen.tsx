@@ -1,128 +1,71 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, AppState } from 'react-native';
-import { router } from 'expo-router';
+import React from 'react';
+import { View, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing } from '@/core/theme';
-import { useAuth } from '@/core/context/AuthContext';
-import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useGreeting } from '@/core/hooks/useGreeting';
+import { useHomeWorkhorse } from '@/core/context/HomeWorkhorseContext';
 import { CommandHeader } from '../components/CommandHeader';
 import { AppListItem } from '../components/AppListItem';
 import { WidgetContainer } from '../components/WidgetContainer';
 import { SystemStatusBar } from '../components/SystemStatusBar';
 import { ActionCardRow } from '@/ui/shared/ActionCardRow';
-import { fetchPendingDispatches, DispatchSummary } from '@/core/services/dispatchJobs';
+import type { WellBuiltApp } from '@/core/data/apps';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
+  const home = useHomeWorkhorse();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
 
-  // Pending dispatch jobs for Tickets card badge
-  const [dispatches, setDispatches] = useState<DispatchSummary[]>([]);
-  const lastFetchRef = useRef<number>(0);
-  const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  if (!home.session) return null;
 
-  const refreshDispatches = useCallback(async () => {
-    if (!user?.passcodeHash) return;
-    if (Date.now() - lastFetchRef.current < CACHE_TTL) return;
-    lastFetchRef.current = Date.now();
-    const results = await fetchPendingDispatches(user.passcodeHash);
-    setDispatches(results);
-  }, [user?.passcodeHash]);
-
-  // Fetch on mount + foreground resume
-  useEffect(() => {
-    refreshDispatches();
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        lastFetchRef.current = 0; // force refresh on foreground
-        refreshDispatches();
-      }
-    });
-    return () => sub.remove();
-  }, [refreshDispatches]);
-
-  React.useEffect(() => { if (!isAuthenticated) router.replace('/'); }, [isAuthenticated]);
-
-  const handleArrived = useCallback(async (odometerMiles?: number) => {
-    const ok = await confirmArrival(odometerMiles);
-    if (ok === false) return false;
-    router.push('/day-summary');
-    return true;
-  }, [confirmArrival]);
-
-  if (!user) return null;
-
-  const roleLabel = t(`home.roles.${user.role}`);
-  // Filter out WB M for unrouted-only drivers
-  const companyApps = wellbuiltApps.filter(app => {
-    if (app.id === 'wellbuilt-mobile' && user.companyId) {
-      const routes = user.assignedRoutes;
-      if (routes === undefined) return true;
-      if (routes.length === 0) return false;
-      return routes.some(r => !r.startsWith('Unrouted'));
-    }
-    return true;
-  });
+  const session = home.session;
+  const roleLabel = t(`home.roles.${session.role}`);
+  const settingsAction = home.groups.chrome.find((action) => action.role === 'open-settings');
+  const logoutAction = home.groups.chrome.find((action) => action.role === 'logout');
+  const extraChrome = home.groups.chrome.filter(
+    (action) => action.role !== 'open-settings' && action.role !== 'logout',
+  );
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <CommandHeader
-        title={`${greeting}, ${user.displayName}`}
-        subtitle={`${roleLabel} — ${user.companyName || 'WellBuilt'}`}
-        onSettings={() => router.push('/settings')}
-        onAction={logout}
+        title={`${greeting}, ${session.displayName}`}
+        subtitle={`${roleLabel} — ${session.companyName || 'WellBuilt'}`}
+        onSettings={settingsAction ? () => { void home.invoke(settingsAction.id); } : undefined}
+        onAction={logoutAction ? () => { void home.invoke(logoutAction.id); } : undefined}
         actionIcon="logout"
         actionDestructive
       />
+      {extraChrome.map((action) => (
+        <Pressable key={action.id} onPress={() => { void home.invoke(action.id); }} />
+      ))}
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <ActionCardRow active={shiftActive} returning={returningToYard} returnStartTime={returnDepartTime} shiftStartTime={shiftStartTime} onStartShift={startShift} onStartReturn={startReturn} onArrived={handleArrived} />
-
+        <ActionCardRow />
 
         <WidgetContainer
           title={t('home.sections.applications').toUpperCase()}
         >
           <View style={styles.appList}>
-            {companyApps.map(app => {
-              // Build badge props for Tickets card
-              const isTickets = app.id === 'water-ticket';
-              const hasPending = isTickets && dispatches.length > 0;
-              const badgeText = hasPending
-                ? `${dispatches.length} pending`
+            {home.groups.applications.map((action) => {
+              if (!action.app) return null;
+              const badge = action.badge;
+              const ticketsAccent = badge
+                ? (session.customerAccentColor || colors.brand.primary)
                 : undefined;
-              const badgeDetailText = hasPending && dispatches.length <= 3
-                ? dispatches.map(d => d.wellName).join(', ')
-                : undefined;
-              // Pending-pulse accent for the Tickets card. Prefer per-customer
-              // accent when AuthUser eventually exposes it; today the cast
-              // resolves to undefined for every customer and we fall back to
-              // LG gold (colors.brand.primary). When customerAccentColor is
-              // wired through AuthContext later, no change needed here.
-              const ticketsAccent = hasPending
-                ? ((user as any)?.customerAccentColor || colors.brand.primary)
-                : undefined;
-
               return (
-              <AppListItem key={app.id} app={app}
-                badge={badgeText}
-                badgeDetail={badgeDetailText}
-                accentColor={ticketsAccent}
-                pulse={hasPending}
-                onPress={() => {
-                  if (hasLaunched(app.id)) {
-                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-                  } else {
-                    router.push(`/app-detail?id=${app.id}`);
-                  }
-                }}
-                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
-              />
+                <AppListItem
+                  key={action.id}
+                  app={action.app as WellBuiltApp}
+                  badge={badge?.text}
+                  badgeDetail={badge?.detail}
+                  accentColor={ticketsAccent}
+                  pulse={!!badge?.pulse}
+                  onPress={() => { void home.invoke(action.id); }}
+                  onLongPress={() => { void home.invoke(action.id, 'inspect'); }}
+                />
               );
             })}
           </View>
