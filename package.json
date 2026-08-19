@@ -14,7 +14,8 @@
     "test:sso": "node tools/mirror-sso-protocol.mjs --verify && tsx --test src/core/services/ssoAuthorizationCore.test.ts src/core/services/ssoLaunchPolicy.test.ts src/core/services/ssoRouteAdapter.test.ts src/core/services/ssoAuthorizeRouteOwnership.test.ts src/core/services/ssoJsaAudience.test.ts src/core/services/ssoAuthorizeScreenPolicy.test.ts src/core/services/ssoFrozenFlows.nonregression.test.ts src/core/services/ssoAuthorizeInbox.test.ts",
     "test:sso-e2e": "tsx tools/test-ssoEndToEnd.mjs",
     "test:shift-authority": "tsx --test src/core/services/workPeriodAuthority/**/*.test.ts",
-    "test:home-workhorse": "tsx --test src/core/homeWorkhorse/**/*.test.ts src/ui/homeScreenHooksOrder.test.ts"
+    "test:home-workhorse": "tsx --test src/core/homeWorkhorse/**/*.test.ts src/ui/homeScreenHooksOrder.test.ts",
+    "test:tsc-baseline": "node --test tools/tsc-baseline.test.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

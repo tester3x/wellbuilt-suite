@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "command": [
+    "node",
+    "node_modules/typescript/lib/tsc.js",
+    "--noEmit",
+    "--pretty",
+    "false"
+  ],
+  "expectedExitCode": 2,
+  "total": 9,
+  "identities": [
+    {
+      "file": "src/core/components/AppSwitcher.tsx",
+      "code": "TS7006",
+      "message": "Parameter 'd' implicitly has an 'any' type.",
+      "count": 1
+    },
+    {
+      "file": "src/core/components/SignaturePad.tsx",
+      "code": "TS2769",
+      "message": "No overload matches this call. Overload 1 of 2, '(props: AndroidWebViewProps & IOSWebViewProps & WindowsWebViewProps): WebView<{}>', gave the following error. Type '{ ref: RefObject<WebView<{}> | null>; source: { html: string; }; onMessage: (event: any) => void; scrollEnabled: false; bounces: false; javaScriptEnabled: true; originWhitelist: string[]; forceDarkAllowed: boolean; style: { ...; }; }' is not assignable to type 'IntrinsicAttributes & IntrinsicClassAttributes<WebView<{}>> & Readonly<AndroidWebViewProps & IOSWebViewProps & WindowsWebViewProps>'. Property 'forceDarkAllowed' does not exist on type 'IntrinsicAttributes & IntrinsicClassAttributes<WebView<{}>> & Readonly<AndroidWebViewProps & IOSWebViewProps & WindowsWebViewProps>'. Overload 2 of 2, '(props: AndroidWebViewProps & IOSWebViewProps & WindowsWebViewProps, context: any): WebView<{}>', gave the following error. Type '{ ref: RefObject<WebView<{}> | null>; source: { html: string; }; onMessage: (event: any) => void; scrollEnabled: false; bounces: false; javaScriptEnabled: true; originWhitelist: string[]; forceDarkAllowed: boolean; style: { ...; }; }' is not assignable to type 'IntrinsicAttributes & IntrinsicClassAttributes<WebView<{}>> & Readonly<AndroidWebViewProps & IOSWebViewProps & WindowsWebViewProps>'. Property 'forceDarkAllowed' does not exist on type 'IntrinsicAttributes & IntrinsicClassAttributes<WebView<{}>> & Readonly<AndroidWebViewProps & IOSWebViewProps & WindowsWebViewProps>'.",
+      "count": 1
+    },
+    {
+      "file": "src/core/services/workPeriodAuthority/shiftAuthoritySessionSequencer.test.ts",
+      "code": "TS2353",
+      "message": "Object literal may only specify known properties, and 'periodId' does not exist in type '{ kind: string; }'.",
+      "count": 1
+    },
+    {
+      "file": "src/core/services/workPeriodAuthority/shiftAuthoritySessionSequencer.test.ts",
+      "code": "TS2353",
+      "message": "Object literal may only specify known properties, and 'protocolVersion' does not exist in type '{ state: string; periodId?: string | undefined; originLocalDate?: string | undefined; }'.",
+      "count": 1
+    },
+    {
+      "file": "src/ui/v1-grid/screens/SettingsScreen.tsx",
+      "code": "TS2339",
+      "message": "Property 'accent' does not exist on type '{ readonly primary: \"#F1F5F9\"; readonly secondary: \"#94A3B8\"; readonly muted: \"#64748B\"; readonly inverse: \"#05060B\"; }'.",
+      "count": 5
+    }
+  ]
+}
