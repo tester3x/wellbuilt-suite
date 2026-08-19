@@ -93,13 +93,15 @@ test('wiring: sso-authorize replaces Home and forbids equipment return copy', ()
   assert.ok(!screen.includes('Returning to equipment'));
 });
 
-test('wiring: dispatchSsoUrl returns full route result; layout uses isSsoRouteClaimed', () => {
+test('wiring: dispatchSsoUrl returns full route result; layout owns inbox delivery', () => {
   const rt = src('src/core/services/ssoRuntime.ts');
   assert.ok(rt.includes('export async function dispatchSsoUrl'));
   assert.ok(rt.includes('export function isSsoRouteClaimed'));
   assert.ok(rt.includes('getSsoRouteAdapter().handle'));
   const layout = src('app/_layout.tsx');
-  assert.ok(layout.includes('isSsoRouteClaimed'));
+  assert.ok(layout.includes('acceptSsoAuthorizeUrl'));
+  assert.ok(layout.includes('SsoAuthorizeListener'));
+  assert.ok(layout.includes('isSsoAuthorizeUrl'));
   assert.ok(!/if \(await dispatchSsoUrl\(url\)\) return;/.test(layout));
 });
 
