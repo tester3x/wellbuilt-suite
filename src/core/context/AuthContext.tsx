@@ -31,6 +31,8 @@ import {
   createAuthoritySessionMachine,
 } from '../services/workPeriodAuthority/shiftAuthoritySessionSequencer';
 import { shiftAuthorityDiag } from '../services/workPeriodAuthority/shiftAuthorityClient';
+import { setSsoSessionGate } from '../services/ssoSessionGate';
+import { notifySsoInboxSession, resetLiveSsoAuthorizeInbox } from '../services/ssoAuthorizeInbox';
 
 export interface AuthUser {
   driverId: string;
@@ -181,6 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const bumpAuthorityGeneration = useCallback((reason: string) => {
     const n = authorityGenRef.current.bump(reason);
     authoritySessionRef.current.reset();
+    resetLiveSsoAuthorizeInbox();
     console.log(JSON.stringify({ tag: '[shiftAuthority]', event: 'generation.bump', reason, gen: n }));
     return n;
   }, []);
@@ -301,6 +304,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           revalidateDriverSession().then(async (stillValid) => {
             if (!stillValid) {
               authoritySessionRef.current.dispatch({ type: 'session_failed' });
+              setSsoSessionGate('failed');
+              notifySsoInboxSession('failed');
               console.log('[AuthContext] Background revalidation failed — logging out');
               bumpAuthorityGeneration('revalidation_hard_fail');
               startShiftInFlightRef.current = false;
@@ -316,6 +321,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (freshSession) {
               setUser(sessionToUser(freshSession));
             }
+            setSsoSessionGate('ready');
+            notifySsoInboxSession('ready');
             if (!authorityGenRef.current.isCurrent(gen)) return;
 
             const live = freshSession || session;
@@ -432,6 +439,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (result.valid && result.driverId && result.displayName && result.passcodeHash) {
       // New identity — invalidate any in-flight resolve/claim from prior session.
       const loginGen = bumpAuthorityGeneration('login_identity');
+      setSsoSessionGate('pending');
+      notifySsoInboxSession('pending');
       startShiftInFlightRef.current = false;
       setStartShiftBusy(false);
 
@@ -505,6 +514,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // Legacy dual-run login cannot call shift authority callables.
             if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
             authoritySessionRef.current.dispatch({ type: 'session_failed' });
+            setSsoSessionGate('failed');
+            notifySsoInboxSession('failed');
             setShiftAuthorityUi({ kind: 'unavailable', reason: 'driver_session_required' });
             await SecureStore.deleteItemAsync('shiftStarted');
             setShiftActive(false);
@@ -514,6 +525,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             );
           } else {
             if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
+            setSsoSessionGate('ready');
+            notifySsoInboxSession('ready');
             const ready = authoritySessionRef.current.dispatch({ type: 'session_ready' });
             if (ready.applyUi) setShiftAuthorityUi(ready.state.ui);
             const resolveCmd = ready.commands.find((c) => c.cmd === 'resolve');
@@ -951,6 +964,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logoutWithCascade = useCallback(async () => {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout_cascade');
+    setSsoSessionGate('failed');
+    notifySsoInboxSession('failed');
     startShiftInFlightRef.current = false;
     setStartShiftBusy(false);
     setShiftAuthorityUi({ kind: 'legacy' });
@@ -1069,6 +1084,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout');
+    setSsoSessionGate('failed');
+    notifySsoInboxSession('failed');
     startShiftInFlightRef.current = false;
     setStartShiftBusy(false);
     setShiftAuthorityUi({ kind: 'legacy' });

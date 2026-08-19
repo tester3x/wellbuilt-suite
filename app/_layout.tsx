@@ -17,6 +17,14 @@ import { startConnectivityMonitor, stopConnectivityMonitor } from '@/core/servic
 import { createSuiteDvirGate, makeDvirSsoGetter } from '@/core/services/dvirGate';
 import DvirHandoffHost from '@/ui/shared/DvirHandoffHost';
 import SsoHandoffOverlay from '@/core/components/SsoHandoffOverlay';
+import {
+  acceptSsoAuthorizeUrl,
+  bindSsoAuthorizeDispatch,
+  notifySsoInboxSession,
+} from '@/core/services/ssoAuthorizeInbox';
+import { getSsoSessionGate } from '@/core/services/ssoSessionGate';
+import { dispatchSsoUrl } from '@/core/services/ssoRuntime';
+import { isSsoAuthorizeUrl } from '@/core/services/ssoRouteAdapter';
 
 // Keep the native splash screen visible until we're ready
 // This prevents the black flicker between native splash and React render
@@ -26,6 +34,33 @@ SplashScreen.preventAutoHideAsync();
  * Ingest eQuipment → Suite DVIR completion receipts and resume end-shift
  * when a pending Post-Trip gate is satisfied.
  */
+/**
+ * SSO Linking ownership is mounted once. It must not tear down when
+ * AuthContext replaces `user` after session revalidation — that gap
+ * dropped onNewIntent authorize URLs. Inbox queues until the session
+ * gate is ready and deduplicates initial/runtime/resume deliveries.
+ */
+function SsoAuthorizeListener() {
+  useEffect(() => {
+    bindSsoAuthorizeDispatch((url) => dispatchSsoUrl(url));
+    Linking.getInitialURL().then((url) => acceptSsoAuthorizeUrl(url, 'initial'));
+    const sub = Linking.addEventListener('url', (e) => {
+      acceptSsoAuthorizeUrl(e.url, 'runtime');
+    });
+    const app = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      notifySsoInboxSession(getSsoSessionGate());
+      Linking.getInitialURL().then((url) => acceptSsoAuthorizeUrl(url, 'resume'));
+    });
+    return () => {
+      sub.remove();
+      app.remove();
+    };
+  }, []);
+
+  return null;
+}
+
 function DvirReceiptListener() {
   const { user, confirmArrival, shiftActive } = useAuth();
   const handled = useRef<Set<string>>(new Set());
@@ -76,16 +111,9 @@ function DvirReceiptListener() {
       }
     };
 
-    // vc51.9J: SSO routes are owned by one adapter and parsed only by
-    // the canonical strict parser. Both the warm listener and the
-    // cold-start initial URL go through it first; it de-duplicates the
-    // same URL arriving on both paths.
     const route = async (url: string | null | undefined) => {
       if (!url) return;
-      const { dispatchSsoUrl, isSsoRouteClaimed } = await import('../src/core/services/ssoRuntime');
-      // Full adapter outcome; claimed = any SSO kind (including duplicate/busy).
-      const sso = await dispatchSsoUrl(url);
-      if (isSsoRouteClaimed(sso)) return;
+      if (isSsoAuthorizeUrl(url)) return;
       void handleUrl(url);
     };
 
@@ -130,6 +158,7 @@ export default function RootLayout() {
             <View style={styles.container}>
               <StatusBar style="light" />
               <OfflineBanner />
+              <SsoAuthorizeListener />
               <DvirReceiptListener />
               <DvirHandoffHost />
               <Stack
