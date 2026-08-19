@@ -1,8 +1,7 @@
 {
   "canonicalVersion": "0.5.0-dev.0",
   "canonicalPath": "wellbuilt-contracts/src/sso/protocol.ts",
-  "canonicalPin": "feat/jsa-sso-audience@fdc741d",
-  "bodySha256": "491b1b588e625e6dc63fdaef9191987c8e75e44ad44bdbade8e229a869e7f254",
+  "bodySha256": "8a0e51f806e231254523f072009ac8549997cd7b91c494d8a3baf15cfda25830",
   "published": false,
-  "note": "Held unpublished JSA-audience protocol. Working-tree contracts/main is 0.4.0; this mirror is pinned to feat/jsa-sso-audience through fdc741d."
+  "note": "Unpublished. Replace with a package import once contracts publishes the SSO protocol."
 }

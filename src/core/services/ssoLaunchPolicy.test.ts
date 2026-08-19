@@ -27,7 +27,12 @@ describe('WB-T launches credential-free', () => {
     assert.equal(isCredentialFreeLaunchTarget('WELLBUILT-TICKETS'), true);
   });
 
-  it('does NOT match the other three apps', () => {
+  it('identifies WB-M as credential-free without changing the wellbuiltmobile scheme', () => {
+    assert.equal(isCredentialFreeLaunchTarget('wellbuiltmobile'), true);
+    assert.equal(isCredentialFreeLaunchTarget('WELLBUILTMOBILE'), true);
+  });
+
+  it('does NOT match the remaining hash-debt apps', () => {
     for (const { scheme } of LEGACY_HASH_SSO_DEBT) {
       assert.equal(isCredentialFreeLaunchTarget(scheme), false, scheme);
     }
@@ -71,7 +76,7 @@ describe('WB-T launches credential-free', () => {
   });
 });
 
-describe('the other three apps are unchanged', () => {
+describe('the remaining hash-debt apps are unchanged', () => {
   const hook = strip(read('hooks/useAppLauncher.ts'));
   const launcher = strip(read('services/appLauncher.ts'));
 
@@ -79,7 +84,7 @@ describe('the other three apps are unchanged', () => {
     for (const key of ['hash', 'name', 'companyId', 'truck', 'trailer', 'packageId', 'shiftStartTime', 'shiftId']) {
       assert.ok(
         new RegExp(`\\b${key}\\b`).test(hook) || new RegExp(`\\b${key}\\b`).test(launcher),
-        `legacy SSO parameter '${key}' disappeared — that would break WB-M/JSA/eQuipment`,
+        `legacy SSO parameter '${key}' disappeared — that would break JSA/eQuipment`,
       );
     }
   });
@@ -92,11 +97,11 @@ describe('the other three apps are unchanged', () => {
     assert.match(launcher, /if \(sso\) await trackSSOApp\(scheme\)/);
   });
 
-  it('the debt inventory names exactly the three unmigrated apps', () => {
-    assert.equal(LEGACY_HASH_SSO_DEBT.length, 3);
+  it('the debt inventory names exactly the remaining unmigrated apps', () => {
+    assert.equal(LEGACY_HASH_SSO_DEBT.length, 2);
     assert.deepEqual(
       LEGACY_HASH_SSO_DEBT.map((d) => d.app).sort(),
-      ['WB JSA', 'WB Mobile', 'WB eQuipment'],
+      ['WB JSA', 'WB eQuipment'],
     );
     for (const entry of LEGACY_HASH_SSO_DEBT) {
       assert.ok(entry.transports.includes('hash'), `${entry.app} must record the hash transport`);

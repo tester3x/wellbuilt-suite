@@ -145,12 +145,20 @@ const LOGOUT_ASYNCSTORAGE_KEYS: readonly string[] = [
  */
 async function writeLogoutSignal(passcodeHash: string): Promise<void> {
   try {
-    await firebasePatch(`drivers/approved/${passcodeHash}`, {
-      logoutAt: new Date().toISOString(),
-    });
-    console.log('[AuthContext] logoutAt signal written to RTDB');
+    const { getFunctions, httpsCallable } = await import('firebase/functions');
+    const { getApp } = await import('firebase/app');
+    const fn = httpsCallable(getFunctions(getApp()), 'signalDriverLogout');
+    await fn({ logoutAt: Date.now() });
+    console.log('[AuthContext] logoutAt signal written via signalDriverLogout');
   } catch (err) {
-    console.warn('[AuthContext] Failed to write logoutAt:', err);
+    console.warn('[AuthContext] Failed to write logoutAt via callable:', err);
+    try {
+      await firebasePatch(`drivers/approved/${passcodeHash}`, {
+        logoutAt: new Date().toISOString(),
+      });
+    } catch (legacyErr) {
+      console.warn('[AuthContext] Failed to write logoutAt:', legacyErr);
+    }
   }
 }
 

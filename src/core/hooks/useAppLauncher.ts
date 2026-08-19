@@ -13,13 +13,14 @@ import {
 } from '../services/dvirGate';
 import {
   isCredentialFreeLaunchTarget,
+  credentialFreeAudience,
   WBT_SSO_START_HOST,
 } from '../services/ssoLaunchPolicy';
 import {
   armSsoHandoffOutbound,
   noteSsoHandoffLaunchFailure,
 } from '../services/ssoHandoffOverlayStore';
-import { SSO_AUDIENCE_WBT } from '../services/ssoProtocol.generated';
+import { SSO_AUDIENCE_WBT, type SsoAudience } from '../services/ssoProtocol.generated';
 
 export function useAppLauncher() {
   const { user, activePackageId, shiftStartTime, shiftActive } = useAuth();
@@ -50,12 +51,11 @@ export function useAppLauncher() {
       // Off-shift: no DVIR redirect — fall through to normal Tickets launch.
     }
 
-    // vc51.9J: WB-T is launched credential-free. It uses the
-    // authorization-code bridge and mints its own PKCE attempt, so the
-    // passcode hash must not appear in its URL. WB-M, WB-JSA and
-    // eQuipment still receive the legacy params — migrating them needs a
-    // bridge each and is out of scope here. See ssoLaunchPolicy.ts.
+    // Credential-free launch: WB-T and WB-M. Each mints its own PKCE
+    // attempt. WB-T's audience and start host stay exactly as before.
+    // JSA and eQuipment still receive the legacy params.
     if (isCredentialFreeLaunchTarget(options.scheme)) {
+      const audience = (credentialFreeAudience(options.scheme) || SSO_AUDIENCE_WBT) as SsoAudience;
       // CONTINUOUS HANDOFF OVERLAY — armed BEFORE openURL, then one
       // committed frame, so the tree Suite backgrounds with is already the
       // covered tree. Android redraws that exact tree when the authorize
@@ -65,7 +65,7 @@ export function useAppLauncher() {
       // resumed native tree). Purely visual: failure to arm changes pixels
       // only, so it is swallowed and the launch proceeds regardless.
       try {
-        armSsoHandoffOutbound(SSO_AUDIENCE_WBT, Date.now());
+        armSsoHandoffOutbound(audience, Date.now());
         // Double-rAF: the first fires before the commit paints; the second
         // guarantees a frame containing the overlay has been committed.
         await new Promise<void>((resolve) =>

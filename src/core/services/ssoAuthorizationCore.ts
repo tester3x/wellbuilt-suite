@@ -19,6 +19,7 @@ import {
   SSO_AUDIENCE_EQUIPMENT,
   SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
+  SSO_AUDIENCE_WBM,
   SSO_CHALLENGE_METHOD,
   SSO_PROTOCOL_VERSION,
   audienceRequiresShiftBinding,
@@ -181,6 +182,7 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
         request.audience !== SSO_AUDIENCE_WBT
         && request.audience !== SSO_AUDIENCE_EQUIPMENT
         && request.audience !== SSO_AUDIENCE_JSA
+        && request.audience !== SSO_AUDIENCE_WBM
       ) {
         return errorOut('unsupported_audience', 'audience not allowlisted', request.state, undefined);
       }
