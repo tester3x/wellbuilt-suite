@@ -31,10 +31,14 @@ import {
   createAuthoritySessionMachine,
 } from '../services/workPeriodAuthority/shiftAuthoritySessionSequencer';
 import {
-  issuedResolveToken,
+  issuedResolveLease,
   terminalizeIssuedResolve,
 } from '../services/workPeriodAuthority/shiftAuthorityResolveRunner';
-import { observeRevalidation } from '../services/workPeriodAuthority/revalidationFailClosed';
+import {
+  observeRevalidation,
+  runUncertainSessionFailClosed,
+  REVALIDATION_FAILED_UI,
+} from '../services/workPeriodAuthority/revalidationFailClosed';
 import { setSsoSessionGate } from '../services/ssoSessionGate';
 import { notifySsoInboxSession, resetLiveSsoAuthorizeInbox } from '../services/ssoAuthorizeInbox';
 import { bumpSsoIdentityEpoch } from '../services/ssoRuntime';
@@ -236,19 +240,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const failClosedUncertainSession = useCallback(async (reason: string) => {
-    authoritySessionRef.current.dispatch({ type: 'session_failed' });
-    setSsoSessionGate('failed');
-    notifySsoInboxSession('failed');
-    resetLiveSsoAuthorizeInbox();
-    bumpSsoIdentityEpoch();
-    bumpAuthorityGeneration(reason);
-    startShiftInFlightRef.current = false;
-    setStartShiftBusy(false);
-    reconcileForIdentity(null);
-    await hardFailRevalidationCleanup();
-    setUser(null);
-    setShiftAuthorityUi({ kind: 'unavailable', reason: 'revalidation_failed' });
-    setShiftActive(false);
+    const cleanup = await runUncertainSessionFailClosed({
+      applyMemory: () => {
+        authoritySessionRef.current.dispatch({ type: 'session_failed' });
+        setSsoSessionGate('failed');
+        notifySsoInboxSession('failed');
+        resetLiveSsoAuthorizeInbox();
+        bumpSsoIdentityEpoch();
+        bumpAuthorityGeneration(reason);
+        startShiftInFlightRef.current = false;
+        setStartShiftBusy(false);
+        reconcileForIdentity(null);
+        setUser(null);
+        setShiftAuthorityUi(REVALIDATION_FAILED_UI);
+        setShiftActive(false);
+      },
+      cleanup: hardFailRevalidationCleanup,
+    });
+    if (cleanup === 'cleanup_failed') {
+      console.log('[AuthContext] revalidation.cleanup_failed');
+    }
   }, [bumpAuthorityGeneration, reconcileForIdentity]);
 
   // Provider disposal invalidates all in-flight authority work.
@@ -394,12 +405,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
               const ready = authoritySessionRef.current.dispatch({ type: 'session_ready' });
               if (ready.applyUi) setShiftAuthorityUi(ready.state.ui);
-              const token = issuedResolveToken(ready.commands);
-              if (token === null) return;
+              const lease = issuedResolveLease(ready.commands);
+              if (!lease) return;
 
               const term = await terminalizeIssuedResolve({
                 machine: authoritySessionRef.current,
-                token,
+                lease,
                 isCurrent: () => authorityGenRef.current.isCurrent(gen),
                 restore: () => postLoginEnforcedRestore({
                   enforcement,
@@ -426,11 +437,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             } catch (err) {
               console.warn('[AuthContext] Cold-start shift restore failed closed:', err);
               if (!authorityGenRef.current.isCurrent(gen)) return;
-              const inflight = authoritySessionRef.current.peek().inFlightToken;
-              if (inflight !== null) {
+              const inflight = authoritySessionRef.current.peek().inFlight;
+              if (inflight && inflight.generation === authoritySessionRef.current.peek().generation) {
                 const term = await terminalizeIssuedResolve({
                   machine: authoritySessionRef.current,
-                  token: inflight,
+                  lease: inflight,
                   isCurrent: () => authorityGenRef.current.isCurrent(gen),
                   restore: async () => {
                     throw err instanceof Error ? err : new Error('cold_start_error');
@@ -552,13 +563,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             notifySsoInboxSession('ready');
             const ready = authoritySessionRef.current.dispatch({ type: 'session_ready' });
             if (ready.applyUi) setShiftAuthorityUi(ready.state.ui);
-            const token = issuedResolveToken(ready.commands);
-            if (token === null) {
+            const lease = issuedResolveLease(ready.commands);
+            if (!lease) {
               console.log('[AuthContext] Post-login resolve skipped — sequencer');
             } else {
               const term = await terminalizeIssuedResolve({
                 machine: authoritySessionRef.current,
-                token,
+                lease,
                 isCurrent: () => authorityGenRef.current.isCurrent(loginGen),
                 restore: () => postLoginEnforcedRestore({
                   enforcement,
@@ -612,11 +623,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.warn('[AuthContext] Post-login shift restore failed closed:', err);
         if (authorityGenRef.current.isCurrent(loginGen)) {
-          const inflight = authoritySessionRef.current.peek().inFlightToken;
-          if (inflight !== null) {
+          const inflight = authoritySessionRef.current.peek().inFlight;
+          if (inflight && inflight.generation === authoritySessionRef.current.peek().generation) {
             const term = await terminalizeIssuedResolve({
               machine: authoritySessionRef.current,
-              token: inflight,
+              lease: inflight,
               isCurrent: () => authorityGenRef.current.isCurrent(loginGen),
               restore: async () => {
                 throw err instanceof Error ? err : new Error('post_login_error');
@@ -1293,11 +1304,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!authorityGenRef.current.isCurrent(gen)) return;
       const retry = authoritySessionRef.current.dispatch({ type: 'retry' });
       if (retry.applyUi) setShiftAuthorityUi(retry.state.ui);
-      const token = issuedResolveToken(retry.commands);
-      if (token === null) return;
+      const lease = issuedResolveLease(retry.commands);
+      if (!lease) return;
       const term = await terminalizeIssuedResolve({
         machine: authoritySessionRef.current,
-        token,
+        lease,
         isCurrent: () => authorityGenRef.current.isCurrent(gen),
         restore: () => postLoginEnforcedRestore({
           enforcement,
@@ -1309,11 +1320,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.warn('[AuthContext] refreshShiftAuthority failed:', err);
       if (authorityGenRef.current.isCurrent(gen)) {
-        const inflight = authoritySessionRef.current.peek().inFlightToken;
-        if (inflight !== null) {
+        const inflight = authoritySessionRef.current.peek().inFlight;
+        if (inflight && inflight.generation === authoritySessionRef.current.peek().generation) {
           const term = await terminalizeIssuedResolve({
             machine: authoritySessionRef.current,
-            token: inflight,
+            lease: inflight,
             isCurrent: () => authorityGenRef.current.isCurrent(gen),
             restore: async () => {
               throw err instanceof Error ? err : new Error('refresh_failed');

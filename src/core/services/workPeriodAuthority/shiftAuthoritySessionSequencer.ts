@@ -3,11 +3,9 @@
  * readiness. Pure: no I/O, no shift mutations. AuthContext applies the
  * resulting commands.
  *
- * Cold start used to call resolveActiveDriverShift while
- * revalidateDriverSession was still in flight. The callable (or the
- * local session-ready gate) returned driver_session_required, the tile
- * froze on Unavailable, and a later successful revalidation never
- * re-resolved. This reducer is the exactly-once recovery contract.
+ * Resolve ownership is a generation-tagged monotonic lease. reset and
+ * cold_start increment generation and never recycle nextToken, so an old
+ * generation's token 1 cannot match a new generation's in-flight lease.
  */
 import type { ShiftAuthorityUiState } from './postLoginShiftRestoration';
 
@@ -19,11 +17,17 @@ export type AuthorityResolveClass =
   | 'driver_session_required'
   | 'transient_failure';
 
+export type AuthorityResolveLease = {
+  generation: number;
+  token: number;
+};
+
 export type AuthoritySessionState = {
   session: SessionReadiness;
-  inFlightToken: number | null;
+  generation: number;
+  inFlight: AuthorityResolveLease | null;
   nextToken: number;
-  appliedToken: number;
+  applied: AuthorityResolveLease | null;
   ui: ShiftAuthorityUiState;
 };
 
@@ -34,42 +38,69 @@ export type AuthoritySessionEvent =
   | { type: 'session_failed' }
   | {
       type: 'resolve_result';
+      generation: number;
       token: number;
       result: AuthorityResolveClass;
       open?: { periodId: string; originLocalDate: string };
     }
   | { type: 'retry' };
 
-export type AuthoritySessionCommand = { cmd: 'resolve'; token: number };
+export type AuthoritySessionCommand = {
+  cmd: 'resolve';
+  generation: number;
+  token: number;
+};
 
 export const initialAuthoritySessionState: AuthoritySessionState = {
   session: 'pending',
-  inFlightToken: null,
+  generation: 0,
+  inFlight: null,
   nextToken: 1,
-  appliedToken: 0,
+  applied: null,
   ui: { kind: 'checking' },
 };
+
+export function leasesEqual(
+  a: AuthorityResolveLease | null | undefined,
+  b: { generation: number; token: number } | null | undefined,
+): boolean {
+  return !!a && !!b && a.generation === b.generation && a.token === b.token;
+}
 
 function startResolve(state: AuthoritySessionState): {
   state: AuthoritySessionState;
   commands: AuthoritySessionCommand[];
   applyUi: boolean;
 } {
-  const token = state.nextToken;
+  const lease: AuthorityResolveLease = {
+    generation: state.generation,
+    token: state.nextToken,
+  };
   return {
     state: {
       ...state,
-      nextToken: token + 1,
-      inFlightToken: token,
+      nextToken: lease.token + 1,
+      inFlight: lease,
       ui: { kind: 'checking' },
     },
-    commands: [{ cmd: 'resolve', token }],
+    commands: [{ cmd: 'resolve', generation: lease.generation, token: lease.token }],
     applyUi: true,
   };
 }
 
 function alreadySettledSuccess(state: AuthoritySessionState): boolean {
-  return state.appliedToken > 0 && (state.ui.kind === 'none' || state.ui.kind === 'open');
+  return !!state.applied && (state.ui.kind === 'none' || state.ui.kind === 'open');
+}
+
+function beginEpoch(state: AuthoritySessionState): AuthoritySessionState {
+  return {
+    session: 'pending',
+    generation: state.generation + 1,
+    inFlight: null,
+    nextToken: state.nextToken,
+    applied: null,
+    ui: { kind: 'checking' },
+  };
 }
 
 export function reduceAuthoritySession(
@@ -84,7 +115,7 @@ export function reduceAuthoritySession(
     case 'reset':
     case 'cold_start':
       return {
-        state: { ...initialAuthoritySessionState },
+        state: beginEpoch(state),
         commands: [],
         applyUi: true,
       };
@@ -94,8 +125,7 @@ export function reduceAuthoritySession(
         state: {
           ...state,
           session: 'failed',
-          inFlightToken: null,
-          nextToken: state.nextToken + 1,
+          inFlight: null,
           ui: { kind: 'unavailable', reason: 'revalidation_failed' },
         },
         commands: [],
@@ -104,7 +134,7 @@ export function reduceAuthoritySession(
 
     case 'session_ready': {
       const next: AuthoritySessionState = { ...state, session: 'ready' };
-      if (next.inFlightToken !== null) {
+      if (next.inFlight !== null) {
         return { state: next, commands: [], applyUi: false };
       }
       if (alreadySettledSuccess(next)) {
@@ -131,19 +161,22 @@ export function reduceAuthoritySession(
           applyUi: true,
         };
       }
-      if (state.inFlightToken !== null) {
+      if (state.inFlight !== null) {
         return { state, commands: [], applyUi: false };
       }
       return startResolve(state);
     }
 
     case 'resolve_result': {
-      if (event.token !== state.inFlightToken) {
+      if (!leasesEqual(state.inFlight, event)) {
         return { state, commands: [], applyUi: false };
       }
-      if (event.token <= state.appliedToken) {
+      if (event.generation !== state.generation) {
+        return { state, commands: [], applyUi: false };
+      }
+      if (state.applied && event.token <= state.applied.token && event.generation === state.applied.generation) {
         return {
-          state: { ...state, inFlightToken: null },
+          state: { ...state, inFlight: null },
           commands: [],
           applyUi: false,
         };
@@ -153,7 +186,7 @@ export function reduceAuthoritySession(
         return {
           state: {
             ...state,
-            inFlightToken: null,
+            inFlight: null,
             ui: { kind: 'checking' },
           },
           commands: [],
@@ -161,12 +194,17 @@ export function reduceAuthoritySession(
         };
       }
 
+      const applied: AuthorityResolveLease = {
+        generation: event.generation,
+        token: event.token,
+      };
+
       if (event.result === 'none') {
         return {
           state: {
             ...state,
-            inFlightToken: null,
-            appliedToken: event.token,
+            inFlight: null,
+            applied,
             ui: { kind: 'none' },
           },
           commands: [],
@@ -177,8 +215,8 @@ export function reduceAuthoritySession(
         return {
           state: {
             ...state,
-            inFlightToken: null,
-            appliedToken: event.token,
+            inFlight: null,
+            applied,
             ui: {
               kind: 'open',
               periodId: event.open.periodId,
@@ -196,8 +234,8 @@ export function reduceAuthoritySession(
       return {
         state: {
           ...state,
-          inFlightToken: null,
-          appliedToken: event.token,
+          inFlight: null,
+          applied,
           ui: { kind: 'unavailable', reason },
         },
         commands: [],
