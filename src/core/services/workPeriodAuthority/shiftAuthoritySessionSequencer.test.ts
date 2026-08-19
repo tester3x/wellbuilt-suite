@@ -305,3 +305,12 @@ test('wiring: logout resets inbox generation and SSO epoch', () => {
   assert.ok(auth.includes("notifySsoInboxSession('failed')"));
   assert.ok(auth.includes("setSsoSessionGate('failed')"));
 });
+
+test('wiring: revalidation rejection uses shared fail-closed, not keep-session', () => {
+  const auth = src('src/core/context/AuthContext.tsx');
+  assert.ok(auth.includes('observeRevalidation'));
+  assert.ok(auth.includes('failClosedUncertainSession'));
+  assert.ok(!auth.includes('Background revalidation error (keeping session)'));
+  assert.ok(auth.includes('hardFailRevalidationCleanup'));
+  assert.ok(auth.includes('terminalizeIssuedResolve'));
+});

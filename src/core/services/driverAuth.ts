@@ -399,7 +399,7 @@ export const isDriverVerified = async (): Promise<boolean> => {
  * Hard-fail cleanup for revalidation: secure sign-out + local identity clear.
  * Does NOT close the backend shift, write logout events, or run Post-Trip.
  */
-async function hardFailRevalidationCleanup(): Promise<void> {
+export async function hardFailRevalidationCleanup(): Promise<void> {
   try {
     const secure = await import('./secureDriverAuth');
     secure.invalidateAuthEpoch();
