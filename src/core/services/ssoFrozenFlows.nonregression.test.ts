@@ -13,12 +13,14 @@ import {
   SSO_AUDIENCE_EQUIPMENT,
   SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
+  SSO_AUDIENCE_WBM,
   SSO_AUDIENCES,
   SSO_CALLBACK_BY_AUDIENCE,
   SSO_CALLBACK_HOST,
   SSO_CALLBACK_SCHEME,
   SSO_CALLBACK_SCHEME_EQUIPMENT,
   SSO_CALLBACK_SCHEME_JSA,
+  SSO_CALLBACK_SCHEME_WBM,
   audienceCarriesDisplayName,
   audienceCarriesJsaBinding,
   audienceRequiresShiftBinding,
@@ -27,8 +29,10 @@ import {
 import {
   isCredentialFreeLaunchTarget,
   LEGACY_HASH_SSO_DEBT,
+  WBM_SCHEME,
   WBT_SCHEME,
   WBT_SSO_START_HOST,
+  wbmSsoStartUrl,
   wbtSsoStartUrl,
 } from './ssoLaunchPolicy';
 
@@ -119,9 +123,22 @@ describe('frozen shared callable names', () => {
     assert.match(client, /SSO_ISSUE_CALLABLE = 'ssoIssueAuthorizationCode'/);
   });
 
-  it('existing audiences remain exactly the pre-WBM set until the additive edit', () => {
-    // This pin is allowed to be updated in the SAME change that adds
-    // wellbuilt-mobile. It fails if an audience is removed or renamed.
+  it('prior audiences remain, then additive wellbuilt-mobile is the fourth', () => {
+    // Additive only: tickets, equipment, and JSA stay first and unchanged.
+    assert.equal(SSO_AUDIENCES.length, 4);
+    assert.equal(SSO_AUDIENCES[0], SSO_AUDIENCE_WBT);
+    assert.equal(SSO_AUDIENCES[1], SSO_AUDIENCE_EQUIPMENT);
+    assert.equal(SSO_AUDIENCES[2], SSO_AUDIENCE_JSA);
+    assert.equal(SSO_AUDIENCES[3], SSO_AUDIENCE_WBM);
+    assert.equal(SSO_AUDIENCE_WBM, 'wellbuilt-mobile');
+    assert.equal(isSsoAudience(SSO_AUDIENCE_WBM), true);
+    assert.equal(audienceRequiresShiftBinding(SSO_AUDIENCE_WBM), false);
+    assert.equal(audienceCarriesJsaBinding(SSO_AUDIENCE_WBM), false);
+    assert.equal(audienceCarriesDisplayName(SSO_AUDIENCE_WBM), true);
+    assert.equal(SSO_CALLBACK_BY_AUDIENCE[SSO_AUDIENCE_WBM].scheme, SSO_CALLBACK_SCHEME_WBM);
+    assert.equal(SSO_CALLBACK_SCHEME_WBM, 'wellbuiltmobile');
+    assert.equal(wbmSsoStartUrl(), `${WBM_SCHEME}://sso-start`);
+    assert.equal(isCredentialFreeLaunchTarget(WBM_SCHEME), true);
     for (const aud of [SSO_AUDIENCE_WBT, SSO_AUDIENCE_EQUIPMENT, SSO_AUDIENCE_JSA]) {
       assert.equal(isSsoAudience(aud), true);
       assert.ok(SSO_AUDIENCES.includes(aud));

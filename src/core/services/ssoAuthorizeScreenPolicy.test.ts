@@ -15,15 +15,17 @@ import {
   SSO_AUDIENCE_EQUIPMENT,
   SSO_AUDIENCE_JSA,
   SSO_AUDIENCE_WBT,
+  SSO_AUDIENCE_WBM,
 } from './ssoProtocol.generated';
 
 const root = join(__dirname, '..', '..', '..');
 const src = (rel: string) => readFileSync(join(root, rel), 'utf8');
 
-test('audienceFromAuthorizeParams maps tickets, equipment, and JSA', () => {
+test('audienceFromAuthorizeParams maps tickets, equipment, JSA, and additive WB-M', () => {
   assert.equal(audienceFromAuthorizeParams(SSO_AUDIENCE_WBT), SSO_AUDIENCE_WBT);
   assert.equal(audienceFromAuthorizeParams(SSO_AUDIENCE_EQUIPMENT), SSO_AUDIENCE_EQUIPMENT);
   assert.equal(audienceFromAuthorizeParams(SSO_AUDIENCE_JSA), SSO_AUDIENCE_JSA);
+  assert.equal(audienceFromAuthorizeParams(SSO_AUDIENCE_WBM), SSO_AUDIENCE_WBM);
   assert.equal(audienceFromAuthorizeParams('nope'), null);
   assert.equal(audienceFromAuthorizeParams(undefined), null);
   assert.equal(audienceFromAuthorizeParams([SSO_AUDIENCE_WBT]), SSO_AUDIENCE_WBT);
@@ -33,6 +35,7 @@ test('working copy is audience-aware and never assumes equipment for tickets', (
   assert.match(authorizeWorkingCopy(SSO_AUDIENCE_WBT), /Tickets/i);
   assert.match(authorizeWorkingCopy(SSO_AUDIENCE_EQUIPMENT), /eQuipment/i);
   assert.match(authorizeWorkingCopy(SSO_AUDIENCE_JSA), /JSA/i);
+  assert.match(authorizeWorkingCopy(SSO_AUDIENCE_WBM), /Mobile/i);
   assert.match(authorizeWorkingCopy(null), /app/i);
   assert.ok(!authorizeWorkingCopy(SSO_AUDIENCE_WBT).toLowerCase().includes('equipment'));
 });
