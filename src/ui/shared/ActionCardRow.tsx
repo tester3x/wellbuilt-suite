@@ -78,7 +78,7 @@ function getShiftColor(startIso: string | null): string {
 
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
-  const { launchWBApp } = useAppLauncher();
+  const { launchWBApp, dvirGate } = useAppLauncher();
   const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
@@ -304,11 +304,23 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
         {/* WellBuilt eQuipment — launches com.wellbuilt.equipment only (no eWallet fallback) */}
         <Pressable
-          onPress={() => launchWBApp({
-            name: 'WellBuilt eQuipment',
-            scheme: 'wbequipment',
-            androidPackage: 'com.wellbuilt.equipment',
-          })}
+          onPress={() => {
+            void (async () => {
+              if (active) {
+                try {
+                  await dvirGate.ensurePreTripGate({ alertOnBlock: true });
+                } catch (err) {
+                  console.warn('[ActionCardRow] equipment governed launch failed:', err);
+                }
+                return;
+              }
+              await launchWBApp({
+                name: 'WellBuilt eQuipment',
+                scheme: 'wbequipment',
+                androidPackage: 'com.wellbuilt.equipment',
+              });
+            })();
+          }}
           style={[s.card, s.cardWallet]}
         >
           <MaterialCommunityIcons name="truck" size={28} color={colors.brand.accent} />

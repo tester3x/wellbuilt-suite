@@ -9,6 +9,7 @@ import {
   ensurePreTripGate,
   ingestDvirCompletionUrl,
   isTicketsLaunch,
+  consumePendingEndShiftIfReady,
   SUITE_DVIR_RETURN_URL,
   type DvirGateDeps,
 } from './dvirGateService.js';
@@ -104,6 +105,8 @@ describe('Suite DVIR gate service', () => {
     assert.equal(r.launched, true);
     assert.ok(launched[0].includes('phase=pre_trip'));
     assert.ok(launched[0].includes('shiftId=2026-07-28_060000'));
+    assert.ok(launched[0].includes('source=server_binding'));
+    assert.ok(!/[?&](hash|name|passcode|token)=/i.test(launched[0]));
   });
 
   it('pre-trip handoff notice names eQuipment and Pre-Trip DVIR reason', () => {
@@ -167,12 +170,10 @@ describe('Suite DVIR gate service', () => {
     const url = buildEquipmentDvirUrl({
       shiftId: 's1',
       phase: 'pre_trip',
-      hash: 'h',
-      name: 'Mike',
     });
     assert.match(url, /returnUrl=.*dvir-complete/);
-    assert.match(url, /hash=h/);
-    assert.match(url, /name=Mike/);
+    assert.match(url, /source=server_binding/);
+    assert.doesNotMatch(url, /[?&](hash|name|passcode|token)=/);
   });
 
   it('Tickets remains blocked before receipt; valid receipt unlocks', async () => {
@@ -338,16 +339,16 @@ describe('Suite DVIR gate service', () => {
     assert.equal(await hasValidPhase(kv, shiftId, 'pre_trip'), true);
   });
 
-  it('buildEquipmentDvirUrl includes returnUrl and phase', () => {
+  it('buildEquipmentDvirUrl includes returnUrl, phase, and governed source only', () => {
     const url = buildEquipmentDvirUrl({
       shiftId: 's1',
       phase: 'pre_trip',
-      hash: 'h',
-      name: 'Mike',
     });
     assert.match(url, /^wbequipment:\/\/dvir\?/);
     assert.match(url, /returnUrl=/);
     assert.match(url, /phase=pre_trip/);
+    assert.match(url, /source=server_binding/);
+    assert.doesNotMatch(url, /[?&](hash|name|passcode|token|truck|trailer)=/);
   });
 
   it('off-shift never redirects Pre-Trip or Post-Trip even with stale shiftId', async () => {
@@ -426,5 +427,87 @@ describe('Suite DVIR gate service', () => {
     assert.equal(isTicketsLaunch('wellbuilt-tickets'), true);
     assert.equal(isTicketsLaunch('wellbuilt-tickets', 'water-ticket'), true);
     assert.equal(isTicketsLaunch('wbequipment'), false);
+  });
+
+  it('failed WB-E launch keeps the open shift, records no DVIR, retry same period', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    const shiftId = '2026-08-23_070000';
+    let fail = true;
+    const d: DvirGateDeps = {
+      ...deps(kv, shiftId, launched, true),
+      openUrl: async (url) => {
+        if (fail) throw new Error('open failed');
+        launched.push(url);
+      },
+    };
+
+    const first = await ensurePostTripGate(d, {
+      alertOnBlock: false,
+      odometerMiles: 120,
+    });
+    assert.equal(first.allowed, false);
+    assert.equal(first.launched, false);
+    assert.equal(first.shiftId, shiftId);
+    assert.equal(await hasValidPhase(kv, shiftId, 'post_trip'), false);
+    const pending = await getPendingEndShift(kv);
+    assert.ok(pending);
+    assert.equal(pending!.shiftId, shiftId);
+
+    fail = false;
+    const retry = await ensurePostTripGate(d, {
+      alertOnBlock: false,
+      odometerMiles: 120,
+    });
+    assert.equal(retry.allowed, false);
+    assert.equal(retry.launched, true);
+    assert.equal(retry.shiftId, shiftId);
+    assert.equal(launched.length, 1);
+    assert.match(launched[0], new RegExp(`shiftId=${shiftId}`));
+    assert.match(launched[0], /phase=post_trip/);
+    assert.match(launched[0], /source=server_binding/);
+    assert.doesNotMatch(launched[0], /[?&](hash|name|passcode|token)=/);
+    assert.equal(await hasValidPhase(kv, shiftId, 'post_trip'), false);
+    const pendingRetry = await getPendingEndShift(kv);
+    assert.ok(pendingRetry);
+    assert.equal(pendingRetry!.shiftId, shiftId);
+  });
+
+  it('verified completion for the open period allows exactly one Post-Trip close resume', async () => {
+    const kv = memoryKv();
+    const shiftId = '2026-08-23_070000';
+    const d = deps(kv, shiftId, [], true);
+    await setPendingEndShift(kv, {
+      shiftId,
+      odometerMiles: 120,
+      createdAt: '2026-08-23T18:00:00.000Z',
+    });
+    const receipt = await makeReceipt({ shiftId, phase: 'post_trip' });
+    const ing = await ingestDvirCompletionUrl(
+      d,
+      `wellbuilt-suite://dvir-complete?receipt=${encodeURIComponent(encodeReceiptForDeepLink(receipt))}`,
+    );
+    assert.equal(ing.ok, true);
+    assert.equal(await hasValidPhase(kv, shiftId, 'post_trip'), true);
+
+    const first = await consumePendingEndShiftIfReady(d);
+    assert.equal(first.resume, true);
+    if (first.resume) assert.equal(first.shiftId, shiftId);
+    const second = await consumePendingEndShiftIfReady(d);
+    assert.equal(second.resume, false);
+  });
+
+  it('stale/wrong-period/cross-shift returns fail closed and do not close the open shift', async () => {
+    const kv = memoryKv();
+    const open = '2026-08-23_070000';
+    const d = deps(kv, open, [], true);
+    const foreign = await makeReceipt({ shiftId: '2026-08-22_070000', phase: 'post_trip' });
+    const ing = await ingestDvirCompletionUrl(
+      d,
+      `wellbuilt-suite://dvir-complete?receipt=${encodeURIComponent(encodeReceiptForDeepLink(foreign))}`,
+    );
+    assert.equal(ing.ok, false);
+    assert.equal(await hasValidPhase(kv, open, 'post_trip'), false);
+    assert.equal(await hasValidPhase(kv, '2026-08-22_070000', 'post_trip'), false);
   });
 });

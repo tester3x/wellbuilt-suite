@@ -100,12 +100,12 @@ describe('frozen eQuipment DVIR shift-binding', () => {
 });
 
 describe('frozen hash-debt apps that this packet must not migrate', () => {
-  it('JSA and eQuipment remain on the hash-debt inventory', () => {
+  it('JSA remains on the hash-debt inventory; eQuipment is governed PKCE', () => {
     const apps = LEGACY_HASH_SSO_DEBT.map((d) => d.app);
     assert.ok(apps.includes('WB JSA'));
-    assert.ok(apps.includes('WB eQuipment'));
+    assert.ok(!apps.includes('WB eQuipment'));
     for (const row of LEGACY_HASH_SSO_DEBT) {
-      if (row.app === 'WB JSA' || row.app === 'WB eQuipment') {
+      if (row.app === 'WB JSA') {
         assert.ok(row.transports.includes('hash'));
         assert.equal(isCredentialFreeLaunchTarget(row.scheme), false);
       }

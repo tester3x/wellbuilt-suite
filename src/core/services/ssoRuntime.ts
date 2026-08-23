@@ -87,12 +87,16 @@ export function getSsoRouteAdapter(
       const { resolveAuthoritativeEquipmentShiftBinding } = await import(
         './dvirGate/equipmentHandoffBinding'
       );
-      const { getCurrentShiftId } = await import('./shiftTracking');
-      // isShiftActive: prefer true when a current shift id exists (authoritative).
-      const shiftId = await getCurrentShiftId();
+      const { peekLiveEquipmentShiftAuthority } = await import(
+        './dvirGate/equipmentShiftLiveAuthority'
+      );
+      const live = peekLiveEquipmentShiftAuthority();
+      if (!live) return null;
+      const active = await live.isShiftActive();
+      if (!active) return null;
       return resolveAuthoritativeEquipmentShiftBinding({
-        getCurrentShiftId: async () => shiftId,
-        isShiftActive: () => !!shiftId,
+        getCurrentShiftId: () => live.getPeriodId(),
+        isShiftActive: () => true,
       });
     },
   });

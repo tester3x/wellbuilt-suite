@@ -5,9 +5,10 @@
  * WB-S launches it on a credential-free start route and WB-T mints its
  * own PKCE attempt from there.
  *
- * WB-M now joins WB-T on the credential-free start route. WB-JSA and
- * eQuipment are UNCHANGED and still carry `hash` — see LEGACY_HASH_SSO_DEBT.
- * Migrating those remaining apps is out of scope.
+ * WB-M now joins WB-T on the credential-free start route. WB-JSA still
+ * carries `hash` — see LEGACY_HASH_SSO_DEBT. eQuipment required DVIR is
+ * governed PKCE (metadata launch + server_binding); it must not receive
+ * hash/name login URIs.
  *
  * Pure and node-testable: no imports, no platform APIs.
  */
@@ -41,8 +42,9 @@ export function wbmSsoStartUrl(): string {
  * True when this launch target must NOT receive credential SSO params.
  *
  * Matched on scheme, which is the identity the OS actually routes on.
- * WB-T and WB-M are credential-free. JSA and eQuipment stay on the
- * hash-debt inventory until their own packets migrate them.
+ * WB-T and WB-M are credential-free. JSA stays on the hash-debt
+ * inventory until its own packet migrates it. eQuipment is launched
+ * without hash (governed DVIR / PKCE).
  */
 export function isCredentialFreeLaunchTarget(scheme?: string | null): boolean {
   if (typeof scheme !== 'string') return false;
@@ -75,12 +77,6 @@ export const LEGACY_HASH_SSO_DEBT: readonly {
   Object.freeze({
     app: 'WB JSA',
     scheme: 'jsaapp',
-    transports: Object.freeze(['hash', 'name', 'companyId', 'truck', 'trailer', 'packageId', 'shiftStartTime', 'shiftId']),
-    migration: 'needs its own vc51.9J-style bridge before hash transport can be removed',
-  }),
-  Object.freeze({
-    app: 'WB eQuipment',
-    scheme: 'wellbuiltequipment',
     transports: Object.freeze(['hash', 'name', 'companyId', 'truck', 'trailer', 'packageId', 'shiftStartTime', 'shiftId']),
     migration: 'needs its own vc51.9J-style bridge before hash transport can be removed',
   }),

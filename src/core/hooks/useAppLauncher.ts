@@ -51,9 +51,16 @@ export function useAppLauncher() {
       // Off-shift: no DVIR redirect — fall through to normal Tickets launch.
     }
 
+    // eQuipment required DVIR is governed PKCE only. Never attach
+    // hash/name/passcode to wbequipment launches (WB-E rejects those).
+    const scheme = (options.scheme || '').toLowerCase();
+    if (scheme === 'wbequipment' || scheme === 'wellbuiltequipment') {
+      return launchWBApp({ ...options, sso: undefined });
+    }
+
     // Credential-free launch: WB-T and WB-M. Each mints its own PKCE
     // attempt. WB-T's audience and start host stay exactly as before.
-    // JSA and eQuipment still receive the legacy params.
+    // JSA still receives the legacy params.
     if (isCredentialFreeLaunchTarget(options.scheme)) {
       const audience = (credentialFreeAudience(options.scheme) || SSO_AUDIENCE_WBT) as SsoAudience;
       // CONTINUOUS HANDOFF OVERLAY — armed BEFORE openURL, then one

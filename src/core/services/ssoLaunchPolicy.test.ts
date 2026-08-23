@@ -84,7 +84,7 @@ describe('the remaining hash-debt apps are unchanged', () => {
     for (const key of ['hash', 'name', 'companyId', 'truck', 'trailer', 'packageId', 'shiftStartTime', 'shiftId']) {
       assert.ok(
         new RegExp(`\\b${key}\\b`).test(hook) || new RegExp(`\\b${key}\\b`).test(launcher),
-        `legacy SSO parameter '${key}' disappeared — that would break JSA/eQuipment`,
+        `legacy SSO parameter '${key}' disappeared — that would break JSA`,
       );
     }
   });
@@ -98,10 +98,10 @@ describe('the remaining hash-debt apps are unchanged', () => {
   });
 
   it('the debt inventory names exactly the remaining unmigrated apps', () => {
-    assert.equal(LEGACY_HASH_SSO_DEBT.length, 2);
+    assert.equal(LEGACY_HASH_SSO_DEBT.length, 1);
     assert.deepEqual(
       LEGACY_HASH_SSO_DEBT.map((d) => d.app).sort(),
-      ['WB JSA', 'WB eQuipment'],
+      ['WB JSA'],
     );
     for (const entry of LEGACY_HASH_SSO_DEBT) {
       assert.ok(entry.transports.includes('hash'), `${entry.app} must record the hash transport`);

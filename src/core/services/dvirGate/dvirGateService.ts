@@ -48,21 +48,13 @@ export function buildEquipmentDvirUrl(opts: {
   shiftId: string;
   phase: DvirReceiptPhase;
   returnUrl?: string;
-  hash?: string;
-  name?: string;
-  companyId?: string;
-  truck?: string;
-  trailer?: string;
 }): string {
   const p = new URLSearchParams();
   p.set('shiftId', opts.shiftId);
   p.set('phase', opts.phase);
   p.set('returnUrl', opts.returnUrl || SUITE_DVIR_RETURN_URL);
-  if (opts.hash) p.set('hash', opts.hash);
-  if (opts.name) p.set('name', opts.name);
-  if (opts.companyId) p.set('companyId', opts.companyId);
-  if (opts.truck) p.set('truck', opts.truck);
-  if (opts.trailer) p.set('trailer', opts.trailer);
+  // Governed-handoff marker only — not identity, not period authority.
+  p.set('source', 'server_binding');
   return `${EQUIPMENT_SCHEME}://dvir?${p.toString()}`;
 }
 
@@ -223,7 +215,8 @@ export async function launchEquipmentPhase(
     );
     return {
       launched: false,
-      error: 'Could not open WellBuilt eQuipment. Install or update the app.',
+      error:
+        'Could not open WellBuilt eQuipment. Your shift is still open and no inspection was recorded as complete. Return here and retry Pre-Trip or Post-Trip for this same shift.',
     };
   }
 }

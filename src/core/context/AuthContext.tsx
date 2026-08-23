@@ -26,6 +26,7 @@ import { wbDiagLog } from '../services/wbDiagLog';
 import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/postLoginShiftRestoration';
 import { createGenerationClock } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
+import { registerLiveEquipmentShiftAuthority } from '../services/dvirGate/equipmentShiftLiveAuthority';
 
 export interface AuthUser {
   driverId: string;
@@ -166,6 +167,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [shiftActive, setShiftActive] = useState(false);
+  const liveShiftActiveRef = useRef(false);
+  liveShiftActiveRef.current = shiftActive;
+  useEffect(() => {
+    registerLiveEquipmentShiftAuthority({
+      isShiftActive: () => liveShiftActiveRef.current,
+      getPeriodId: getCurrentShiftId,
+    });
+    return () => registerLiveEquipmentShiftAuthority(null);
+  }, []);
   const [shiftStartTime, setShiftStartTime] = useState<string | null>(null);
   const [returningToYard, setReturningToYard] = useState(false);
   const [returnDepartTime, setReturnDepartTime] = useState<string | null>(null);
