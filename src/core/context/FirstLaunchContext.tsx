@@ -1,7 +1,6 @@
 // src/core/context/FirstLaunchContext.tsx
-// Shared context for tracking which WB apps the driver has launched before.
-// First tap on home → detail screen (intro). After that → direct launch.
-// Long-press → detail screen regardless.
+// Shared context for optional App Details "seen" bookkeeping.
+// Primary card taps MUST NOT consult hasLaunched — they launch immediately.
 //
 // Previously this was a standalone hook (useFirstLaunch) with local state per component.
 // That caused the detail screen's markLaunched() to not propagate back to HomeScreen.

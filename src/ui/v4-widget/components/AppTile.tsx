@@ -12,9 +12,10 @@ interface AppTileProps {
   size: TileSize;
   onPress: () => void;
   onLongPress?: () => void;
+  onInfoPress?: () => void;
 }
 
-export function AppTile({ app, size, onPress, onLongPress }: AppTileProps) {
+export function AppTile({ app, size, onPress, onLongPress, onInfoPress }: AppTileProps) {
   const { t } = useTranslation();
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
 
@@ -30,6 +31,11 @@ export function AppTile({ app, size, onPress, onLongPress }: AppTileProps) {
             )}
           </View>
           <View style={styles.largeStatus}>
+            {onInfoPress ? (
+              <Pressable onPress={onInfoPress} hitSlop={8} accessibilityRole="button" accessibilityLabel="App details">
+                <MaterialCommunityIcons name="information-outline" size={16} color={colors.text.muted} />
+              </Pressable>
+            ) : null}
             <View style={[styles.statusDot, { backgroundColor: app.status === 'active' ? colors.status.online : colors.status.warning }]} />
             <Text style={styles.statusText}>{statusLabel}</Text>
           </View>

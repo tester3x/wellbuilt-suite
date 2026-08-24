@@ -7,15 +7,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { wellbuiltApps } from '@/core/data/apps';
-import { useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useAppCardActions } from '@/core/hooks';
 
 export default function AppDetailScreen() {
   const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const app = wellbuiltApps.find(a => a.id === id);
-  const { launchWBApp } = useAppLauncher();
-  const { markLaunched } = useFirstLaunch();
+  const { onPrimaryTap } = useAppCardActions();
 
   if (!app) {
     return (
@@ -25,10 +24,7 @@ export default function AppDetailScreen() {
     );
   }
 
-  const handleLaunch = () => {
-    markLaunched(app.id);
-    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-  };
+  const handleLaunch = () => onPrimaryTap(app);
   const isWebApp = app.platform === 'web';
   const platformLabel = app.platform === 'web' ? t('appDetail.meta.webApp') : t('appDetail.meta.mobileApp');
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');

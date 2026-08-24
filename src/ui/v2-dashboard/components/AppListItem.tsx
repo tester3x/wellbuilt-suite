@@ -10,6 +10,7 @@ interface AppListItemProps {
   app: WellBuiltApp;
   onPress: () => void;
   onLongPress?: () => void;
+  onInfoPress?: () => void;
   /** Optional badge text (e.g. "3 pending") shown below subtitle */
   badge?: string;
   /** Optional detail text shown below badge (e.g. well names) */
@@ -29,7 +30,7 @@ interface AppListItemProps {
   pulse?: boolean;
 }
 
-export function AppListItem({ app, onPress, onLongPress, badge, badgeDetail, accentColor, pulse }: AppListItemProps) {
+export function AppListItem({ app, onPress, onLongPress, onInfoPress, badge, badgeDetail, accentColor, pulse }: AppListItemProps) {
   const { t } = useTranslation();
   const statusLabel = app.status === 'active' ? t('appDetail.meta.active') : app.status === 'beta' ? t('appDetail.meta.beta') : t('appDetail.meta.comingSoon');
 
@@ -87,7 +88,13 @@ export function AppListItem({ app, onPress, onLongPress, badge, badgeDetail, acc
         </View>
         <Text style={styles.version}>v{app.version}</Text>
       </View>
-      <MaterialCommunityIcons name="chevron-right" size={18} color={colors.text.muted} />
+      {onInfoPress ? (
+        <Pressable onPress={onInfoPress} hitSlop={8} accessibilityRole="button" accessibilityLabel="App details">
+          <MaterialCommunityIcons name="information-outline" size={18} color={colors.text.muted} />
+        </Pressable>
+      ) : (
+        <MaterialCommunityIcons name="chevron-right" size={18} color={colors.text.muted} />
+      )}
     </Pressable>
   );
 }

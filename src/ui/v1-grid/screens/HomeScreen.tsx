@@ -1,5 +1,5 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Alert, TouchableOpacity, AppState } from 'react-native';
+import React, { useCallback, useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, AppState } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
 import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch, useCompanyConfig } from '@/core/hooks';
+import { useGreeting, useAppLauncher, useAppCardActions, useCompanyConfig } from '@/core/hooks';
 import { TIER_DESCRIPTIONS } from '@/core/services/companyConfig';
 import { WellBuiltLogo } from '@/ui/shared/WellBuiltLogo';
 import { AppCard } from '../components/AppCard';
@@ -17,7 +17,7 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
   const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
+  const { onPrimaryTap, onOpenDetails } = useAppCardActions();
   const { isWBAppEnabled, config: companyConfig, tierLabel } = useCompanyConfig(user?.companyId);
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
@@ -175,21 +175,9 @@ export default function HomeScreen() {
             const locked = !isWBAppEnabled(app.id);
             return (
               <AppCard key={app.id} app={app} index={index} locked={locked}
-                onPress={() => {
-                  if (locked) {
-                    Alert.alert(
-                      t('home.tier.lockedTitle'),
-                      t('home.tier.lockedMessage', { name: app.name, tier: tierLabel }),
-                    );
-                    return;
-                  }
-                  if (hasLaunched(app.id)) {
-                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-                  } else {
-                    router.push(`/app-detail?id=${app.id}`);
-                  }
-                }}
-                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
+                onPress={() => onPrimaryTap(app)}
+                onLongPress={() => onOpenDetails(app.id)}
+                onInfoPress={() => onOpenDetails(app.id)}
               />
             );
           })}

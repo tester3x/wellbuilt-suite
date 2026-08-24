@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { colors, spacing } from '@/core/theme';
 import { wellbuiltApps } from '@/core/data/apps';
 import { useAuth } from '@/core/context/AuthContext';
-import { useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useAppCardActions } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
 import { CompactHeader } from '../components/CompactHeader';
 import { ContentArea } from '../components/ContentArea';
@@ -19,8 +19,7 @@ export default function AppDetailScreen() {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
   const app = wellbuiltApps.find(a => a.id === id);
-  const { launchWBApp } = useAppLauncher();
-  const { markLaunched } = useFirstLaunch();
+  const { onPrimaryTap, onOpenDetails } = useAppCardActions();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   if (!user) return null;
@@ -39,10 +38,7 @@ export default function AppDetailScreen() {
     );
   }
 
-  const handleLaunch = () => {
-    markLaunched(app.id);
-    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-  };
+  const handleLaunch = () => onPrimaryTap(app);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -52,7 +48,11 @@ export default function AppDetailScreen() {
           companyName={user.companyName || 'WellBuilt'}
           userName={user.displayName}
           roleLabel={roleLabel}
-          onAppPress={(appId) => router.push(`/app-detail?id=${appId}`)}
+          onAppPress={(appId) => {
+            const next = companyApps.find(a => a.id === appId);
+            if (next) onPrimaryTap(next);
+          }}
+          onAppLongPress={(appId) => onOpenDetails(appId)}
           onSettings={() => router.push('/settings')}
           onLogout={logout}
           collapsed={sidebarCollapsed}

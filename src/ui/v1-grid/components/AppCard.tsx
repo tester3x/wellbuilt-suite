@@ -13,19 +13,21 @@ interface AppCardProps {
   app: WellBuiltApp;
   onPress: () => void;
   onLongPress?: () => void;
+  /** Separate ⓘ control — never used for the primary launch tap. */
+  onInfoPress?: () => void;
   index: number;
   /** If true, show locked overlay (tier-gated) */
   locked?: boolean;
 }
 
-export function AppCard({ app, onPress, onLongPress, index, locked }: AppCardProps) {
+export function AppCard({ app, onPress, onLongPress, onInfoPress, index, locked }: AppCardProps) {
   const { t } = useTranslation();
   const isLeftColumn = index % 2 === 0;
 
   return (
     <Pressable
-      onPress={locked ? undefined : onPress}
-      onLongPress={locked ? onPress : onLongPress}
+      onPress={onPress}
+      onLongPress={onLongPress}
       style={({ pressed }) => [
         styles.container, { marginRight: isLeftColumn ? spacing.md : 0 },
         pressed && !locked && styles.pressed,
@@ -62,6 +64,17 @@ export function AppCard({ app, onPress, onLongPress, index, locked }: AppCardPro
             {app.platform === 'web' ? t('appCard.web') : app.platform === 'both' ? t('appCard.all') : t('appCard.mobile')}
           </Text>
         </View>
+        {onInfoPress ? (
+          <Pressable
+            onPress={onInfoPress}
+            hitSlop={8}
+            style={styles.infoBtn}
+            accessibilityRole="button"
+            accessibilityLabel="App details"
+          >
+            <MaterialCommunityIcons name="information-outline" size={16} color={colors.text.muted} />
+          </Pressable>
+        ) : null}
         {locked && (
           <View style={styles.lockOverlay}>
             <MaterialCommunityIcons name="lock-outline" size={22} color={colors.text.muted} />
@@ -87,4 +100,5 @@ const styles = StyleSheet.create({
   lockedContainer: { opacity: 0.5 },
   lockedText: { color: colors.text.muted },
   lockOverlay: { position: 'absolute', top: spacing.md, left: spacing.md, width: 28, height: 28, borderRadius: radius.full, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  infoBtn: { position: 'absolute', bottom: spacing.md, right: spacing.md, padding: 4 },
 });

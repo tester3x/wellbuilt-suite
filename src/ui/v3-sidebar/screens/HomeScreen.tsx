@@ -6,15 +6,14 @@ import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
 import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useGreeting, useAppCardActions } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
 import { ActionCardRow } from '@/ui/shared/ActionCardRow';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
+  const { onPrimaryTap, onOpenDetails } = useAppCardActions();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -52,13 +51,9 @@ export default function HomeScreen() {
           roleLabel={roleLabel}
           onAppPress={(appId) => {
             const app = companyApps.find(a => a.id === appId);
-            if (app && hasLaunched(app.id)) {
-              launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-            } else {
-              router.push(`/app-detail?id=${appId}`);
-            }
+            if (app) onPrimaryTap(app);
           }}
-          onAppLongPress={(appId) => router.push(`/app-detail?id=${appId}`)}
+          onAppLongPress={(appId) => onOpenDetails(appId)}
           onSettings={() => router.push('/settings')}
           onLogout={logout}
           collapsed={sidebarCollapsed}

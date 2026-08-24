@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { colors, spacing } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
 import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useGreeting, useAppCardActions } from '@/core/hooks';
 import { CommandHeader } from '../components/CommandHeader';
 import { AppListItem } from '../components/AppListItem';
 import { WidgetContainer } from '../components/WidgetContainer';
@@ -17,8 +17,7 @@ import { fetchPendingDispatches, DispatchSummary } from '@/core/services/dispatc
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
+  const { onPrimaryTap, onOpenDetails } = useAppCardActions();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
 
@@ -114,14 +113,9 @@ export default function HomeScreen() {
                 badgeDetail={badgeDetailText}
                 accentColor={ticketsAccent}
                 pulse={hasPending}
-                onPress={() => {
-                  if (hasLaunched(app.id)) {
-                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-                  } else {
-                    router.push(`/app-detail?id=${app.id}`);
-                  }
-                }}
-                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
+                onPress={() => onPrimaryTap(app)}
+                onLongPress={() => onOpenDetails(app.id)}
+                onInfoPress={() => onOpenDetails(app.id)}
               />
               );
             })}

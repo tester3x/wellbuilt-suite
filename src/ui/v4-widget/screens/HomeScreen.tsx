@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
 import { wellbuiltApps } from '@/core/data/apps';
-import { useGreeting, useAppLauncher, useFirstLaunch } from '@/core/hooks';
+import { useGreeting, useAppCardActions } from '@/core/hooks';
 import { TileGrid } from '../components/TileGrid';
 import { AppTile } from '../components/AppTile';
 import { StatTile } from '../components/StatTile';
@@ -17,8 +17,7 @@ import { ActionCardRow } from '@/ui/shared/ActionCardRow';
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
-  const { hasLaunched } = useFirstLaunch();
+  const { onPrimaryTap, onOpenDetails } = useAppCardActions();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
 
@@ -86,14 +85,9 @@ export default function HomeScreen() {
                 key={app.id}
                 app={app}
                 size={idx === 0 ? 'large' : idx < 3 ? 'medium' : 'small'}
-                onPress={() => {
-                  if (hasLaunched(app.id)) {
-                    launchWBApp({ name: app.name, scheme: app.scheme, androidPackage: app.androidPackage, webUrl: app.webUrl });
-                  } else {
-                    router.push(`/app-detail?id=${app.id}`);
-                  }
-                }}
-                onLongPress={() => router.push(`/app-detail?id=${app.id}`)}
+                onPress={() => onPrimaryTap(app)}
+                onLongPress={() => onOpenDetails(app.id)}
+                onInfoPress={() => onOpenDetails(app.id)}
               />
             ))}
           </TileGrid>

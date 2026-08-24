@@ -9,12 +9,14 @@ import { useAuth } from '@/core/context/AuthContext';
 import { useLanguage } from '@/core/localization';
 import { useSkin } from '@/core/context/SkinContext';
 import { wellbuiltApps } from '@/core/data/apps';
+import { useAppCardActions } from '@/core/hooks';
 import { Sidebar } from '../components/Sidebar';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
+  const { onPrimaryTap, onOpenDetails } = useAppCardActions();
   const { currentLanguage, setLanguage, supportedLanguages } = useLanguage();
   const { skinId, setSkin, availableSkins } = useSkin();
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(true);
@@ -31,7 +33,11 @@ export default function SettingsScreen() {
           companyName="WellBuilt"
           userName={user.legalName || user.displayName}
           roleLabel={roleLabel}
-          onAppPress={(appId) => router.push(`/app-detail?id=${appId}`)}
+          onAppPress={(appId) => {
+            const app = companyApps.find(a => a.id === appId);
+            if (app) onPrimaryTap(app);
+          }}
+          onAppLongPress={(appId) => onOpenDetails(appId)}
           onSettings={() => {}}
           onLogout={logout}
           collapsed={sidebarCollapsed}
