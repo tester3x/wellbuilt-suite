@@ -12,8 +12,10 @@
  *
  * Rather than hand-copy constants — which is exactly the JSA receipt
  * v1/v2 drift this ecosystem already paid for once — this copies the
- * canonical source file VERBATIM and verifies it byte-for-byte. No
- * validator logic is re-implemented, so no logic can diverge.
+ * canonical source file VERBATIM and verifies it. Platform line endings
+ * (CRLF vs LF vs lone CR) are normalized before hash/compare so a
+ * Windows working tree cannot flip the protected result. Any semantic
+ * (non-newline) difference still fails hard.
  *
  * The canonical file is self-contained: zero imports, zero platform APIs.
  * That is asserted here, because it is what makes a verbatim copy safe.
@@ -24,8 +26,8 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_CANONICAL = join(REPO, '..', 'wellbuilt-contracts', 'src', 'sso', 'protocol.ts');
@@ -52,13 +54,35 @@ const HEADER = `/**
 // @generated from wellbuilt-contracts/src/sso/protocol.ts
 `;
 
+/** Read as UTF-8 text and collapse CRLF / lone CR to LF. */
+export function normalizeNewlines(text) {
+  if (typeof text !== 'string') throw new TypeError('normalizeNewlines expects utf-8 text');
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+export function sha256NormalizedUtf8(text) {
+  return createHash('sha256').update(normalizeNewlines(text), 'utf8').digest('hex');
+}
+
+export function bodyOf(generated) {
+  const marker = '// @generated from wellbuilt-contracts/src/sso/protocol.ts';
+  const at = generated.indexOf(marker);
+  if (at < 0) throw new Error('generated file is missing its provenance marker');
+  const after = generated.slice(at + marker.length).replace(/^\r?\n/, '');
+  return after;
+}
+
+export function readUtf8(path) {
+  return readFileSync(path, 'utf8');
+}
+
 function readCanonical(path) {
   if (!existsSync(path)) {
     throw new Error(`canonical SSO protocol not found at ${path}`);
   }
-  const src = readFileSync(path, 'utf8');
+  const src = readUtf8(path);
   // A verbatim copy is only safe if the source pulls in nothing.
-  const importLine = src.split('\n').find((l) => /^\s*import\s/.test(l));
+  const importLine = normalizeNewlines(src).split('\n').find((l) => /^\s*import\s/.test(l));
   if (importLine) {
     throw new Error(`canonical protocol must have no imports; found: ${importLine.trim()}`);
   }
@@ -68,92 +92,143 @@ function readCanonical(path) {
   return src;
 }
 
-function bodyOf(generated) {
-  const marker = '// @generated from wellbuilt-contracts/src/sso/protocol.ts';
-  const at = generated.indexOf(marker);
-  if (at < 0) throw new Error('generated file is missing its provenance marker');
-  const after = generated.slice(at + marker.length).replace(/^\r?\n/, '');
-  return after;
+/**
+ * Executable LF/CRLF equivalence: the protected hash must be identical
+ * for LF, CRLF, and lone-CR encodings of the same semantic text.
+ */
+export function assertLfCrlfEquivalence(text) {
+  const lf = normalizeNewlines(text);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  const cr = lf.replace(/\n/g, '\r');
+  const hLf = sha256NormalizedUtf8(lf);
+  const hCrlf = sha256NormalizedUtf8(crlf);
+  const hCr = sha256NormalizedUtf8(cr);
+  if (hLf !== hCrlf || hLf !== hCr) {
+    throw new Error('LF/CRLF/CR encodings of the same text must hash identically');
+  }
+  if (lf.includes('\n') && crlf === lf) {
+    throw new Error('CRLF fixture collapsed unexpectedly');
+  }
+  return hLf;
 }
 
-function sha256(s) {
-  return createHash('sha256').update(s, 'utf8').digest('hex');
-}
-
-const mode = process.argv.includes('--regenerate')
-  ? 'regenerate'
-  : process.argv.includes('--verify')
-    ? 'verify'
-    : null;
-const canonicalIdx = process.argv.indexOf('--canonical');
-const canonicalPath = canonicalIdx > -1 ? process.argv[canonicalIdx + 1] : DEFAULT_CANONICAL;
-
-if (!mode) {
-  console.error('usage: mirror-sso-protocol.mjs --regenerate | --verify');
-  process.exit(2);
-}
-
-if (mode === 'regenerate') {
-  const canonical = readCanonical(canonicalPath);
-  mkdirSync(dirname(GENERATED), { recursive: true });
-  writeFileSync(GENERATED, HEADER + canonical, 'utf8');
-  writeFileSync(
-    MANIFEST,
-    JSON.stringify(
-      {
-        canonicalVersion: EXPECTED_CANONICAL_VERSION,
-        canonicalPath: 'wellbuilt-contracts/src/sso/protocol.ts',
-        bodySha256: sha256(canonical),
-        published: false,
-        note: 'Unpublished. Replace with a package import once contracts publishes the SSO protocol.',
-      },
-      null,
-      2,
-    ) + '\n',
-    'utf8',
-  );
-  console.log(`regenerated ${GENERATED}`);
-  console.log(`body sha256 ${sha256(canonical)}`);
-} else {
-  let failed = 0;
-  const fail = (m) => {
-    failed++;
-    console.log(`FAIL ${m}`);
+export function verifyMirror(opts = {}) {
+  const generatedPath = opts.generatedPath || GENERATED;
+  const manifestPath = opts.manifestPath || MANIFEST;
+  const canonicalPath = opts.canonicalPath || DEFAULT_CANONICAL;
+  const results = [];
+  const note = (ok, message) => {
+    results.push({ ok, message });
+    return ok;
   };
-  const ok = (m) => console.log(`PASS ${m}`);
 
-  if (!existsSync(GENERATED)) fail('generated mirror exists');
-  else {
-    const generated = readFileSync(GENERATED, 'utf8');
-    const manifest = existsSync(MANIFEST) ? JSON.parse(readFileSync(MANIFEST, 'utf8')) : null;
-    if (!manifest) fail('manifest exists');
-    else {
-      const body = bodyOf(generated);
-      const bodyHash = sha256(body);
-      if (bodyHash !== manifest.bodySha256) fail(`mirror matches its manifest hash (${bodyHash})`);
-      else ok('mirror matches its manifest hash');
+  if (!existsSync(generatedPath)) {
+    note(false, 'generated mirror exists');
+    return results;
+  }
+  const generated = readUtf8(generatedPath);
+  if (!existsSync(manifestPath)) {
+    note(false, 'manifest exists');
+    return results;
+  }
+  const manifest = JSON.parse(readUtf8(manifestPath));
+  const body = bodyOf(generated);
+  const bodyHash = sha256NormalizedUtf8(body);
+  note(
+    bodyHash === manifest.bodySha256,
+    bodyHash === manifest.bodySha256
+      ? 'mirror matches its manifest hash'
+      : `mirror matches its manifest hash (${bodyHash})`,
+  );
 
-      if (manifest.canonicalVersion !== EXPECTED_CANONICAL_VERSION) {
-        fail('manifest records the expected canonical version');
-      } else ok('manifest records the expected canonical version');
+  try {
+    assertLfCrlfEquivalence(body);
+    note(true, 'LF/CRLF-equivalence of protected body');
+  } catch (err) {
+    note(false, `LF/CRLF-equivalence of protected body: ${err instanceof Error ? err.message : 'failed'}`);
+  }
 
-      if (manifest.published !== false) fail('manifest records the source as unpublished');
-      else ok('manifest records the source as unpublished');
+  note(
+    manifest.canonicalVersion === EXPECTED_CANONICAL_VERSION,
+    'manifest records the expected canonical version',
+  );
+  note(manifest.published === false, 'manifest records the source as unpublished');
 
-      if (existsSync(canonicalPath)) {
-        const canonical = readCanonical(canonicalPath);
-        if (canonical === body) ok('mirror is byte-identical to the canonical source');
-        else if (bodyHash === manifest.bodySha256) {
-          ok('mirror matches pinned 0.5.0-dev.0 body (working-tree contracts may be another pin)');
-        } else fail('mirror is byte-identical to the canonical source');
-      } else {
-        ok('canonical source unavailable here — hash check stands alone');
-      }
+  if (existsSync(canonicalPath)) {
+    const canonical = readCanonical(canonicalPath);
+    const same = normalizeNewlines(canonical) === normalizeNewlines(body);
+    note(
+      same,
+      same
+        ? 'mirror is newline-normalized identical to the canonical source'
+        : 'mirror is newline-normalized identical to the canonical source',
+    );
+  } else {
+    note(true, 'canonical source unavailable here — hash check stands alone');
+  }
 
-      if (!/DO NOT EDIT/.test(generated)) fail('mirror carries a do-not-edit header');
-      else ok('mirror carries a do-not-edit header');
-    }
+  note(/DO NOT EDIT/.test(generated), 'mirror carries a do-not-edit header');
+  return results;
+}
+
+function invokedAsCli() {
+  const argv1 = process.argv[1];
+  if (!argv1) return false;
+  try {
+    const self = fileURLToPath(import.meta.url);
+    const invoked = resolve(argv1);
+    return self === invoked || pathToFileURL(invoked).href === import.meta.url;
+  } catch {
+    return /mirror-sso-protocol\.mjs$/i.test(String(argv1));
+  }
+}
+
+function runCli() {
+  const mode = process.argv.includes('--regenerate')
+    ? 'regenerate'
+    : process.argv.includes('--verify')
+      ? 'verify'
+      : null;
+  const canonicalIdx = process.argv.indexOf('--canonical');
+  const canonicalPath = canonicalIdx > -1 ? process.argv[canonicalIdx + 1] : DEFAULT_CANONICAL;
+
+  if (!mode) {
+    console.error('usage: mirror-sso-protocol.mjs --regenerate | --verify');
+    process.exit(2);
+  }
+
+  if (mode === 'regenerate') {
+    const canonical = readCanonical(canonicalPath);
+    mkdirSync(dirname(GENERATED), { recursive: true });
+    writeFileSync(GENERATED, HEADER + canonical, 'utf8');
+    writeFileSync(
+      MANIFEST,
+      JSON.stringify(
+        {
+          canonicalVersion: EXPECTED_CANONICAL_VERSION,
+          canonicalPath: 'wellbuilt-contracts/src/sso/protocol.ts',
+          bodySha256: sha256NormalizedUtf8(canonical),
+          published: false,
+          note: 'Unpublished. Replace with a package import once contracts publishes the SSO protocol.',
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    );
+    console.log(`regenerated ${GENERATED}`);
+    console.log(`body sha256 ${sha256NormalizedUtf8(canonical)}`);
+    return;
+  }
+
+  const results = verifyMirror({ canonicalPath });
+  let failed = 0;
+  for (const r of results) {
+    console.log(`${r.ok ? 'PASS' : 'FAIL'} ${r.message}`);
+    if (!r.ok) failed += 1;
   }
   console.log(failed ? `\n${failed} failed` : '\nSSO protocol mirror verified');
   if (failed) process.exitCode = 1;
 }
+
+if (invokedAsCli()) runCli();

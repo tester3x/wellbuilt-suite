@@ -11,6 +11,12 @@ import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAppLauncher } from '@/core/hooks/useAppLauncher';
+import { runEquipmentCardLaunch } from '@/core/services/dvirGate/equipmentCardLaunch';
+import { equipmentHandoffNotice } from '@/core/services/dvirGate/dvirGateService';
+import {
+  hasEquipmentHandoffConfirmHandler,
+  requestEquipmentHandoffConfirm,
+} from '@/core/services/dvirGate/equipmentHandoffConfirm';
 import { type JsaMode } from '@/core/services/companyConfig';
 import { useAuth } from '@/core/context/AuthContext';
 import { mayOpenStartShiftChecklist } from '@/core/services/workPeriodAuthority/postLoginShiftRestoration';
@@ -306,19 +312,38 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         <Pressable
           onPress={() => {
             void (async () => {
-              if (active) {
-                try {
-                  await dvirGate.ensurePreTripGate({ alertOnBlock: true });
-                } catch (err) {
-                  console.warn('[ActionCardRow] equipment governed launch failed:', err);
-                }
-                return;
+              try {
+                await runEquipmentCardLaunch({
+                  shiftActive: active,
+                  getOpenPeriodId: () => dvirGate.getCurrentShiftId(),
+                  isPreTripComplete: (id) => dvirGate.isPreTripComplete(id),
+                  isPostTripComplete: (id) => dvirGate.isPostTripComplete(id),
+                  getPendingEndShiftId: async () => {
+                    const pending = await dvirGate.peekPendingEndShift();
+                    return pending?.shiftId ?? null;
+                  },
+                  launchPhase: (phase, shiftId) => dvirGate.launchPhase(phase, shiftId),
+                  openEquipmentCredentialFree: () =>
+                    launchWBApp({
+                      name: 'WellBuilt eQuipment',
+                      scheme: 'wbequipment',
+                      androidPackage: 'com.wellbuilt.equipment',
+                    }),
+                  confirmLeave: async (phase) => {
+                    const notice = equipmentHandoffNotice(phase);
+                    if (hasEquipmentHandoffConfirmHandler()) {
+                      return requestEquipmentHandoffConfirm({
+                        phase,
+                        title: notice.title,
+                        message: notice.message,
+                      });
+                    }
+                    return true;
+                  },
+                });
+              } catch (err) {
+                console.warn('[ActionCardRow] equipment governed launch failed:', err);
               }
-              await launchWBApp({
-                name: 'WellBuilt eQuipment',
-                scheme: 'wbequipment',
-                androidPackage: 'com.wellbuilt.equipment',
-              });
             })();
           }}
           style={[s.card, s.cardWallet]}

@@ -16,7 +16,7 @@ import {
   consumePendingEndShiftIfReady,
   clearDvirRoutingAfterFinalization,
 } from './dvirGateService';
-import type { DvirReceiptKv } from './dvirReceiptStore';
+import { getPendingEndShift, type DvirReceiptKv } from './dvirReceiptStore';
 import {
   buildShiftDvirSummaryFromStore,
   hydrateShiftDvirSummaryIfMissing,
@@ -61,6 +61,7 @@ export function createSuiteDvirGate(opts?: {
     phase: Parameters<typeof launchEquipmentPhase>[1],
     shiftId: string,
   ) => ReturnType<typeof launchEquipmentPhase>;
+  peekPendingEndShift: () => ReturnType<typeof getPendingEndShift>;
   consumePendingEndShiftIfReady: () => ReturnType<typeof consumePendingEndShiftIfReady>;
   clearDvirRoutingAfterFinalization: () => Promise<void>;
   /** Build + persist Shift Complete DVIR summary from durable receipts. */
@@ -101,6 +102,7 @@ export function createSuiteDvirGate(opts?: {
     isPreTripComplete: (shiftId) => isPreTripCompleteForShift(deps, shiftId),
     isPostTripComplete: (shiftId) => isPostTripCompleteForShift(deps, shiftId),
     launchPhase: (phase, shiftId) => launchEquipmentPhase(deps, phase, shiftId),
+    peekPendingEndShift: () => getPendingEndShift(kv),
     consumePendingEndShiftIfReady: () => consumePendingEndShiftIfReady(deps),
     clearDvirRoutingAfterFinalization: () => clearDvirRoutingAfterFinalization(deps),
     finalizeShiftDvirSummary: async (shiftId: string) => {

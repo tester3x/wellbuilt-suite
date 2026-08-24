@@ -216,7 +216,7 @@ export async function launchEquipmentPhase(
     return {
       launched: false,
       error:
-        'Could not open WellBuilt eQuipment. Your shift is still open and no inspection was recorded as complete. Return here and retry Pre-Trip or Post-Trip for this same shift.',
+        `Could not open WellBuilt eQuipment. Your shift is still open and no inspection was recorded as complete. Return here and retry ${phase === 'post_trip' ? 'Post-Trip' : 'Pre-Trip'} for this same shift.`,
     };
   }
 }
