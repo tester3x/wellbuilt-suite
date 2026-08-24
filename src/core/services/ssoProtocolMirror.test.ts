@@ -53,6 +53,18 @@ describe('SSO protocol mirror newline-normalized verify', () => {
     }
   });
 
+  it('bodyOf+hash is identical for a complete generated file in LF, CRLF, and lone CR', () => {
+    const marker = '// @generated from wellbuilt-contracts/src/sso/protocol.ts';
+    const semantic = 'export const X = 1;\nexport const Y = 2;\n';
+    const wrap = (nl: string) =>
+      `/** GENERATED FILE — DO NOT EDIT. */${nl}${marker}${nl}${semantic.replace(/\n/g, nl)}`;
+    const hLf = sha256NormalizedUtf8(bodyOf(wrap('\n')));
+    assert.equal(sha256NormalizedUtf8(bodyOf(wrap('\r\n'))), hLf);
+    assert.equal(sha256NormalizedUtf8(bodyOf(wrap('\r'))), hLf);
+    assert.equal(normalizeNewlines(bodyOf(wrap('\r'))), semantic);
+    assert.equal(normalizeNewlines(bodyOf(wrap('\r\n'))), semantic);
+  });
+
   it('verifyMirror reports pass for the live generated file (newline-normalized)', () => {
     const results = verifyMirror();
     for (const r of results) {

@@ -68,7 +68,7 @@ export function bodyOf(generated) {
   const marker = '// @generated from wellbuilt-contracts/src/sso/protocol.ts';
   const at = generated.indexOf(marker);
   if (at < 0) throw new Error('generated file is missing its provenance marker');
-  const after = generated.slice(at + marker.length).replace(/^\r?\n/, '');
+  const after = generated.slice(at + marker.length).replace(/^(?:\r\n|\r|\n)/, '');
   return after;
 }
 

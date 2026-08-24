@@ -75,7 +75,7 @@ describe('equipment card launch contract', () => {
     assert.deepEqual(d, { action: 'open_equipment_credential_free' });
   });
 
-  it('field case: shift open, Pre-Trip done, Post-Trip required to end → Post-Trip, never Pre-Trip', () => {
+  it('exact matching pending End Shift → governed Post-Trip for the current open period', () => {
     const d = decideEquipmentCardLaunch({
       shiftActive: true,
       openPeriodId: OPEN,
@@ -87,7 +87,18 @@ describe('equipment card launch contract', () => {
     if (d.action === 'launch_post_trip') assert.equal(d.shiftId, OPEN);
   });
 
-  it('stale pending for another period does not launch that period', () => {
+  it('active + Pre-Trip complete + Post-Trip incomplete + no pending End Shift → ordinary WB-E', () => {
+    const d = decideEquipmentCardLaunch({
+      shiftActive: true,
+      openPeriodId: OPEN,
+      preTripComplete: true,
+      postTripComplete: false,
+      pendingEndShiftId: null,
+    });
+    assert.deepEqual(d, { action: 'open_equipment_credential_free' });
+  });
+
+  it('stale pending period → ordinary WB-E launch, no Post-Trip for either period', () => {
     const d = decideEquipmentCardLaunch({
       shiftActive: true,
       openPeriodId: OPEN,
@@ -95,7 +106,7 @@ describe('equipment card launch contract', () => {
       postTripComplete: false,
       pendingEndShiftId: '2026-08-22_070000',
     });
-    assert.deepEqual(d, { action: 'launch_post_trip', shiftId: OPEN });
+    assert.deepEqual(d, { action: 'open_equipment_credential_free' });
   });
 });
 
@@ -124,6 +135,71 @@ describe('equipment card execute + field recovery', () => {
     assert.equal(r.phase, 'post_trip');
     assert.deepEqual(launched, [`post_trip:${OPEN}`]);
     assert.equal(receipts, 0);
+  });
+
+  it('no matching pending End Shift opens ordinary WB-E and does not launch Post-Trip', async () => {
+    const phases: string[] = [];
+    let ordinary = 0;
+    const r = await runEquipmentCardLaunch({
+      shiftActive: true,
+      getOpenPeriodId: async () => OPEN,
+      isPreTripComplete: async () => true,
+      isPostTripComplete: async () => false,
+      getPendingEndShiftId: async () => null,
+      launchPhase: async (phase, shiftId) => {
+        phases.push(`${phase}:${shiftId}`);
+        return { launched: true };
+      },
+      openEquipmentCredentialFree: async () => {
+        ordinary += 1;
+      },
+    });
+    assert.equal(r.action, 'open_equipment_credential_free');
+    assert.equal(ordinary, 1);
+    assert.deepEqual(phases, []);
+  });
+
+  it('stale pending period opens ordinary WB-E and does not launch Post-Trip', async () => {
+    const phases: string[] = [];
+    let ordinary = 0;
+    const r = await runEquipmentCardLaunch({
+      shiftActive: true,
+      getOpenPeriodId: async () => OPEN,
+      isPreTripComplete: async () => true,
+      isPostTripComplete: async () => false,
+      getPendingEndShiftId: async () => '2026-08-22_070000',
+      launchPhase: async (phase, shiftId) => {
+        phases.push(`${phase}:${shiftId}`);
+        return { launched: true };
+      },
+      openEquipmentCredentialFree: async () => {
+        ordinary += 1;
+      },
+    });
+    assert.equal(r.action, 'open_equipment_credential_free');
+    assert.equal(ordinary, 1);
+    assert.deepEqual(phases, []);
+  });
+
+  it('failed exact Post-Trip launch preserves the pending period and creates no receipt', async () => {
+    let pending: string | null = OPEN;
+    const receipts: string[] = [];
+    const r = await runEquipmentCardLaunch({
+      shiftActive: true,
+      getOpenPeriodId: async () => OPEN,
+      isPreTripComplete: async () => true,
+      isPostTripComplete: async () => false,
+      getPendingEndShiftId: async () => pending,
+      launchPhase: async () => ({ launched: false, error: 'governed_unavailable' }),
+      openEquipmentCredentialFree: async () => {
+        throw new Error('must not fall through');
+      },
+      confirmLeave: async () => true,
+    });
+    assert.equal(r.launched, false);
+    assert.equal(r.phase, 'post_trip');
+    assert.equal(pending, OPEN);
+    assert.deepEqual(receipts, []);
   });
 
   it('retry after failure launches Post-Trip for the same period', async () => {

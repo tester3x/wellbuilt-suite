@@ -25,12 +25,12 @@ export function decideEquipmentCardLaunch(input: {
   if (!input.preTripComplete) {
     return { action: 'launch_pre_trip', shiftId: period };
   }
-  const pendingMatches = !!input.pendingEndShiftId && input.pendingEndShiftId === period;
+  // Post-Trip is the end-of-shift inspection only. A matching pending
+  // End Shift for THIS open period is required. Incomplete Post-Trip
+  // without that pending flag must not launch hours early. A stale
+  // pending ID for another period must not launch Post-Trip for either.
+  const pendingMatches = input.pendingEndShiftId === period;
   if (!input.postTripComplete && pendingMatches) {
-    return { action: 'launch_post_trip', shiftId: period };
-  }
-  // Same open period, Pre-Trip done, Post-Trip still required to end shift.
-  if (!input.postTripComplete) {
     return { action: 'launch_post_trip', shiftId: period };
   }
   return { action: 'open_equipment_credential_free' };
