@@ -17,7 +17,7 @@ export default function LoginScreen() {
 
   const {
     mode, displayName, setDisplayName, legalName, setLegalName, passcode, setPasscode,
-    companyName, setCompanyName,
+    companyCode, setCompanyCode,
     showPasscode, setShowPasscode, error, passcodeError, pendingName, canSubmit,
     handleLogin, handleRegister, handleCompleteRegistration,
     handleCancelRegistration, handleTryAgain, handleSwitchToRegister, handleSwitchToLogin,
@@ -121,16 +121,16 @@ export default function LoginScreen() {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>{t('login.companyLabel', 'Company')}</Text>
+                <Text style={styles.inputLabel}>{t('login.companyLabel', 'Company Join Code')}</Text>
                 <View style={styles.inputWrap}>
                   <MaterialCommunityIcons name="domain" size={18} color={colors.text.muted} />
-                  <TextInput ref={companyRef} style={styles.input} value={companyName}
-                    onChangeText={setCompanyName} placeholder={t('login.companyPlaceholder', 'Your company name')}
-                    placeholderTextColor={colors.text.muted} autoCapitalize="words"
+                  <TextInput ref={companyRef} style={styles.input} value={companyCode}
+                    onChangeText={(text) => setCompanyCode(text.toUpperCase())} placeholder={t('login.companyPlaceholder', 'Code from your employer')}
+                    placeholderTextColor={colors.text.muted} autoCapitalize="characters"
                     autoCorrect={false} returnKeyType="next"
                     blurOnSubmit={false} onSubmitEditing={() => passcodeRef.current?.focus()} />
                 </View>
-                <Text style={styles.hintText}>{t('login.companyHint', 'Enter the company name your employer gave you')}</Text>
+                <Text style={styles.hintText}>{t('login.companyHint', 'Your employer provides this code')}</Text>
               </View>
 
               <View style={styles.inputGroup}>
