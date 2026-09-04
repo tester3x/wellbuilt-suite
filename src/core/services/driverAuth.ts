@@ -180,7 +180,42 @@ export const verifyLogin = async (
   defaultPackageId?: string;
   error?: string;
 }> => {
-  console.log("[DriverAuth-Suite] Verifying login for:", displayName);
+  try {
+    const response = await fetchWithTimeout(
+      "https://us-central1-wellbuilt-sync.cloudfunctions.net/authenticateDriver",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: { displayName: displayName.trim(), passcode } }),
+      },
+    );
+    const payload = await response.json();
+    if (!response.ok || payload?.error) {
+      const message = String(payload?.error?.message || "");
+      return { valid: false, error: /deactivated/i.test(message) ? "This account has been deactivated" : "Invalid name or passcode" };
+    }
+    const data = payload?.result || {};
+    if (typeof data.driverId !== "string" || typeof data.displayName !== "string" || !data.customToken) {
+      return { valid: false, error: "Secure sign-in returned an incomplete identity" };
+    }
+    return {
+      valid: true,
+      driverId: data.driverId,
+      displayName: data.displayName,
+      legalName: typeof data.legalName === "string" ? data.legalName : undefined,
+      passcodeHash: data.driverId,
+      isAdmin: data.isAdmin === true,
+      isViewer: data.isViewer === true,
+      companyId: typeof data.companyId === "string" ? data.companyId : undefined,
+      companyName: typeof data.companyName === "string" ? data.companyName : undefined,
+    };
+  } catch {
+    return { valid: false, error: "Connection error" };
+  }
+
+  /* Legacy implementation retained below temporarily for migration reference;
+     canonical execution always returns above. */
+  console.log("[DriverAuth-Suite] Verifying legacy login for:", displayName);
 
   try {
     const hash = await hashPasscode(passcode, displayName);
