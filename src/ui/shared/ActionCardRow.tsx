@@ -85,7 +85,7 @@ function getShiftColor(startIso: string | null): string {
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp, dvirGate } = useAppLauncher();
-  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
+  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy, endShiftNoWork } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
@@ -193,10 +193,31 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     }
   };
 
-  // ── End shift: return to yard ──
+  // ── Aborted / no-work close ──
+  // A shift that never completed its Pre-Trip and never entered governed work is
+  // closed authoritatively by the driver's explicit End Shift — no Mark Arrived,
+  // arrival, Pre-Trip, or Post-Trip. Eligibility is decided in AuthContext from
+  // authoritative durable-receipt state; a governed/worked shift returns
+  // 'not_eligible' and we run the existing flow unchanged.
+  const tryNoWorkCloseThenFallback = async (fallback: () => void | Promise<void>) => {
+    const r = await endShiftNoWork();
+    if (r.kind === 'closed') return;
+    if (r.kind === 'retry') {
+      Alert.alert(t('shift.endNoWorkTitle'), t('shift.endNoWorkFailed'));
+      return;
+    }
+    await fallback(); // not_eligible → governed flow (return-to-yard / Post-Trip arrival)
+  };
+
+  // ── End shift: return to yard (or aborted no-work close) ──
   const handleReturnToYard = async () => {
     setShowEndModal(false);
-    await onStartReturn();
+    await tryNoWorkCloseThenFallback(() => onStartReturn());
+  };
+
+  // ── Mark Arrived from the en route card (or aborted no-work close) ──
+  const handleEnRouteArrived = async () => {
+    await tryNoWorkCloseThenFallback(() => setShowArrivalModal(true));
   };
 
 
@@ -241,7 +262,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       <View>
         <EnRouteYardCard
           returnStartTime={returnStartTime}
-          onArrived={() => setShowArrivalModal(true)}
+          onArrived={handleEnRouteArrived}
         />
 
         {/* ── Arrival Confirmation Modal ── */}

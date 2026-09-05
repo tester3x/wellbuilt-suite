@@ -230,7 +230,11 @@
     "tapToClockIn": "Toque para registrar entrada",
     "returning": "Regresando",
     "tapToEndShort": "Toque para terminar",
-    "selectPackage": "Seleccione su paquete de trabajo para este turno"
+    "selectPackage": "Seleccione su paquete de trabajo para este turno",
+    "endNoWorkTitle": "Terminar Turno",
+    "endNoWorkConfirm": "No se completó ninguna inspección previa (Pre-Trip) ni se registró trabajo en este turno. ¿Terminar el turno ahora? No se requiere llegada, Pre-Trip ni Post-Trip.",
+    "endNoWorkAction": "Terminar Turno — Sin Trabajo",
+    "endNoWorkFailed": "No se pudo terminar el turno. Su turno sigue abierto: verifique su conexión e inténtelo de nuevo."
   },
   "actionCard": {
     "timesheet": "Nómina",

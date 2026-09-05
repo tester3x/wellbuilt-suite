@@ -27,6 +27,11 @@ import { wbDiagLog } from '../services/wbDiagLog';
 import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/postLoginShiftRestoration';
 import { createGenerationClock } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
+import {
+  performNoWorkClosure,
+  type NoWorkTerminalReason,
+} from '../services/workPeriodAuthority/noWorkShiftClosure';
+import { shiftAuthorityDiag } from '../services/workPeriodAuthority/shiftAuthorityClient';
 import { registerLiveEquipmentShiftAuthority } from '../services/dvirGate/equipmentShiftLiveAuthority';
 import {
   createAuthoritySessionMachine,
@@ -113,6 +118,18 @@ interface AuthContextType {
    * so the UI can keep the modal open for retry.
    */
   confirmArrival: (odometerMiles?: number) => Promise<boolean>;
+  /**
+   * End an aborted / no-work shift. For an enforced shift that never completed
+   * its required Pre-Trip and never entered governed work, the driver's explicit
+   * End Shift closes the shift authoritatively WITHOUT requiring Mark Arrived,
+   * an arrival, a Pre-Trip, or a Post-Trip — and without fabricating any of them
+   * or writing pendingEndShiftId. Eligibility is decided from authoritative
+   * durable-receipt state, so JSA and the drive timer can never gate it.
+   *   - 'closed'       → shift is closed; local trip/nav state cleared.
+   *   - 'not_eligible' → a governed/worked shift; caller uses the normal flow.
+   *   - 'retry'        → close failed/offline; shift + route left intact, retry.
+   */
+  endShiftNoWork: () => Promise<{ kind: 'closed' | 'not_eligible' | 'retry'; reason?: string }>;
   /** Register a new driver (goes to pending state) */
   register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
@@ -988,6 +1005,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // UI action from even firing.
   const returnInFlight = useRef(false);
   const arrivalInFlight = useRef(false);
+  const noWorkCloseInFlight = useRef(false);
 
   const startReturn = useCallback(async () => {
     if (!user) return;
@@ -1132,6 +1150,91 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return true;
     } finally {
       arrivalInFlight.current = false;
+    }
+  }, [user, shiftActive, returningToYard]);
+
+  const endShiftNoWork = useCallback(async (): Promise<{
+    kind: 'closed' | 'not_eligible' | 'retry';
+    reason?: string;
+  }> => {
+    if (!user) return { kind: 'not_eligible', reason: 'no_user' };
+    // Only an OPEN shift (active clock or returning-to-yard drive) can be closed.
+    if (!shiftActive && !returningToYard) return { kind: 'not_eligible', reason: 'shift_not_open' };
+    // Single-flight: a second tap while the first close is resolving is a no-op,
+    // so repeated End Shift taps close at most once.
+    if (noWorkCloseInFlight.current) return { kind: 'not_eligible', reason: 'in_flight' };
+    noWorkCloseInFlight.current = true;
+    const gen = authorityGenRef.current.current();
+    try {
+      const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { closeEnforcedExplicit }, { createSuiteDvirGate }] =
+        await Promise.all([
+          import('../services/companyConfig'),
+          import('../services/workPeriodAuthority/suiteShiftAuthority'),
+          import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+          import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+          import('../services/dvirGate'),
+        ]);
+      const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+      const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+      const periodId = await getCurrentShiftId();
+
+      // Authoritative-for-Suite eligibility: durable Pre-Trip / Post-Trip receipts,
+      // never screen/travel state. No Pre-Trip receipt ⟹ Tickets was never unlocked
+      // ⟹ no governed WB-T job or load could have started.
+      const gate = createSuiteDvirGate({ isShiftActive: () => true });
+      const hasPreTripReceipt = periodId ? await gate.isPreTripComplete(periodId) : false;
+      const hasPostTripReceipt = periodId ? await gate.isPostTripComplete(periodId) : false;
+
+      const result = await performNoWorkClosure({
+        eligibility: {
+          enforcedExplicit: isEnforcedExplicitShift(enforcement),
+          shiftOpen: shiftActive || returningToYard,
+          periodId,
+          hasPreTripReceipt,
+          hasPostTripReceipt,
+        },
+        // Authoritative close: periodId only, no odometer. Never fabricates arrival.
+        close: async (pid) => {
+          const closed = await closeEnforcedExplicit({
+            periodId: pid,
+            gate: { isCurrent: () => authorityGenRef.current.isCurrent(gen) },
+          });
+          return { ok: closed.ok, alreadyClosed: closed.alreadyClosed, reason: closed.reason };
+        },
+        // Bounded terminal reason recorded in the Suite client audit lane only —
+        // the server close contract is unchanged (no reason field is sent).
+        recordTerminalReason: async (pid: string, reason: NoWorkTerminalReason) => {
+          shiftAuthorityDiag('shift.close.no_work', { terminalReason: reason });
+          await AsyncStorage.setItem(`wellbuilt-shift-terminal-reason:${pid}`, reason).catch(() => {});
+        },
+        // Clear local trip/navigation + active state ONLY after authoritative close.
+        // Mirrors confirmArrival cleanup but launches no DVIR and writes no receipt.
+        // shiftId is intentionally retained for Day Summary; logout does real cleanup.
+        clearTripState: async () => {
+          setShiftActive(false);
+          setReturningToYard(false);
+          setReturnDepartTime(null);
+          setShiftAuthorityUi({ kind: 'none' });
+          await Promise.all([
+            SecureStore.setItemAsync('shiftEnded', 'true'),
+            SecureStore.deleteItemAsync('shiftStarted'),
+            SecureStore.deleteItemAsync('returnDepartTime'),
+          ]).catch(() => {});
+        },
+        isCurrent: () => authorityGenRef.current.isCurrent(gen),
+      });
+
+      if (result.kind === 'closed') {
+        console.log('[AuthContext] No-work shift closed (aborted before Pre-Trip) for:', user.displayName);
+      }
+      return { kind: result.kind, reason: result.kind === 'closed' ? undefined : result.reason };
+    } catch (err) {
+      // A thrown error leaves the shift + route intact and retryable.
+      const reason = err instanceof Error ? err.message : 'no_work_close_failed';
+      console.warn('[AuthContext] endShiftNoWork error — shift left open:', reason);
+      return { kind: 'retry', reason };
+    } finally {
+      noWorkCloseInFlight.current = false;
     }
   }, [user, shiftActive, returningToYard]);
 
@@ -1368,6 +1471,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logoutWithCascade,
       startReturn,
       confirmArrival,
+      endShiftNoWork,
       register,
       checkRegistration,
       completeReg,
