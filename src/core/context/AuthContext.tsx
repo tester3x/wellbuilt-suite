@@ -43,6 +43,8 @@ import {
 import { setSsoSessionGate } from '../services/ssoSessionGate';
 import { notifySsoInboxSession, resetLiveSsoAuthorizeInbox } from '../services/ssoAuthorizeInbox';
 import { bumpSsoIdentityEpoch } from '../services/ssoRuntime';
+import { createCompositeReadinessBridge } from '../services/ssoCompositeReadiness';
+import { onAuthReconciliationChange } from '../services/authReconciliation';
 
 export interface AuthUser {
   driverId: string;
@@ -92,7 +94,12 @@ interface AuthContextType {
   startShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string }>;
   /** The active package for this shift (set at shift start) */
   activePackageId: string | null;
-  /** Full logout — clears SecureStore session. If shift is active, ends it first. */
+  /**
+   * Sign Out — terminates/cascades the authenticated Suite session only. It does
+   * NOT end, close, or mutate an authoritative server shift, never runs Pre-Trip
+   * or Post-Trip, and never writes pendingEndShiftId. An open shift is left open
+   * and restored on re-login; End Shift is the only action that closes a shift.
+   */
   logout: () => Promise<void>;
   /** Start the return-to-yard drive (captures GPS, writes depart_return event) */
   startReturn: () => Promise<void>;
@@ -236,28 +243,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * reconciliation for the previous driver can no longer publish state or
    * sign the new driver out.
    */
-  const reconcileForIdentity = useCallback((local: { driverId: string; companyId: string | null } | null) => {
-    const key = local ? `${local.driverId}|${local.companyId ?? ''}` : '<none>';
-    if (reconciledForRef.current === key) return;
-    reconciledForRef.current = key;
-    void import('../services/authReconciliation')
-      .then((m) => {
-        m.invalidateReconciliation();
-        return m.reconcileRestoredSession(local);
-      })
-      // Observed, not ignored: reconciliation failing must never surface
-      // as an unhandled rejection, and must never block app entry.
-      .catch((err) => {
-        console.warn('[AuthContext] reconciliation failed:', err);
-      });
+  const currentLocalRef = useRef<{ driverId: string; companyId: string | null } | null>(null);
+  const readinessGenRef = useRef(0);
+
+  const reconcileForIdentity = useCallback(
+    (
+      local: { driverId: string; companyId: string | null } | null,
+      opts?: { force?: boolean },
+    ) => {
+      const key = local ? `${local.driverId}|${local.companyId ?? ''}` : '<none>';
+      // `force` re-runs same-identity reconciliation — the composite-readiness
+      // retry after a successful revalidation (the cold-start ordering fix, where
+      // reconciliation first returned local-only/unavailable before the SDK
+      // session existed). The plain call still deduplicates per identity, so
+      // reconciledForRef never PERMANENTLY suppresses a needed reconciliation.
+      if (!opts?.force && reconciledForRef.current === key) return;
+      reconciledForRef.current = key;
+      currentLocalRef.current = local;
+      void import('../services/authReconciliation')
+        .then((m) => {
+          m.invalidateReconciliation();
+          return m.reconcileRestoredSession(local);
+        })
+        // Observed, not ignored: reconciliation failing must never surface
+        // as an unhandled rejection, and must never block app entry.
+        .catch((err) => {
+          console.warn('[AuthContext] reconciliation failed:', err);
+        });
+    },
+    [],
+  );
+
+  // Composite, generation-owned SSO readiness. The inbox gate goes `ready` ONLY
+  // when secure revalidation succeeded AND reconciliation is verified for the
+  // SAME generation — never from revalidation/authVerified alone. A genuinely
+  // unverifiable session terminalizes so a queued request gets a bounded error.
+  const compositeReadinessRef = useRef(
+    createCompositeReadinessBridge({
+      onGate: (gate) => {
+        setSsoSessionGate(gate);
+        notifySsoInboxSession(gate);
+      },
+      onRetryReconciliation: () =>
+        reconcileForIdentity(currentLocalRef.current, { force: true }),
+    }),
+  );
+  const resetSsoReadiness = useCallback((): number => {
+    const gen = (readinessGenRef.current += 1);
+    compositeReadinessRef.current.reset(gen);
+    return gen;
+  }, []);
+  const reportSsoRevalidation = useCallback(
+    (gen: number, outcome: 'ok' | 'failed') =>
+      compositeReadinessRef.current.reportRevalidation(gen, outcome),
+    [],
+  );
+
+  // Feed reconciliation-state transitions into composite readiness.
+  // reconciliationCore is itself generation-fenced, so a prior driver's late
+  // verdict never publishes; readinessGenRef tracks the current SSO flow.
+  useEffect(() => {
+    const off = onAuthReconciliationChange((state) =>
+      compositeReadinessRef.current.reportReconciliation(readinessGenRef.current, state),
+    );
+    return off;
   }, []);
 
   const failClosedUncertainSession = useCallback(async (reason: string) => {
     const cleanup = await runUncertainSessionFailClosed({
       applyMemory: () => {
         authoritySessionRef.current.dispatch({ type: 'session_failed' });
-        setSsoSessionGate('failed');
-        notifySsoInboxSession('failed');
+        // Terminal session failure — composite readiness fails closed (returns a
+        // bounded error callback to any queued authorize; never a code).
+        reportSsoRevalidation(readinessGenRef.current, 'failed');
         resetLiveSsoAuthorizeInbox();
         bumpSsoIdentityEpoch();
         bumpAuthorityGeneration(reason);
@@ -304,6 +362,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // and must not become network-dependent. The result only decides
         // whether VERIFIED cloud operations may run; local entry proceeds
         // either way, and 'unavailable' (offline) is not a logout.
+        // Establish the composite-readiness generation for this restore BEFORE
+        // reconciliation starts, so its verdict is attributed to this flow and a
+        // prior driver's late verdict cannot drive this gate.
+        const restoreReadinessGen = resetSsoReadiness();
         reconcileForIdentity(
           session ? { driverId: session.driverId, companyId: session.companyId || null } : null,
         );
@@ -366,8 +428,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (freshSession) {
               setUser(sessionToUser(freshSession));
             }
-            setSsoSessionGate('ready');
-            notifySsoInboxSession('ready');
+            // Revalidation succeeded — report OK. The inbox goes `ready` only
+            // once reconciliation is ALSO verified for this generation.
+            reportSsoRevalidation(restoreReadinessGen, 'ok');
             if (!authorityGenRef.current.isCurrent(gen)) return;
 
             const live = freshSession || session;
@@ -485,8 +548,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // New identity — invalidate any in-flight resolve/claim from prior session.
       const loginGen = bumpAuthorityGeneration('login_identity');
       authoritySessionRef.current.dispatch({ type: 'reset' });
-      setSsoSessionGate('pending');
-      notifySsoInboxSession('pending');
+      const loginReadinessGen = resetSsoReadiness();
       resetLiveSsoAuthorizeInbox();
       bumpSsoIdentityEpoch();
       startShiftInFlightRef.current = false;
@@ -561,8 +623,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!result.authVerified) {
             // Legacy dual-run login cannot call shift authority callables.
             if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
-            setSsoSessionGate('failed');
-            notifySsoInboxSession('failed');
+            // Legacy login cannot establish a secure SDK session → readiness fails
+            // closed (queued authorize gets a bounded error, not a hang).
+            reportSsoRevalidation(loginReadinessGen, 'failed');
             setShiftAuthorityUi({ kind: 'unavailable', reason: 'driver_session_required' });
             await SecureStore.deleteItemAsync('shiftStarted');
             setShiftActive(false);
@@ -572,8 +635,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             );
           } else {
             if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
-            setSsoSessionGate('ready');
-            notifySsoInboxSession('ready');
+            // Secure SDK session established — report OK; the gate goes ready only
+            // once reconciliation is also verified for this login generation.
+            reportSsoRevalidation(loginReadinessGen, 'ok');
             const ready = authoritySessionRef.current.dispatch({ type: 'session_ready' });
             if (ready.applyUi) setShiftAuthorityUi(ready.state.ui);
             const lease = issuedResolveLease(ready.commands);
@@ -657,8 +721,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (result.authVerified) {
-        setSsoSessionGate('ready');
-        notifySsoInboxSession('ready');
+        reportSsoRevalidation(loginReadinessGen, 'ok');
       }
       setUser({
         driverId: result.driverId,
@@ -1026,8 +1089,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout_cascade');
     authoritySessionRef.current.dispatch({ type: 'reset' });
-    setSsoSessionGate('failed');
-    notifySsoInboxSession('failed');
+    reportSsoRevalidation(readinessGenRef.current, 'failed');
     resetLiveSsoAuthorizeInbox();
     bumpSsoIdentityEpoch();
     startShiftInFlightRef.current = false;
@@ -1102,8 +1164,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout');
     authoritySessionRef.current.dispatch({ type: 'reset' });
-    setSsoSessionGate('failed');
-    notifySsoInboxSession('failed');
+    reportSsoRevalidation(readinessGenRef.current, 'failed');
     resetLiveSsoAuthorizeInbox();
     bumpSsoIdentityEpoch();
     startShiftInFlightRef.current = false;
@@ -1196,10 +1257,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(sessionToUser(session));
       // An SSO deep link can install a DIFFERENT driver session while
       // the provider stays mounted, so this is an identity transition too.
+      // Reset composite readiness for the new identity, then report the freshly
+      // installed (SSO-verified) SDK session; the gate goes ready only once the
+      // NEW identity reconciles — never before.
+      const refreshGen = resetSsoReadiness();
       reconcileForIdentity({
         driverId: session.driverId,
         companyId: session.companyId || null,
       });
+      reportSsoRevalidation(refreshGen, 'ok');
     }
   }, [reconcileForIdentity]);
 

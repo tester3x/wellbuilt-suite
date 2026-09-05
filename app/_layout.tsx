@@ -20,6 +20,7 @@ import SsoHandoffOverlay from '@/core/components/SsoHandoffOverlay';
 import {
   acceptSsoAuthorizeUrl,
   bindSsoAuthorizeDispatch,
+  bindSsoTerminalDispatch,
   notifySsoInboxSession,
 } from '@/core/services/ssoAuthorizeInbox';
 import { getSsoSessionGate } from '@/core/services/ssoSessionGate';
@@ -39,6 +40,10 @@ SplashScreen.preventAutoHideAsync();
 function SsoAuthorizeListener() {
   useEffect(() => {
     bindSsoAuthorizeDispatch((url) => dispatchSsoUrl(url));
+    // Terminal error return: a stranded authorize routes through the same handler,
+    // which returns a bounded error callback (ssoAuthorizationCore refuses to
+    // issue a code unless reconciliation is verified) so WB-E is not stranded.
+    bindSsoTerminalDispatch((url) => dispatchSsoUrl(url));
     Linking.getInitialURL().then((url) => acceptSsoAuthorizeUrl(url, 'initial'));
     const sub = Linking.addEventListener('url', (e) => {
       acceptSsoAuthorizeUrl(e.url, 'runtime');

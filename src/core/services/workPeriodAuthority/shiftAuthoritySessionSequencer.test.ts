@@ -350,8 +350,10 @@ test('wiring: logout resets inbox generation and SSO epoch', () => {
   assert.ok(auth.includes("bumpAuthorityGeneration('logout')"));
   assert.ok(auth.includes('resetLiveSsoAuthorizeInbox'));
   assert.ok(auth.includes('bumpSsoIdentityEpoch'));
-  assert.ok(auth.includes("notifySsoInboxSession('failed')"));
-  assert.ok(auth.includes("setSsoSessionGate('failed')"));
+  // Logout drives the terminal-fail through composite readiness — the bridge
+  // publishes the failed gate to the inbox — rather than a direct gate write.
+  assert.ok(auth.includes("reportSsoRevalidation(readinessGenRef.current, 'failed')"));
+  assert.ok(auth.includes('createCompositeReadinessBridge'));
 });
 
 test('wiring: revalidation rejection uses shared fail-closed, not keep-session', () => {

@@ -249,7 +249,18 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   }
   check('authVerified is never persisted as durable authority', persisted.length === 0, persisted.join(', '));
   const ctx3 = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
-  check('AuthContext does not store authVerified in the session', !/authVerified/.test(ctx3));
+  // Real invariant: authVerified may be READ to gate behavior, but must never be
+  // PERSISTED as durable session authority. (Reject only writes into storage /
+  // the saved session — not legitimate `if (result.authVerified)` gating.)
+  check('AuthContext never persists authVerified into the saved session',
+    !/(saveDriverSession|setItemAsync|AsyncStorage\.setItem|JSON\.stringify)\([^)]*authVerified/.test(ctx3));
+  // Strengthened: protected SSO readiness is COMPOSITE — it requires
+  // reconciliation-verified for the current generation and is never published
+  // `ready` from revalidation/authVerified alone.
+  check('protected SSO readiness is composite (reconciliation-verified), not authVerified/revalidation alone',
+    /createCompositeReadinessBridge/.test(ctx3)
+      && /reportReconciliation/.test(ctx3)
+      && !/setSsoSessionGate\('ready'\)/.test(ctx3));
   check('protected readiness comes from reconciliation, not the login result',
     /isVerifiedReady/.test(readFileSync(join(root, 'src', 'core', 'services', 'authReconciliation.ts'), 'utf8')));
 }

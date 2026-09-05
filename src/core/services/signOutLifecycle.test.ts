@@ -45,7 +45,9 @@ describe('P0 Sign Out lifecycle (pin 9)', () => {
     assert.ok(fromLogoutCascade.includes('setUser(null)'));
     assert.ok(fromLogoutCascade.includes('writeLogoutSignal'));
     assert.ok(fromLogoutCascade.includes('secureSignOut'));
-    assert.ok(fromLogoutCascade.includes("setSsoSessionGate('failed')"));
+    // Terminal-fail is routed through composite readiness (bridge publishes the
+    // failed gate → inbox returns a bounded error to any queued authorize).
+    assert.ok(fromLogoutCascade.includes("reportSsoRevalidation(readinessGenRef.current, 'failed')"));
   });
 
   it('both Sign Out paths carry the explicit P0 correction', () => {

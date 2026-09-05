@@ -144,14 +144,21 @@ test('wiring: Linking listener is not torn down on user change', () => {
   assert.ok(/AppState\.addEventListener\('change'/.test(layout));
 });
 
-test('wiring: AuthContext publishes session gate after revalidation', () => {
+test('wiring: AuthContext gates readiness on COMPOSITE revalidation + reconciliation, not revalidation alone', () => {
   const auth = src('src/core/context/AuthContext.tsx');
-  assert.ok(auth.includes('setSsoSessionGate'));
+  // The inbox gate is owned by the composite readiness bridge, fed by BOTH the
+  // revalidation outcome AND reconciliation-state transitions.
+  assert.ok(auth.includes('createCompositeReadinessBridge'));
+  assert.ok(auth.includes('onAuthReconciliationChange'));
+  assert.ok(auth.includes('reportReconciliation'));
   const mount = auth.slice(
     auth.indexOf('// On mount: check SecureStore'),
     auth.indexOf('const login = useCallback'),
   );
-  assert.ok(mount.indexOf("setSsoSessionGate('ready')") > mount.indexOf('revalidateDriverSession'));
+  // After revalidation the mount REPORTS ok to the composite bridge — it never
+  // publishes `ready` directly (the exact defect this repair closes).
+  assert.ok(mount.indexOf('reportSsoRevalidation') > mount.indexOf('revalidateDriverSession'));
+  assert.equal(mount.includes("setSsoSessionGate('ready')"), false);
 });
 
 test('parked authorize survives listener remount-equivalent resume replay', () => {
