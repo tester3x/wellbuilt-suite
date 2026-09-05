@@ -324,6 +324,20 @@ export async function ensurePostTripGate(
     return { allowed: true, launched: false, shiftId };
   }
 
+  // P0 lifecycle invariant: a shift with no verified Pre-Trip can never arm or
+  // launch Post-Trip. End Shift pressed without a completed Pre-Trip keeps the
+  // shift authoritative and OPEN — the driver must complete the outstanding
+  // Pre-Trip first. No pendingEndShiftId is written and no receipt is fabricated.
+  if (!(await isPreTripCompleteForShift(deps, shiftId))) {
+    await clearPendingEndShift(deps.kv);
+    return {
+      allowed: false,
+      launched: false,
+      shiftId,
+      reason: 'Pre-Trip required before Post-Trip',
+    };
+  }
+
   await setPendingEndShift(deps.kv, {
     shiftId,
     odometerMiles: opts?.odometerMiles,

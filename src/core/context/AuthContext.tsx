@@ -10,6 +10,7 @@ import {
   getDriverSession,
   revalidateDriverSession,
   clearDriverSession,
+  hardFailRevalidationCleanup,
   verifyLogin,
   type DriverSession,
   saveDriverSession,
@@ -27,6 +28,21 @@ import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/post
 import { createGenerationClock } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { registerLiveEquipmentShiftAuthority } from '../services/dvirGate/equipmentShiftLiveAuthority';
+import {
+  createAuthoritySessionMachine,
+} from '../services/workPeriodAuthority/shiftAuthoritySessionSequencer';
+import {
+  issuedResolveLease,
+  terminalizeIssuedResolve,
+} from '../services/workPeriodAuthority/shiftAuthorityResolveRunner';
+import {
+  observeRevalidation,
+  runUncertainSessionFailClosed,
+  REVALIDATION_FAILED_UI,
+} from '../services/workPeriodAuthority/revalidationFailClosed';
+import { setSsoSessionGate } from '../services/ssoSessionGate';
+import { notifySsoInboxSession, resetLiveSsoAuthorizeInbox } from '../services/ssoAuthorizeInbox';
+import { bumpSsoIdentityEpoch } from '../services/ssoRuntime';
 
 export interface AuthUser {
   driverId: string;
@@ -167,6 +183,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [shiftActive, setShiftActive] = useState(false);
+  // DVIR line (128edb7): expose the live shift-active state + current period to the
+  // equipment SSO binding so WB-E resolves the authoritative shift. Preserved during
+  // the SSO/session-gate integration.
   const liveShiftActiveRef = useRef(false);
   liveShiftActiveRef.current = shiftActive;
   useEffect(() => {
@@ -189,6 +208,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * so stale results never mutate a newer session.
    */
   const authorityGenRef = useRef(createGenerationClock());
+  const authoritySessionRef = useRef(createAuthoritySessionMachine());
   const startShiftInFlightRef = useRef(false);
   const bumpAuthorityGeneration = useCallback((reason: string) => {
     const n = authorityGenRef.current.bump(reason);
@@ -231,6 +251,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('[AuthContext] reconciliation failed:', err);
       });
   }, []);
+
+  const failClosedUncertainSession = useCallback(async (reason: string) => {
+    const cleanup = await runUncertainSessionFailClosed({
+      applyMemory: () => {
+        authoritySessionRef.current.dispatch({ type: 'session_failed' });
+        setSsoSessionGate('failed');
+        notifySsoInboxSession('failed');
+        resetLiveSsoAuthorizeInbox();
+        bumpSsoIdentityEpoch();
+        bumpAuthorityGeneration(reason);
+        startShiftInFlightRef.current = false;
+        setStartShiftBusy(false);
+        reconcileForIdentity(null);
+        setUser(null);
+        setShiftAuthorityUi(REVALIDATION_FAILED_UI);
+        setShiftActive(false);
+      },
+      cleanup: hardFailRevalidationCleanup,
+    });
+    if (cleanup === 'cleanup_failed') {
+      console.log('[AuthContext] revalidation.cleanup_failed');
+    }
+  }, [bumpAuthorityGeneration, reconcileForIdentity]);
 
   // Provider disposal invalidates all in-flight authority work.
   useEffect(() => {
@@ -300,19 +343,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setReturnDepartTime(savedReturnTime);
           }
 
-          // Authoritative cold-start restoration (always when company known).
+          // Hold Start Shift until secure-session revalidation completes.
+          // Canonical cold start used to launch resolveActiveDriverShift in
+          // parallel with revalidateDriverSession; driver_session_required
+          // froze the tile on Unavailable because success never re-resolved.
+          const gen = authorityGenRef.current.current();
+          const held = authoritySessionRef.current.dispatch({ type: 'cold_start' });
+          setShiftAuthorityUi(held.state.ui);
+          console.log(JSON.stringify({ tag: '[shiftAuthority]', event: 'session.hold_until_revalidate' }));
+
           void (async () => {
-            const gen = authorityGenRef.current.current();
+            const observed = await observeRevalidation(() => revalidateDriverSession());
+            if (observed.outcome === 'failed') {
+              console.log('[AuthContext] Background revalidation failed — fail closed');
+              await failClosedUncertainSession(
+                observed.cause === 'rejected' ? 'revalidation_rejected' : 'revalidation_hard_fail',
+              );
+              return;
+            }
+
+            const freshSession = await getDriverSession();
+            if (freshSession) {
+              setUser(sessionToUser(freshSession));
+            }
+            setSsoSessionGate('ready');
+            notifySsoInboxSession('ready');
+            if (!authorityGenRef.current.isCurrent(gen)) return;
+
+            const live = freshSession || session;
             try {
-              const companyId = session.companyId || '';
+              const companyId = live.companyId || '';
               if (!companyId) {
                 if (!authorityGenRef.current.isCurrent(gen)) return;
                 setShiftAuthorityUi({ kind: 'legacy' });
                 if (priorLocalActive) {
                   checkShiftOnResume(
-                    session.driverId,
-                    session.legalName || session.displayName,
-                    session.companyId,
+                    live.driverId,
+                    live.legalName || live.displayName,
+                    live.companyId,
                   ).catch(() => {});
                 }
                 return;
@@ -332,16 +400,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               const enforcement = parseSuiteEnforcement(cfg ?? undefined);
               const cached = await getCurrentShiftId();
 
-              // Only enforced explicit_shift uses server authority on cold start.
-              // Legacy/inert keeps priorLocalActive flags as before.
               if (!isEnforcedExplicitShift(enforcement)) {
                 if (!authorityGenRef.current.isCurrent(gen)) return;
                 setShiftAuthorityUi({ kind: 'legacy' });
                 if (priorLocalActive) {
                   checkShiftOnResume(
-                    session.driverId,
-                    session.legalName || session.displayName,
-                    session.companyId,
+                    live.driverId,
+                    live.legalName || live.displayName,
+                    live.companyId,
                     'wbs',
                     cached,
                     { enforcedExplicit: false },
@@ -350,70 +416,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 return;
               }
 
-              if (!authorityGenRef.current.isCurrent(gen)) return;
-              setShiftAuthorityUi({ kind: 'checking' });
-              const ui = await postLoginEnforcedRestore({
-                enforcement,
-                flags: {
-                  setShiftActive,
-                  setShiftStartTime,
-                },
-                gate: { isCurrent: () => authorityGenRef.current.isCurrent(gen) },
+              const ready = authoritySessionRef.current.dispatch({ type: 'session_ready' });
+              if (ready.applyUi) setShiftAuthorityUi(ready.state.ui);
+              const lease = issuedResolveLease(ready.commands);
+              if (!lease) return;
+
+              const term = await terminalizeIssuedResolve({
+                machine: authoritySessionRef.current,
+                lease,
+                isCurrent: () => authorityGenRef.current.isCurrent(gen),
+                restore: () => postLoginEnforcedRestore({
+                  enforcement,
+                  flags: {
+                    setShiftActive,
+                    setShiftStartTime,
+                  },
+                  gate: { isCurrent: () => authorityGenRef.current.isCurrent(gen) },
+                }),
               });
-              if (!authorityGenRef.current.isCurrent(gen)) {
-                console.log('[AuthContext] Cold-start resolve stale — discarded');
-                return;
-              }
-              if (!ui) return;
-              setShiftAuthorityUi(ui);
-              // Never checkShiftOnResume (no login write / auto-close) under enforcement.
-              if (ui.kind === 'open') {
+              if (term.abandoned || !term.applyUi || !term.ui) return;
+              setShiftAuthorityUi(term.ui);
+              if (term.ui.kind === 'open') {
                 console.log('[AuthContext] Cold-start restored explicit shift via server resolve');
-              } else if (ui.kind === 'none') {
+              } else if (term.ui.kind === 'none') {
                 console.log('[AuthContext] Cold-start authority: no open shift (server_none)');
               } else {
                 console.log(
                   '[AuthContext] Cold-start leave inactive (' +
-                    (ui.kind === 'unavailable' ? ui.reason : 'leave') +
+                    (term.ui.kind === 'unavailable' ? term.ui.reason : 'leave') +
                     ')',
                 );
               }
             } catch (err) {
               console.warn('[AuthContext] Cold-start shift restore failed closed:', err);
-              // Fail closed: no mint. Stale generation → do not touch UI.
               if (!authorityGenRef.current.isCurrent(gen)) return;
-              setShiftAuthorityUi({ kind: 'unavailable', reason: 'cold_start_error' });
+              const inflight = authoritySessionRef.current.peek().inFlight;
+              if (inflight && inflight.generation === authoritySessionRef.current.peek().generation) {
+                const term = await terminalizeIssuedResolve({
+                  machine: authoritySessionRef.current,
+                  lease: inflight,
+                  isCurrent: () => authorityGenRef.current.isCurrent(gen),
+                  restore: async () => {
+                    throw err instanceof Error ? err : new Error('cold_start_error');
+                  },
+                });
+                if (term.applyUi && term.ui) setShiftAuthorityUi(term.ui);
+              } else {
+                setShiftAuthorityUi({ kind: 'unavailable', reason: 'cold_start_error' });
+              }
               if (!priorLocalActive) {
                 setShiftActive(false);
               }
             }
           })();
-
-          // Revalidate in background (non-blocking). Secure path uses
-          // verifyDriverSession; hard fail clears SDK+local without shift close.
-          revalidateDriverSession().then(async (stillValid) => {
-            if (!stillValid) {
-              console.log('[AuthContext] Background revalidation failed — logging out');
-              // Take reconciliation ownership so orphan SDK state cannot linger.
-              bumpAuthorityGeneration('revalidation_hard_fail');
-              startShiftInFlightRef.current = false;
-              setStartShiftBusy(false);
-              reconcileForIdentity(null);
-              setUser(null);
-              setShiftAuthorityUi({ kind: 'legacy' });
-              setShiftActive(false);
-              // revalidateDriverSession already performed secure sign-out + SecureStore clear
-            } else {
-              // Re-read session in case revalidation updated fields
-              const freshSession = await getDriverSession();
-              if (freshSession) {
-                setUser(sessionToUser(freshSession));
-              }
-            }
-          }).catch((err) => {
-            // Unexpected throw only: soft keep (revalidate should not throw for hard fails)
-            console.log('[AuthContext] Background revalidation error (keeping session):', err);
-          });
           return; // Early return — loading already set to false above
         }
       } catch (err) {
@@ -429,6 +484,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (result.valid && result.driverId && result.displayName && result.passcodeHash) {
       // New identity — invalidate any in-flight resolve/claim from prior session.
       const loginGen = bumpAuthorityGeneration('login_identity');
+      authoritySessionRef.current.dispatch({ type: 'reset' });
+      setSsoSessionGate('pending');
+      notifySsoInboxSession('pending');
+      resetLiveSsoAuthorizeInbox();
+      bumpSsoIdentityEpoch();
       startShiftInFlightRef.current = false;
       setStartShiftBusy(false);
 
@@ -501,6 +561,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!result.authVerified) {
             // Legacy dual-run login cannot call shift authority callables.
             if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
+            setSsoSessionGate('failed');
+            notifySsoInboxSession('failed');
             setShiftAuthorityUi({ kind: 'unavailable', reason: 'driver_session_required' });
             await SecureStore.deleteItemAsync('shiftStarted');
             setShiftActive(false);
@@ -510,32 +572,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             );
           } else {
             if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
-            setShiftAuthorityUi({ kind: 'checking' });
-            const ui = await postLoginEnforcedRestore({
-              enforcement,
-              flags: { setShiftActive, setShiftStartTime },
-              gate: { isCurrent: () => authorityGenRef.current.isCurrent(loginGen) },
-            });
-            if (!authorityGenRef.current.isCurrent(loginGen) || !ui) {
-              console.log('[AuthContext] Post-login resolve stale — discarded');
+            setSsoSessionGate('ready');
+            notifySsoInboxSession('ready');
+            const ready = authoritySessionRef.current.dispatch({ type: 'session_ready' });
+            if (ready.applyUi) setShiftAuthorityUi(ready.state.ui);
+            const lease = issuedResolveLease(ready.commands);
+            if (!lease) {
+              console.log('[AuthContext] Post-login resolve skipped — sequencer');
             } else {
-              setShiftAuthorityUi(ui);
-              if (ui.kind === 'open') {
-                const savedPkgId = await SecureStore.getItemAsync('activePackageId');
-                if (savedPkgId && authorityGenRef.current.isCurrent(loginGen)) {
-                  setActivePackageId(savedPkgId);
+              const term = await terminalizeIssuedResolve({
+                machine: authoritySessionRef.current,
+                lease,
+                isCurrent: () => authorityGenRef.current.isCurrent(loginGen),
+                restore: () => postLoginEnforcedRestore({
+                  enforcement,
+                  flags: { setShiftActive, setShiftStartTime },
+                  gate: { isCurrent: () => authorityGenRef.current.isCurrent(loginGen) },
+                }),
+              });
+              if (term.abandoned) {
+                console.log('[AuthContext] Post-login resolve stale — discarded');
+              } else if (term.applyUi && term.ui) {
+                setShiftAuthorityUi(term.ui);
+                if (term.ui.kind === 'open') {
+                  const savedPkgId = await SecureStore.getItemAsync('activePackageId');
+                  if (savedPkgId && authorityGenRef.current.isCurrent(loginGen)) {
+                    setActivePackageId(savedPkgId);
+                  }
+                  console.log('[AuthContext] Restored explicit shift after login via server resolve');
+                } else if (term.ui.kind === 'none') {
+                  setActivePackageId(null);
+                  await SecureStore.deleteItemAsync('activePackageId');
+                  console.log('[AuthContext] Post-login authority: no open shift (server_none)');
+                } else {
+                  console.log(
+                    '[AuthContext] Post-login shift restore blocked (' +
+                      (term.ui.kind === 'unavailable' ? term.ui.reason : 'blocked') +
+                      ') — Start Shift disabled until authority clears',
+                  );
                 }
-                console.log('[AuthContext] Restored explicit shift after login via server resolve');
-              } else if (ui.kind === 'none') {
-                setActivePackageId(null);
-                await SecureStore.deleteItemAsync('activePackageId');
-                console.log('[AuthContext] Post-login authority: no open shift (server_none)');
-              } else {
-                console.log(
-                  '[AuthContext] Post-login shift restore blocked (' +
-                    (ui.kind === 'unavailable' ? ui.reason : 'blocked') +
-                    ') — Start Shift disabled until authority clears',
-                );
               }
             }
           }
@@ -561,13 +636,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.warn('[AuthContext] Post-login shift restore failed closed:', err);
         if (authorityGenRef.current.isCurrent(loginGen)) {
-          setShiftAuthorityUi({ kind: 'unavailable', reason: 'post_login_error' });
+          const inflight = authoritySessionRef.current.peek().inFlight;
+          if (inflight && inflight.generation === authoritySessionRef.current.peek().generation) {
+            const term = await terminalizeIssuedResolve({
+              machine: authoritySessionRef.current,
+              lease: inflight,
+              isCurrent: () => authorityGenRef.current.isCurrent(loginGen),
+              restore: async () => {
+                throw err instanceof Error ? err : new Error('post_login_error');
+              },
+            });
+            if (term.applyUi && term.ui) setShiftAuthorityUi(term.ui);
+          } else {
+            setShiftAuthorityUi({ kind: 'unavailable', reason: 'post_login_error' });
+          }
           await SecureStore.deleteItemAsync('shiftStarted');
           setShiftActive(false);
           setShiftStartTime(null);
         }
       }
 
+      if (result.authVerified) {
+        setSsoSessionGate('ready');
+        notifySsoInboxSession('ready');
+      }
       setUser({
         driverId: result.driverId,
         displayName: result.displayName,
@@ -933,64 +1025,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logoutWithCascade = useCallback(async () => {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout_cascade');
+    authoritySessionRef.current.dispatch({ type: 'reset' });
+    setSsoSessionGate('failed');
+    notifySsoInboxSession('failed');
+    resetLiveSsoAuthorizeInbox();
+    bumpSsoIdentityEpoch();
     startShiftInFlightRef.current = false;
     setStartShiftBusy(false);
     setShiftAuthorityUi({ kind: 'legacy' });
-    // Post-Trip gate: never complete logout while the active shift lacks
-    // a durable Post-Trip receipt. Launch eQuipment and abort cleanup.
-    // vc51.9C: NO null-shiftId escape hatch — the gate fails closed on a
-    // missing id; the caller never pre-filters it away.
-    if (shiftActive && user) {
-      try {
-        const { createSuiteDvirGate } = await import('../services/dvirGate');
-        const gate = createSuiteDvirGate({ isShiftActive: () => true });
-        const post = await gate.ensurePostTripGate({ alertOnBlock: true });
-        if (!post.allowed) {
-          console.log('[logoutWithCascade] blocked — Post-Trip required before logout');
-          return;
-        }
-      } catch (err) {
-        console.warn('[logoutWithCascade] Post-Trip gate error (blocking logout):', err);
-        return;
-      }
-    }
-    // Safety net: normally End Shift (confirmArrival) already closed the shift.
-    // If still active, close via server callable under enforcement (no dual REST).
-    if (shiftActive && user) {
-      try {
-        const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { closeEnforcedExplicit }] =
-          await Promise.all([
-            import('../services/companyConfig'),
-            import('../services/workPeriodAuthority/suiteShiftAuthority'),
-            import('../services/workPeriodAuthority/postLoginShiftRestoration'),
-            import('../services/workPeriodAuthority/explicitShiftLifecycle'),
-          ]);
-        const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
-        const enforcement = parseSuiteEnforcement(cfg ?? undefined);
-        if (isEnforcedExplicitShift(enforcement)) {
-          const periodId = await getCurrentShiftId();
-          const closed = await closeEnforcedExplicit({ periodId });
-          if (!closed.ok) {
-            console.warn('[logoutWithCascade] closeDriverShift failed:', closed.reason);
-          }
-        } else {
-          const shiftEndOk = await recordShiftEvent(
-            'logout',
-            user.driverId,
-            user.legalName || user.displayName,
-            user.companyId,
-            'wbs',
-            undefined,
-            { enforcedExplicit: false, allowDirectWrite: true },
-          ).catch(() => false);
-          if (!shiftEndOk) {
-            console.warn('[logoutWithCascade] logout shift event did not persist after retry');
-          }
-        }
-      } catch (err) {
-        console.warn('[logoutWithCascade] shift close safety net error:', err);
-      }
-    }
+    // SIGN OUT lifecycle (P0 enterprise-handoff correction):
+    // Sign Out terminates/cascades the authenticated Suite session ONLY. It must
+    // NEVER run the Post-Trip gate, launch a DVIR, write pendingEndShiftId, or
+    // close the shift. If an authoritative shift is open it is left OPEN and
+    // unchanged — re-login reconciles the authoritative period and restores the
+    // same shift state. End Shift is the sole action that closes a period and
+    // arms Post-Trip. A failed/incomplete Pre-Trip therefore can never be turned
+    // into a Post-Trip or a close by signing out.
     if (user) {
       // Write RTDB signal — apps for the same driverHash self-logout on
       // next foreground (manual + SSO both honor it as of 4/27/2026).
@@ -1051,63 +1101,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout');
+    authoritySessionRef.current.dispatch({ type: 'reset' });
+    setSsoSessionGate('failed');
+    notifySsoInboxSession('failed');
+    resetLiveSsoAuthorizeInbox();
+    bumpSsoIdentityEpoch();
     startShiftInFlightRef.current = false;
     setStartShiftBusy(false);
     setShiftAuthorityUi({ kind: 'legacy' });
-    // Post-Trip gate for home-screen Log Out while shift still active.
-    // vc51.9C: NO null-shiftId escape hatch — a lost cache key must not
-    // silently skip the gate; ensurePostTripGate itself fails closed on
-    // a missing id, so the GATE decides, never this caller.
-    if (shiftActive && user) {
-      try {
-        const { createSuiteDvirGate } = await import('../services/dvirGate');
-        const gate = createSuiteDvirGate({ isShiftActive: () => true });
-        const post = await gate.ensurePostTripGate({ alertOnBlock: true });
-        if (!post.allowed) {
-          console.log('[logout] blocked — Post-Trip required before logout');
-          return;
-        }
-      } catch (err) {
-        console.warn('[logout] Post-Trip gate error (blocking logout):', err);
-        return;
-      }
-    }
-    // If shift is still active, end it as safety net before logging out.
-    if (shiftActive && user) {
-      try {
-        const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { closeEnforcedExplicit }] =
-          await Promise.all([
-            import('../services/companyConfig'),
-            import('../services/workPeriodAuthority/suiteShiftAuthority'),
-            import('../services/workPeriodAuthority/postLoginShiftRestoration'),
-            import('../services/workPeriodAuthority/explicitShiftLifecycle'),
-          ]);
-        const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
-        const enforcement = parseSuiteEnforcement(cfg ?? undefined);
-        if (isEnforcedExplicitShift(enforcement)) {
-          const periodId = await getCurrentShiftId();
-          const closed = await closeEnforcedExplicit({ periodId });
-          if (!closed.ok) {
-            console.warn('[logout] closeDriverShift failed:', closed.reason);
-          }
-        } else {
-          const shiftEndOk = await recordShiftEvent(
-            'logout',
-            user.driverId,
-            user.legalName || user.displayName,
-            user.companyId,
-            'wbs',
-            undefined,
-            { enforcedExplicit: false, allowDirectWrite: true },
-          ).catch(() => false);
-          if (!shiftEndOk) {
-            console.warn('[logout] logout shift event did not persist after retry');
-          }
-        }
-      } catch (err) {
-        console.warn('[logout] shift close safety net error:', err);
-      }
-    }
+    // SIGN OUT lifecycle (P0 enterprise-handoff correction):
+    // Sign Out terminates/cascades the authenticated Suite session ONLY. It must
+    // NEVER run the Post-Trip gate, launch a DVIR, write pendingEndShiftId, or
+    // close the shift. If an authoritative shift is open it is left OPEN and
+    // unchanged — re-login reconciles the authoritative period and restores the
+    // same shift state. End Shift is the sole action that closes a period and
+    // arms Post-Trip. A failed/incomplete Pre-Trip therefore can never be turned
+    // into a Post-Trip or a close by signing out.
     if (user) {
       // Write RTDB signal — apps for the same driverHash self-logout on
       // next foreground. AWAITED so the PATCH lands before tear-down.
@@ -1213,18 +1222,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (!authorityGenRef.current.isCurrent(gen)) return;
-      setShiftAuthorityUi({ kind: 'checking' });
-      const ui = await postLoginEnforcedRestore({
-        enforcement,
-        flags: { setShiftActive, setShiftStartTime },
-        gate: { isCurrent: () => authorityGenRef.current.isCurrent(gen) },
+      const retry = authoritySessionRef.current.dispatch({ type: 'retry' });
+      if (retry.applyUi) setShiftAuthorityUi(retry.state.ui);
+      const lease = issuedResolveLease(retry.commands);
+      if (!lease) return;
+      const term = await terminalizeIssuedResolve({
+        machine: authoritySessionRef.current,
+        lease,
+        isCurrent: () => authorityGenRef.current.isCurrent(gen),
+        restore: () => postLoginEnforcedRestore({
+          enforcement,
+          flags: { setShiftActive, setShiftStartTime },
+          gate: { isCurrent: () => authorityGenRef.current.isCurrent(gen) },
+        }),
       });
-      if (!authorityGenRef.current.isCurrent(gen) || !ui) return;
-      setShiftAuthorityUi(ui);
+      if (term.applyUi && term.ui) setShiftAuthorityUi(term.ui);
     } catch (err) {
       console.warn('[AuthContext] refreshShiftAuthority failed:', err);
       if (authorityGenRef.current.isCurrent(gen)) {
-        setShiftAuthorityUi({ kind: 'unavailable', reason: 'refresh_failed' });
+        const inflight = authoritySessionRef.current.peek().inFlight;
+        if (inflight && inflight.generation === authoritySessionRef.current.peek().generation) {
+          const term = await terminalizeIssuedResolve({
+            machine: authoritySessionRef.current,
+            lease: inflight,
+            isCurrent: () => authorityGenRef.current.isCurrent(gen),
+            restore: async () => {
+              throw err instanceof Error ? err : new Error('refresh_failed');
+            },
+          });
+          if (term.applyUi && term.ui) setShiftAuthorityUi(term.ui);
+        } else {
+          setShiftAuthorityUi({ kind: 'unavailable', reason: 'refresh_failed' });
+        }
       }
     }
   }, [user]);

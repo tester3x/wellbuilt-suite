@@ -442,6 +442,16 @@ describe('Suite DVIR gate service', () => {
       },
     };
 
+    // A Post-Trip is only reachable after a completed Pre-Trip (P0 lifecycle
+    // invariant). Seed the Pre-Trip receipt so this test still exercises the
+    // WB-E launch-failure / retry path rather than the Pre-Trip-required guard.
+    await ingestDvirCompletionUrl(
+      d,
+      `wellbuilt-suite://dvir-complete?receipt=${encodeURIComponent(
+        encodeReceiptForDeepLink(await makeReceipt({ shiftId, phase: 'pre_trip' })),
+      )}`,
+    );
+
     const first = await ensurePostTripGate(d, {
       alertOnBlock: false,
       odometerMiles: 120,
@@ -471,6 +481,44 @@ describe('Suite DVIR gate service', () => {
     const pendingRetry = await getPendingEndShift(kv);
     assert.ok(pendingRetry);
     assert.equal(pendingRetry!.shiftId, shiftId);
+  });
+
+  it('P0 pin 8: End Shift without a completed Pre-Trip never arms or launches Post-Trip; shift stays open', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    const shiftId = '2026-09-05_070000';
+    // Active shift, NO Pre-Trip receipt seeded.
+    const d = deps(kv, shiftId, launched, true);
+    const res = await ensurePostTripGate(d, { alertOnBlock: false, odometerMiles: 100 });
+    assert.equal(res.allowed, false);
+    assert.equal(res.launched, false);
+    assert.equal(res.shiftId, shiftId);
+    // No Post-Trip launched, no receipt fabricated, no pending End Shift armed.
+    assert.equal(launched.length, 0);
+    assert.equal(await hasValidPhase(kv, shiftId, 'post_trip'), false);
+    assert.equal(await getPendingEndShift(kv), null);
+  });
+
+  it('P0 pin 8/10: End Shift after a completed Pre-Trip arms + launches Post-Trip bound to the same period', async () => {
+    const kv = memoryKv();
+    const launched: string[] = [];
+    const shiftId = '2026-09-05_070000';
+    const d = deps(kv, shiftId, launched, true);
+    // Complete Pre-Trip first — the only precondition that unlocks Post-Trip.
+    await ingestDvirCompletionUrl(
+      d,
+      `wellbuilt-suite://dvir-complete?receipt=${encodeURIComponent(
+        encodeReceiptForDeepLink(await makeReceipt({ shiftId, phase: 'pre_trip' })),
+      )}`,
+    );
+    const res = await ensurePostTripGate(d, { alertOnBlock: false, odometerMiles: 100 });
+    assert.equal(res.launched, true);
+    assert.equal(res.shiftId, shiftId);
+    const pending = await getPendingEndShift(kv);
+    assert.ok(pending);
+    assert.equal(pending!.shiftId, shiftId);
+    assert.match(launched[0], /phase=post_trip/);
+    assert.match(launched[0], new RegExp(`shiftId=${shiftId}`));
   });
 
   it('verified completion for the open period allows exactly one Post-Trip close resume', async () => {
