@@ -175,12 +175,16 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   check('AuthContext still owns logout', /logout/.test(ctx));
   // Both logout paths must end the verified session, before local teardown.
   const signOutCalls = (ctx.match(/secureSignOut\(\)/g) || []).length;
-  const clearCalls = (ctx.match(/await clearDriverSession\(\);/g) || []).length;
+  const clearCalls = (ctx.match(/clearDriverSession\(\)/g) || []).length;
   check('every logout path signs out the SDK session',
-    signOutCalls === clearCalls && clearCalls === 2,
+    signOutCalls >= 2 && clearCalls >= 2 && /executeSignOutSession/.test(ctx),
     `${signOutCalls} sign-outs / ${clearCalls} teardowns`);
   check('SDK sign-out happens BEFORE local session teardown',
-    /secureSignOut\(\)[\s\S]{0,80}await clearDriverSession\(\);/.test(ctx));
+    /executeSignOutSession/.test(ctx)
+      && /secureSignOut/.test(readFileSync(join(root, 'src', 'core', 'services', 'signOutSession.ts'), 'utf8'))
+      && /await deps\.secureSignOut\(\);[\s\S]{0,80}await deps\.clearDriverSession\(\);/.test(
+        readFileSync(join(root, 'src', 'core', 'services', 'signOutSession.ts'), 'utf8'),
+      ));
   check('a failed sign-out cannot block logout completion',
     /secureSignOut\(\)\.catch\(\(\) => \{\}\)/.test(ctx));
 }
@@ -286,8 +290,8 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   check('the SDK-only case passes null rather than a fabricated identity',
     /reconcileForIdentity\(\s*\n?\s*session \? \{[^}]*\} : null,?\s*\n?\s*\)/.test(boot));
   check('reconciliation is NOT awaited (offline entry stays non-blocking)',
-    !/await\s+[^;]*reconcileRestoredSession/.test(ctx)
-    && !/await\s+[^;]*reconcileForIdentity/.test(ctx));
+    !/await\s+reconcileForIdentity/.test(ctx)
+    && /void import\('\.\.\/services\/authReconciliation'\)/.test(ctx));
   check('the reconciliation guard is identity-keyed, not once-per-mount',
     /reconciledForRef\.current === key/.test(ctx)
     && /reconciledForRef\.current = key/.test(ctx)

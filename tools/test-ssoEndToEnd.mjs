@@ -7,25 +7,31 @@
  * decision cores in sequence — every hop goes through the same route
  * adapter, client adapter, and callable handler that production uses.
  *
- * WB-S and WB-T sources are loaded from their sibling repositories.
- * Skips cleanly when they are absent.
+ * WB-S, WB-T and Dashboard Functions sources are loaded from isolated
+ * sibling worktrees. Missing siblings or SHA mismatch FAIL (never SKIP).
+ *
+ * Env (required for a real run):
+ *   SSO_E2E_WBT         absolute path to isolated WB-T worktree
+ *   SSO_E2E_DASHBOARD   absolute path to isolated Dashboard worktree
+ *   SSO_E2E_WBT_SHA     expected full WB-T SHA
+ *   SSO_E2E_DASHBOARD_SHA expected full Dashboard SHA
  *
  * Requires Dashboard/functions to be built (its lib/ is imported).
  * Run: npm run test:sso-e2e
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
 
-// Runs from WB-S, which has tsx: WB-S uses extensionless imports that
-// node's ESM loader cannot resolve, and this test must load the REAL
-// WB-S adapters rather than a copy.
 const WBS = join(dirname(fileURLToPath(import.meta.url)), '..');
-const DEV = join(WBS, '..');
-const FN = join(DEV, 'Dashboard', 'functions');
-const WBT = join(DEV, 'wellbuilt-ticket');
+const WBT = process.env.SSO_E2E_WBT || join(WBS, '..', '_audit_p0_handoff', 'wbt-sso-e2e');
+const DASH = process.env.SSO_E2E_DASHBOARD || join(WBS, '..', '_audit_p0_handoff', 'dashboard-sso-e2e');
+const FN = join(DASH, 'functions');
+const REQUIRED_WBT_SHA = process.env.SSO_E2E_WBT_SHA || '';
+const REQUIRED_DASH_SHA = process.env.SSO_E2E_DASHBOARD_SHA || '';
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail = '') => {
@@ -33,10 +39,33 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok || !detail ? '' : ` — ${detail}`}`);
 };
 
-if (!existsSync(join(WBS, 'src', 'core', 'services', 'ssoRouteAdapter.ts'))
-  || !existsSync(join(WBT, 'utils', 'ssoAttemptCore.ts'))) {
-  console.log('SKIP  WB-S and/or WB-T sources not found beside this repository.');
-  process.exit(0);
+function gitHead(dir) {
+  return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+}
+
+if (!existsSync(join(WBS, 'src', 'core', 'services', 'ssoRouteAdapter.ts'))) {
+  console.error('FAIL  WB-S ssoRouteAdapter.ts missing');
+  process.exit(1);
+}
+if (!existsSync(join(WBT, 'utils', 'ssoAttemptCore.ts'))) {
+  console.error(`FAIL  WB-T ssoAttemptCore.ts missing at ${WBT} (set SSO_E2E_WBT)`);
+  process.exit(1);
+}
+if (!existsSync(join(FN, 'lib', 'sso', 'ssoIssueHandler.js'))) {
+  console.error(`FAIL  Dashboard functions lib missing at ${FN}/lib/sso (build isolated Dashboard functions)`);
+  process.exit(1);
+}
+const wbtHead = gitHead(WBT);
+const dashHead = gitHead(DASH);
+console.log(`SSO_E2E_WBT_SHA      ${wbtHead}`);
+console.log(`SSO_E2E_DASHBOARD_SHA ${dashHead}`);
+if (REQUIRED_WBT_SHA && wbtHead !== REQUIRED_WBT_SHA) {
+  console.error(`FAIL  WB-T HEAD ${wbtHead} !== ${REQUIRED_WBT_SHA}`);
+  process.exit(1);
+}
+if (REQUIRED_DASH_SHA && dashHead !== REQUIRED_DASH_SHA) {
+  console.error(`FAIL  Dashboard HEAD ${dashHead} !== ${REQUIRED_DASH_SHA}`);
+  process.exit(1);
 }
 
 const imp = (p) => import(pathToFileURL(p).href);
@@ -47,7 +76,7 @@ const { handleSsoExchange } = await imp(join(FN, 'lib', 'sso', 'ssoExchangeHandl
 const {
   SSO_AUDIENCE_WBT, SSO_PROTOCOL_VERSION, SSO_SESSION_APP_CLAIM, SSO_SESSION_APP_WBT,
   SSO_CODE_TTL_MS_PROVISIONAL, buildSsoAuthorizationUrl,
-} = await imp(join(FN, 'lib', 'sso', 'protocol.generated.js'));
+} = await imp(join(WBS, 'src', 'core', 'services', 'ssoProtocol.generated.ts'));
 
 // WB-S
 const { createSsoRouteAdapter } = await imp(join(WBS, 'src', 'core', 'services', 'ssoRouteAdapter.ts'));
@@ -91,6 +120,13 @@ function makeWorld() {
     base64Url: b64url,
     expiresAtTimestamp: (ms) => ({ __timestamp: true, ms }),
     getDriver: async (id) => (id === w.driver.driverId ? { ...w.driver } : null),
+    getCompanyContract: async () => ({
+      state: 'active',
+      contract: { planId: 'plan-e2e', companyId: 'co-1' },
+    }),
+    getPlan: async () => ({ planId: 'plan-e2e' }),
+    getShiftAuthority: async () => null,
+    getShiftDay: async () => null,
     runTransaction: async (fn) => {
       for (let a = 0; a < 5; a++) {
         const reads = new Map(); const writes = [];
@@ -171,6 +207,7 @@ function makeWorld() {
   });
   const wbtDispatcher = createSsoRouteDispatcher({
     onStart: async () => { await attempt.begin(); },
+    isAttemptActive: () => attempt.hasPending(),
     onCallback: async (cb) => { w.lastResult = await attempt.handleCallback(cb); },
     onRejectedCredential: (p) => { w.logs.push({ e: 'wbt.credentialRefused', p: p.join(',') }); },
     onInvalid: (r) => { w.logs.push({ e: 'wbt.invalid', r }); },
@@ -384,15 +421,18 @@ for (const [state, expectCode] of [['local-only', 'not_authorized'], ['unavailab
 }
 
 // App-switch loop prevention through the real dispatcher.
+// Duplicate sso-start while an attempt is IN FLIGHT must not mint a second
+// bridge. After a terminal attempt, a later start is a new user intent
+// (canonical WB-T isAttemptActive semantics).
 {
   const { w, wbtDispatcher } = makeWorld();
   const start = `${WBT_SCHEME}://${WBT_SSO_START_HOST}`;
-  await wbtDispatcher.handle(start);
-  const first = w.codeRequests;
-  await wbtDispatcher.handle(start);          // the return trip
-  check('the WB-T return trip does not start a second bridge',
-    w.codeRequests === first, `${first} -> ${w.codeRequests}`);
-  check('only one token was minted across the whole switch', w.minted.length === 1);
+  const first = wbtDispatcher.handle(start);
+  const second = wbtDispatcher.handle(start);
+  await Promise.all([first, second]);
+  check('in-flight duplicate sso-start issues ONE code request',
+    w.codeRequests === 1, String(w.codeRequests));
+  check('in-flight duplicate sso-start mints ONE token', w.minted.length === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

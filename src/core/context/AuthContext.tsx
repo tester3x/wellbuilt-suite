@@ -43,8 +43,12 @@ import {
 import { setSsoSessionGate } from '../services/ssoSessionGate';
 import { notifySsoInboxSession, resetLiveSsoAuthorizeInbox } from '../services/ssoAuthorizeInbox';
 import { bumpSsoIdentityEpoch } from '../services/ssoRuntime';
-import { createCompositeReadinessBridge } from '../services/ssoCompositeReadiness';
-import { onAuthReconciliationChange } from '../services/authReconciliation';
+import {
+  bindCompositeReadinessBridge,
+  createCompositeReadinessBridge,
+} from '../services/ssoCompositeReadiness';
+import { subscribeGovernedHandoffChanged } from '../services/dvirGate/equipmentHandoffBinding';
+import { executeSignOutSession } from '../services/signOutSession';
 
 export interface AuthUser {
   driverId: string;
@@ -260,10 +264,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!opts?.force && reconciledForRef.current === key) return;
       reconciledForRef.current = key;
       currentLocalRef.current = local;
+      // Capture THIS operation's generation now. The result reports only with
+      // this value — never with whatever readinessGenRef.current is later.
+      const gen = readinessGenRef.current;
       void import('../services/authReconciliation')
-        .then((m) => {
+        .then(async (m) => {
           m.invalidateReconciliation();
-          return m.reconcileRestoredSession(local);
+          const state = await m.reconcileRestoredSession(local);
+          compositeReadinessRef.current.reportReconciliation(gen, state);
+          return state;
         })
         // Observed, not ignored: reconciliation failing must never surface
         // as an unhandled rejection, and must never block app entry.
@@ -280,12 +289,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // unverifiable session terminalizes so a queued request gets a bounded error.
   const compositeReadinessRef = useRef(
     createCompositeReadinessBridge({
-      onGate: (gate) => {
+      onPublish: ({ gate, equipment, terminalReason }) => {
         setSsoSessionGate(gate);
-        notifySsoInboxSession(gate);
+        notifySsoInboxSession(gate, equipment, terminalReason);
       },
       onRetryReconciliation: () =>
         reconcileForIdentity(currentLocalRef.current, { force: true }),
+      readHandoff: async () => {
+        const { hydrateGovernedEquipmentHandoff } = await import(
+          '../services/dvirGate/equipmentHandoffBinding'
+        );
+        const rec = await hydrateGovernedEquipmentHandoff();
+        if (!rec) return null;
+        return { shiftId: rec.shiftId, phase: rec.phase, expiresAtMs: rec.expiresAtMs };
+      },
     }),
   );
   const resetSsoReadiness = useCallback((): number => {
@@ -299,14 +316,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  // Feed reconciliation-state transitions into composite readiness.
-  // reconciliationCore is itself generation-fenced, so a prior driver's late
-  // verdict never publishes; readinessGenRef tracks the current SSO flow.
   useEffect(() => {
-    const off = onAuthReconciliationChange((state) =>
-      compositeReadinessRef.current.reportReconciliation(readinessGenRef.current, state),
-    );
-    return off;
+    bindCompositeReadinessBridge(compositeReadinessRef.current);
+    const offHandoff = subscribeGovernedHandoffChanged(() => {
+      compositeReadinessRef.current.reconsiderEquipmentHandoff();
+    });
+    return () => {
+      bindCompositeReadinessBridge(null);
+      offHandoff();
+    };
   }, []);
 
   const failClosedUncertainSession = useCallback(async (reason: string) => {
@@ -439,6 +457,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               if (!companyId) {
                 if (!authorityGenRef.current.isCurrent(gen)) return;
                 setShiftAuthorityUi({ kind: 'legacy' });
+                compositeReadinessRef.current.reportEquipmentRestoration(restoreReadinessGen, 'none');
                 if (priorLocalActive) {
                   checkShiftOnResume(
                     live.driverId,
@@ -466,6 +485,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               if (!isEnforcedExplicitShift(enforcement)) {
                 if (!authorityGenRef.current.isCurrent(gen)) return;
                 setShiftAuthorityUi({ kind: 'legacy' });
+                compositeReadinessRef.current.reportEquipmentRestoration(restoreReadinessGen, 'none');
                 if (priorLocalActive) {
                   checkShiftOnResume(
                     live.driverId,
@@ -500,10 +520,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               if (term.abandoned || !term.applyUi || !term.ui) return;
               setShiftAuthorityUi(term.ui);
               if (term.ui.kind === 'open') {
+                compositeReadinessRef.current.reportEquipmentRestoration(
+                  restoreReadinessGen,
+                  'open',
+                  term.ui.periodId,
+                );
                 console.log('[AuthContext] Cold-start restored explicit shift via server resolve');
               } else if (term.ui.kind === 'none') {
+                compositeReadinessRef.current.reportEquipmentRestoration(restoreReadinessGen, 'none');
                 console.log('[AuthContext] Cold-start authority: no open shift (server_none)');
               } else {
+                compositeReadinessRef.current.reportEquipmentRestoration(restoreReadinessGen, 'failed');
                 console.log(
                   '[AuthContext] Cold-start leave inactive (' +
                     (term.ui.kind === 'unavailable' ? term.ui.reason : 'leave') +
@@ -659,16 +686,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               } else if (term.applyUi && term.ui) {
                 setShiftAuthorityUi(term.ui);
                 if (term.ui.kind === 'open') {
+                  compositeReadinessRef.current.reportEquipmentRestoration(
+                    loginReadinessGen,
+                    'open',
+                    term.ui.periodId,
+                  );
                   const savedPkgId = await SecureStore.getItemAsync('activePackageId');
                   if (savedPkgId && authorityGenRef.current.isCurrent(loginGen)) {
                     setActivePackageId(savedPkgId);
                   }
                   console.log('[AuthContext] Restored explicit shift after login via server resolve');
                 } else if (term.ui.kind === 'none') {
+                  compositeReadinessRef.current.reportEquipmentRestoration(loginReadinessGen, 'none');
                   setActivePackageId(null);
                   await SecureStore.deleteItemAsync('activePackageId');
                   console.log('[AuthContext] Post-login authority: no open shift (server_none)');
                 } else {
+                  compositeReadinessRef.current.reportEquipmentRestoration(loginReadinessGen, 'failed');
                   console.log(
                     '[AuthContext] Post-login shift restore blocked (' +
                       (term.ui.kind === 'unavailable' ? term.ui.reason : 'blocked') +
@@ -682,6 +716,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
           // Legacy/inert: established clean-slate on fresh login.
           setShiftAuthorityUi({ kind: 'legacy' });
+          compositeReadinessRef.current.reportEquipmentRestoration(loginReadinessGen, 'none');
           await SecureStore.deleteItemAsync('shiftEnded');
           await SecureStore.deleteItemAsync('shiftStarted');
           await SecureStore.deleteItemAsync('activePackageId');
@@ -693,6 +728,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!authorityGenRef.current.isCurrent(loginGen)) return { success: true };
           // invalid / unknown contract — fail closed (no mint from local flags)
           setShiftAuthorityUi({ kind: 'unavailable', reason: 'enforcement_invalid' });
+          compositeReadinessRef.current.reportEquipmentRestoration(loginReadinessGen, 'failed');
           await SecureStore.deleteItemAsync('shiftStarted');
           setShiftActive(false);
           setShiftStartTime(null);
@@ -795,8 +831,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               periodId: claim.openPeriodId,
               originLocalDate: claim.openPeriodId.slice(0, 10),
             });
+            compositeReadinessRef.current.reportEquipmentRestoration(
+              readinessGenRef.current,
+              'open',
+              claim.openPeriodId,
+            );
           } else {
             setShiftAuthorityUi({ kind: 'unavailable', reason: claim.reason });
+            compositeReadinessRef.current.reportEquipmentRestoration(
+              readinessGenRef.current,
+              'failed',
+            );
           }
           console.log('[startShift] refused claim — ' + claim.reason);
           return { ok: false, reason: claim.reason };
@@ -806,6 +851,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           periodId: claim.periodId,
           originLocalDate: claim.originLocalDate,
         });
+        compositeReadinessRef.current.reportEquipmentRestoration(
+          readinessGenRef.current,
+          'open',
+          claim.periodId,
+        );
         import('../services/dvirGate')
           .then(({ createSuiteDvirGate }) =>
             createSuiteDvirGate({ isShiftActive: () => true }).clearDvirRoutingAfterFinalization(),
@@ -1103,55 +1153,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // same shift state. End Shift is the sole action that closes a period and
     // arms Post-Trip. A failed/incomplete Pre-Trip therefore can never be turned
     // into a Post-Trip or a close by signing out.
-    if (user) {
-      // Write RTDB signal — apps for the same driverHash self-logout on
-      // next foreground (manual + SSO both honor it as of 4/27/2026).
-      // Deep-link cascade was retired here on 5/2/2026: launching WB T
-      // during logout pollutes Android's task stack and the prior SSO
-      // ${scheme}://login intent gets re-delivered, routing WB T to its
-      // SSOLogin screen which silently re-authenticates the driver.
-      // Field-confirmed regression. Each target app self-detects logoutAt
-      // on cold start + warm resume — no foreground-launch needed.
-      await writeLogoutSignal(user.passcodeHash);
-    }
-    await SecureStore.deleteItemAsync('shiftStarted');
-    await SecureStore.deleteItemAsync('shiftEnded');
-    await SecureStore.deleteItemAsync('returnDepartTime');
-    await SecureStore.deleteItemAsync('activePackageId');
-    clearCurrentShiftId().catch(() => {});
-    // Match logout()'s cleanup: wipe per-shift / per-session AsyncStorage.
-    await AsyncStorage.multiRemove([...LOGOUT_ASYNCSTORAGE_KEYS]).catch(() => {});
-    wbDiagLog({
-      area: 'logout',
-      event: 'currentShiftId.cleared',
-      source: 'AuthContext.logoutWithCascade',
-      result: 'ok',
-      reason: 'logoutWithCascade — full cascade end-of-day path',
-      driverHash: user?.passcodeHash,
-      extra: { trigger: 'logoutWithCascade' },
+    const passcodeHash = user?.passcodeHash;
+    await executeSignOutSession({
+      writeLogoutSignal: async () => {
+        if (passcodeHash) await writeLogoutSignal(passcodeHash);
+      },
+      clearLocalShiftPointers: async () => {
+        await SecureStore.deleteItemAsync('shiftStarted');
+        await SecureStore.deleteItemAsync('shiftEnded');
+        await SecureStore.deleteItemAsync('returnDepartTime');
+        await SecureStore.deleteItemAsync('activePackageId');
+        clearCurrentShiftId().catch(() => {});
+        await AsyncStorage.multiRemove([...LOGOUT_ASYNCSTORAGE_KEYS]).catch(() => {});
+        wbDiagLog({
+          area: 'logout',
+          event: 'currentShiftId.cleared',
+          source: 'AuthContext.logoutWithCascade',
+          result: 'ok',
+          reason: 'logoutWithCascade — full cascade end-of-day path',
+          driverHash: passcodeHash,
+          extra: { trigger: 'logoutWithCascade' },
+        });
+        setShiftActive(false);
+        setReturningToYard(false);
+        setReturnDepartTime(null);
+        setActivePackageId(null);
+      },
+      invalidateAuthEpoch: () => {},
+      takeReconciliationOwnership: () => {},
+      secureSignOut: async () => {
+        const secure = await import('../services/secureDriverAuth');
+        secure.invalidateAuthEpoch();
+        reconcileForIdentity(null);
+        await secure.secureSignOut().catch(() => {});
+      },
+      clearDriverSession: () => clearDriverSession(),
+      clearMemoryUser: () => setUser(null),
     });
-    setShiftActive(false);
-    setReturningToYard(false);
-    setReturnDepartTime(null);
-    setActivePackageId(null);
-    // End the verified Auth session BEFORE local teardown, so a driver is
-    // never left signed in to Firebase with local state already cleared.
-    // secureSignOut swallows an unowned/absent session and still removes the
-    // legacy token material, so logout completes even if sign-out fails.
-    {
-      // Cancel any in-flight login FIRST, so a sign-in still resolving
-      // cannot land after teardown and resurrect the identity we are
-      // logging out. Then end the verified session before local cleanup.
-      const secure = await import('../services/secureDriverAuth');
-      secure.invalidateAuthEpoch();
-      // Take reconciliation ownership too: an in-flight reconciliation
-      // for this driver must not publish state, or sign anything out,
-      // after the next driver logs in.
-      reconcileForIdentity(null);
-      await secure.secureSignOut().catch(() => {});
-    }
-    await clearDriverSession();
-    setUser(null);
   }, [shiftActive, user]);
 
   // Single logout function for all WB S logout buttons (4 home screens, etc.).
@@ -1178,57 +1216,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // same shift state. End Shift is the sole action that closes a period and
     // arms Post-Trip. A failed/incomplete Pre-Trip therefore can never be turned
     // into a Post-Trip or a close by signing out.
-    if (user) {
-      // Write RTDB signal — apps for the same driverHash self-logout on
-      // next foreground. AWAITED so the PATCH lands before tear-down.
-      // Deep-link cascade was retired here on 5/2/2026: launching WB T
-      // during logout pollutes Android's task stack and the prior SSO
-      // ${scheme}://login intent gets re-delivered, routing WB T to its
-      // SSOLogin screen which silently re-authenticates the driver.
-      // Field-confirmed regression. Each target app self-detects logoutAt
-      // on cold start + warm resume — no foreground-launch needed.
-      await writeLogoutSignal(user.passcodeHash);
-    }
-    await SecureStore.deleteItemAsync('shiftStarted');
-    await SecureStore.deleteItemAsync('shiftEnded');
-    await SecureStore.deleteItemAsync('returnDepartTime');
-    await SecureStore.deleteItemAsync('activePackageId');
-    clearCurrentShiftId().catch(() => {});
-    // Wipe per-shift / per-session AsyncStorage state so the next login
-    // starts cold. See LOGOUT_ASYNCSTORAGE_KEYS doc for what's included
-    // and what survives intentionally.
-    await AsyncStorage.multiRemove([...LOGOUT_ASYNCSTORAGE_KEYS]).catch(() => {});
-    wbDiagLog({
-      area: 'logout',
-      event: 'currentShiftId.cleared',
-      source: 'AuthContext.logout',
-      result: 'ok',
-      reason: 'logout — single awaited path (home screen Log Out button)',
-      driverHash: user?.passcodeHash,
-      extra: { trigger: 'logout', shiftActiveAtLogout: shiftActive },
+    const passcodeHash = user?.passcodeHash;
+    const shiftActiveAtLogout = shiftActive;
+    await executeSignOutSession({
+      writeLogoutSignal: async () => {
+        if (passcodeHash) await writeLogoutSignal(passcodeHash);
+      },
+      clearLocalShiftPointers: async () => {
+        await SecureStore.deleteItemAsync('shiftStarted');
+        await SecureStore.deleteItemAsync('shiftEnded');
+        await SecureStore.deleteItemAsync('returnDepartTime');
+        await SecureStore.deleteItemAsync('activePackageId');
+        clearCurrentShiftId().catch(() => {});
+        await AsyncStorage.multiRemove([...LOGOUT_ASYNCSTORAGE_KEYS]).catch(() => {});
+        wbDiagLog({
+          area: 'logout',
+          event: 'currentShiftId.cleared',
+          source: 'AuthContext.logout',
+          result: 'ok',
+          reason: 'logout — single awaited path (home screen Log Out button)',
+          driverHash: passcodeHash,
+          extra: { trigger: 'logout', shiftActiveAtLogout },
+        });
+        setShiftActive(false);
+        setReturningToYard(false);
+        setReturnDepartTime(null);
+        setActivePackageId(null);
+      },
+      invalidateAuthEpoch: () => {},
+      takeReconciliationOwnership: () => {},
+      secureSignOut: async () => {
+        const secure = await import('../services/secureDriverAuth');
+        secure.invalidateAuthEpoch();
+        reconcileForIdentity(null);
+        await secure.secureSignOut().catch(() => {});
+      },
+      clearDriverSession: () => clearDriverSession(),
+      clearMemoryUser: () => setUser(null),
     });
-    setShiftActive(false);
-    setReturningToYard(false);
-    setReturnDepartTime(null);
-    setActivePackageId(null);
-    // End the verified Auth session BEFORE local teardown, so a driver is
-    // never left signed in to Firebase with local state already cleared.
-    // secureSignOut swallows an unowned/absent session and still removes the
-    // legacy token material, so logout completes even if sign-out fails.
-    {
-      // Cancel any in-flight login FIRST, so a sign-in still resolving
-      // cannot land after teardown and resurrect the identity we are
-      // logging out. Then end the verified session before local cleanup.
-      const secure = await import('../services/secureDriverAuth');
-      secure.invalidateAuthEpoch();
-      // Take reconciliation ownership too: an in-flight reconciliation
-      // for this driver must not publish state, or sign anything out,
-      // after the next driver logs in.
-      reconcileForIdentity(null);
-      await secure.secureSignOut().catch(() => {});
-    }
-    await clearDriverSession();
-    setUser(null);
   }, [shiftActive, user]);
 
   const register = useCallback(async (displayName: string, passcode: string, companyName?: string, legalName?: string) => {

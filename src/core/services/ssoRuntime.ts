@@ -84,20 +84,13 @@ export function getSsoRouteAdapter(
     requestCode: (request) => issuance.requestCode(request),
     currentIdentityEpoch: () => identityEpoch,
     getEquipmentShiftBinding: async () => {
-      const { resolveAuthoritativeEquipmentShiftBinding } = await import(
-        './dvirGate/equipmentHandoffBinding'
+      const { liveCompositeReadiness, computeCompositeGate } = await import(
+        './ssoCompositeReadiness'
       );
-      const { peekLiveEquipmentShiftAuthority } = await import(
-        './dvirGate/equipmentShiftLiveAuthority'
-      );
-      const live = peekLiveEquipmentShiftAuthority();
-      if (!live) return null;
-      const active = await live.isShiftActive();
-      if (!active) return null;
-      return resolveAuthoritativeEquipmentShiftBinding({
-        getCurrentShiftId: () => live.getPeriodId(),
-        isShiftActive: () => true,
-      });
+      const snap = liveCompositeReadiness()?.peek();
+      if (!snap || computeCompositeGate(snap) !== 'ready') return null;
+      if (snap.equipment !== 'open' || !snap.binding) return null;
+      return snap.binding;
     },
   });
 

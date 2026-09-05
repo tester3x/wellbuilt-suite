@@ -42,6 +42,24 @@ export type SecureKv = {
 
 let memoryFallback: GovernedEquipmentHandoffRecord | null = null;
 let injectedKv: SecureKv | null = null;
+const handoffListeners = new Set<() => void>();
+
+export function subscribeGovernedHandoffChanged(fn: () => void): () => void {
+  handoffListeners.add(fn);
+  return () => {
+    handoffListeners.delete(fn);
+  };
+}
+
+function emitGovernedHandoffChanged(): void {
+  for (const fn of handoffListeners) {
+    try {
+      fn();
+    } catch {
+      /* listener must not break persistence */
+    }
+  }
+}
 
 export function setGovernedHandoffKv(kv: SecureKv | null): void {
   injectedKv = kv;
@@ -124,6 +142,7 @@ export async function rememberGovernedEquipmentHandoff(
       `[Suite-DVIR] dvir.handoff.intent.persisted stage=launched phase=${phase} shiftId=${shiftId} corr=${rec.correlationId}`,
     );
   } catch { /* ignore */ }
+  emitGovernedHandoffChanged();
   return rec;
 }
 
@@ -134,6 +153,7 @@ export async function clearGovernedEquipmentHandoff(reason: string = 'cleared'):
   try {
     console.log(`[Suite-DVIR] dvir.handoff.intent.cleared reason=${reason}`);
   } catch { /* ignore */ }
+  emitGovernedHandoffChanged();
 }
 
 export async function markGovernedHandoffStage(stage: GovernedHandoffStage): Promise<void> {

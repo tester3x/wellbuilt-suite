@@ -85,9 +85,10 @@ describe('live equipment shift authority', () => {
   it('ssoRuntime never treats a cached shift id as isShiftActive', () => {
     const src = readFileSync(join(HERE, '..', 'ssoRuntime.ts'), 'utf8');
     assert.doesNotMatch(src, /isShiftActive:\s*\(\)\s*=>\s*!!shiftId/);
-    assert.match(src, /peekLiveEquipmentShiftAuthority/);
-    assert.match(src, /if \(!live\) return null/);
-    assert.match(src, /if \(!active\) return null/);
+    assert.doesNotMatch(src, /isShiftActive:\s*\(\)\s*=>\s*true/);
+    assert.doesNotMatch(src, /peekLiveEquipmentShiftAuthority/);
+    assert.match(src, /liveCompositeReadiness/);
+    assert.match(src, /snap\.equipment !== 'open'/);
   });
 
   it('useAppLauncher never attaches hash/name to wbequipment', () => {

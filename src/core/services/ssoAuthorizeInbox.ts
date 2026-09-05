@@ -1,62 +1,106 @@
 /**
  * Durable inbound authorize inbox.
  *
- * Android can deliver wellbuilt-suite://sso-authorize as a pending
- * onNewIntent while Suite is STOPPED (task reuse). Linking then only
- * surfaces the URL if/when the activity resumes — or not at all if a
- * counterpart permission overlay wins the foreground. This inbox:
+ * Holds one pending authorize until the authenticated session is ready,
+ * and for the equipment audience until server-authoritative shift + matching
+ * governed handoff are present. Dispatches exactly once. Terminal failures
+ * return a bounded error callback via an issuance-incapable responder.
  *
- *   - accepts initial URL, runtime URL, and resume replays;
- *   - deduplicates identical deliveries;
- *   - holds one pending authorize until the authenticated session is ready;
- *   - dispatches exactly once;
- *   - fails closed if revalidation failed;
- *   - fences stale generations so logout cannot issue.
- *
- * Pure: dispatch is injected. Never logs URL query material.
+ * Pure: dispatch / terminal dispatch are injected. Never logs URL query material.
  */
 import { isSsoAuthorizeUrl } from './ssoRouteAdapter';
+import { isSsoAudience, parseSsoAuthorizationUrl, SSO_AUDIENCE_EQUIPMENT } from './ssoProtocol.generated';
+import type { EquipmentRelease } from './ssoEquipmentAuthority';
+import type { SsoTerminalReason } from './ssoTerminalResponder';
 
 export type SsoSessionGate = 'pending' | 'ready' | 'failed';
 export type SsoDeliverPath = 'initial' | 'runtime' | 'resume' | 'onNewIntent';
 
 export type SsoInboxState = {
   gate: SsoSessionGate;
+  equipment: EquipmentRelease;
   generation: number;
   queued: string | null;
   inFlightToken: number | null;
   nextToken: number;
   handled: string | null;
+  /** Survives reset so a terminally answered URL cannot re-enter issuance. */
+  terminalClosed: readonly string[];
 };
 
 export type SsoInboxEvent =
   | { type: 'reset' }
-  | { type: 'session'; gate: SsoSessionGate }
+  | {
+      type: 'session';
+      gate: SsoSessionGate;
+      equipment?: EquipmentRelease;
+      terminalReason?: SsoTerminalReason;
+    }
   | { type: 'deliver'; url: string; path: SsoDeliverPath }
   | { type: 'dispatched'; token: number };
 
 export type SsoInboxCommand =
   | { cmd: 'dispatch'; url: string; token: number }
-  // `url` present ⇒ a real queued authorize request that must receive a bounded
-  // terminal error callback (never a code). Absent / `not_sso` ⇒ log-only.
-  | { cmd: 'reject_closed'; reason: 'revalidation_failed' | 'not_sso'; url?: string };
+  | { cmd: 'reject_closed'; reason: SsoTerminalReason; url?: string };
 
 export const initialSsoInboxState: SsoInboxState = {
   gate: 'pending',
+  equipment: 'pending',
   generation: 0,
   queued: null,
   inFlightToken: null,
   nextToken: 1,
   handled: null,
+  terminalClosed: [],
 };
+
+function isEquipmentAuthorizeUrl(url: string): boolean {
+  const parsed = parseSsoAuthorizationUrl(url);
+  if (parsed.ok) return parsed.value.audience === SSO_AUDIENCE_EQUIPMENT;
+  // Scheme/host already matched. Read allowlisted `aud` only — never log.
+  const qAt = url.indexOf('?');
+  if (qAt < 0) return false;
+  const params = new URLSearchParams(url.slice(qAt + 1));
+  const aud = params.get('aud');
+  return isSsoAudience(aud) && aud === SSO_AUDIENCE_EQUIPMENT;
+}
+
+function closeUrl(state: SsoInboxState, url: string | null): readonly string[] {
+  if (!url) return state.terminalClosed;
+  if (state.terminalClosed.includes(url)) return state.terminalClosed;
+  return [...state.terminalClosed, url];
+}
 
 function dispatchQueued(state: SsoInboxState): {
   state: SsoInboxState;
   commands: SsoInboxCommand[];
 } {
-  if (state.gate !== 'ready' || !state.queued || state.inFlightToken !== null) {
+  if (!state.queued || state.inFlightToken !== null) {
     return { state, commands: [] };
   }
+  if (state.gate === 'failed') {
+    return { state, commands: [] };
+  }
+  const equipmentUrl = isEquipmentAuthorizeUrl(state.queued);
+  if (equipmentUrl) {
+    if (state.gate !== 'ready') return { state, commands: [] };
+    if (state.equipment === 'pending') return { state, commands: [] };
+    if (state.equipment !== 'open') {
+      const url = state.queued;
+      return {
+        state: {
+          ...state,
+          queued: null,
+          handled: url,
+          terminalClosed: closeUrl(state, url),
+        },
+        commands: [{ cmd: 'reject_closed', reason: 'equipment_unavailable', url }],
+      };
+    }
+  } else if (state.gate !== 'ready') {
+    return { state, commands: [] };
+  }
+
   const token = state.nextToken;
   const url = state.queued;
   return {
@@ -78,47 +122,61 @@ export function reduceSsoInbox(
   switch (event.type) {
     case 'reset':
       return {
-        state: { ...initialSsoInboxState, generation: state.generation + 1 },
+        state: {
+          ...initialSsoInboxState,
+          generation: state.generation + 1,
+          terminalClosed: state.terminalClosed,
+        },
         commands: [],
       };
 
     case 'session': {
+      const next: SsoInboxState = {
+        ...state,
+        gate: event.gate,
+        equipment: event.equipment ?? state.equipment,
+      };
       if (event.gate === 'failed') {
-        // A queued request that never dispatched is terminally stranded — return
-        // its bounded error callback so WB-E is not left on "handoff incomplete".
-        const stranded = state.queued;
+        const stranded = next.queued;
+        const reason: SsoTerminalReason = event.terminalReason ?? 'revalidation_failed';
         return {
           state: {
-            ...state,
-            gate: 'failed',
+            ...next,
             queued: null,
             inFlightToken: null,
-            handled: stranded ?? state.handled,
-            generation: state.generation + 1,
+            handled: stranded ?? next.handled,
+            generation: next.generation + 1,
+            terminalClosed: closeUrl(next, stranded),
           },
           commands: [
-            { cmd: 'reject_closed', reason: 'revalidation_failed', url: stranded ?? undefined },
+            {
+              cmd: 'reject_closed',
+              reason,
+              url: stranded ?? undefined,
+            },
           ],
         };
       }
-      const next = { ...state, gate: event.gate };
-      if (event.gate === 'ready') return dispatchQueued(next);
-      return { state: next, commands: [] };
+      return dispatchQueued(next);
     }
 
     case 'deliver': {
       if (!isSsoAuthorizeUrl(event.url)) {
         return { state, commands: [{ cmd: 'reject_closed', reason: 'not_sso' }] };
       }
+      if (state.terminalClosed.includes(event.url)) {
+        return { state, commands: [] };
+      }
       if (state.handled === event.url || state.queued === event.url) {
         return { state, commands: [] };
       }
       if (state.gate === 'failed') {
-        // Arriving into a terminally-failed generation: emit the bounded error
-        // callback once (dedupe by `handled`) — never a code.
-        if (state.handled === event.url) return { state, commands: [] };
         return {
-          state: { ...state, handled: event.url },
+          state: {
+            ...state,
+            handled: event.url,
+            terminalClosed: closeUrl(state, event.url),
+          },
           commands: [{ cmd: 'reject_closed', reason: 'revalidation_failed', url: event.url }],
         };
       }
@@ -136,7 +194,7 @@ export function reduceSsoInbox(
 }
 
 export function createSsoAuthorizeInbox() {
-  let state: SsoInboxState = { ...initialSsoInboxState };
+  let state: SsoInboxState = { ...initialSsoInboxState, terminalClosed: [] };
   return {
     peek(): SsoInboxState {
       return state;
@@ -156,18 +214,16 @@ export function createSsoAuthorizeInbox() {
 
 const liveInbox = createSsoAuthorizeInbox();
 let liveDispatch: (url: string) => Promise<unknown> = async () => {};
-// Terminal-error dispatch: routes a stranded authorize URL through the normal
-// SSO handler, which (because reconciliation is NOT verified — the reason the
-// gate is failed) short-circuits to a bounded credential-free error callback in
-// ssoAuthorizationCore and issues NO code.
-let liveTerminalDispatch: (url: string) => Promise<unknown> = async () => {};
+let liveTerminal: (url: string, reason: SsoTerminalReason) => Promise<unknown> = async () => {};
 
 export function bindSsoAuthorizeDispatch(fn: (url: string) => Promise<unknown>): void {
   liveDispatch = fn;
 }
 
-export function bindSsoTerminalDispatch(fn: (url: string) => Promise<unknown>): void {
-  liveTerminalDispatch = fn;
+export function bindSsoTerminalDispatch(
+  fn: (url: string, reason: SsoTerminalReason) => Promise<unknown>,
+): void {
+  liveTerminal = fn;
 }
 
 async function runInboxCommands(commands: SsoInboxCommand[]): Promise<void> {
@@ -179,14 +235,10 @@ async function runInboxCommands(commands: SsoInboxCommand[]): Promise<void> {
         liveInbox.dispatch({ type: 'dispatched', token: command.token });
       }
     } else if (command.cmd === 'reject_closed') {
-      if (command.reason === 'revalidation_failed' && command.url) {
-        // Real queued request reached a terminal authority failure: return the
-        // bounded error callback to the fixed audience so WB-E is not stranded.
-        console.log('[sso] sso.route.terminal_error: revalidation_failed');
-        await liveTerminalDispatch(command.url);
-      } else {
-        // not_sso, or a failed transition with nothing queued — log only.
+      if (command.reason === 'not_sso' || !command.url) {
         console.log(`[sso] sso.route.queued_closed: ${command.reason}`);
+      } else {
+        await liveTerminal(command.url, command.reason);
       }
     }
   }
@@ -201,11 +253,20 @@ export function acceptSsoAuthorizeUrl(
   void runInboxCommands(commands);
 }
 
-export function notifySsoInboxSession(gate: SsoSessionGate): void {
-  const { commands } = liveInbox.dispatch({ type: 'session', gate });
+export function notifySsoInboxSession(
+  gate: SsoSessionGate,
+  equipment?: EquipmentRelease,
+  terminalReason?: SsoTerminalReason,
+): void {
+  const { commands } = liveInbox.dispatch({ type: 'session', gate, equipment, terminalReason });
   void runInboxCommands(commands);
 }
 
 export function resetLiveSsoAuthorizeInbox(): void {
   liveInbox.reset();
+}
+
+/** Test-only: inspect the live inbox without exposing URL query material in production. */
+export function __peekLiveSsoAuthorizeInboxForTests(): SsoInboxState {
+  return liveInbox.peek();
 }

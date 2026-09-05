@@ -146,17 +146,14 @@ test('wiring: Linking listener is not torn down on user change', () => {
 
 test('wiring: AuthContext gates readiness on COMPOSITE revalidation + reconciliation, not revalidation alone', () => {
   const auth = src('src/core/context/AuthContext.tsx');
-  // The inbox gate is owned by the composite readiness bridge, fed by BOTH the
-  // revalidation outcome AND reconciliation-state transitions.
   assert.ok(auth.includes('createCompositeReadinessBridge'));
-  assert.ok(auth.includes('onAuthReconciliationChange'));
-  assert.ok(auth.includes('reportReconciliation'));
+  assert.ok(auth.includes('reportReconciliation(gen, state)'));
+  assert.ok(!auth.includes('onAuthReconciliationChange'));
+  assert.ok(!auth.includes("reportReconciliation(readinessGenRef.current"));
   const mount = auth.slice(
     auth.indexOf('// On mount: check SecureStore'),
     auth.indexOf('const login = useCallback'),
   );
-  // After revalidation the mount REPORTS ok to the composite bridge — it never
-  // publishes `ready` directly (the exact defect this repair closes).
   assert.ok(mount.indexOf('reportSsoRevalidation') > mount.indexOf('revalidateDriverSession'));
   assert.equal(mount.includes("setSsoSessionGate('ready')"), false);
 });
@@ -196,4 +193,29 @@ test('wiring: SsoAuthorizeListener mounts once with empty deps', () => {
   const slice = layout.slice(start, layout.indexOf('function DvirReceiptListener'));
   assert.ok(slice.includes('useEffect(() => {'));
   assert.ok(slice.includes('}, []);'));
+  assert.ok(slice.includes('respondSsoTerminalError'));
+  assert.ok(!slice.includes('bindSsoTerminalDispatch((url) => dispatchSsoUrl'));
+});
+
+test('equipment URL stays queued while equipment pending even if auth ready', () => {
+  const EQUIP = 'wellbuilt-suite://sso-authorize?v=1&aud=wellbuilt-equipment&cc=ccc&ccm=S256&state=sss';
+  const r = fold([
+    { type: 'deliver', url: EQUIP, path: 'runtime' },
+    { type: 'session', gate: 'ready', equipment: 'pending' },
+  ]);
+  assert.equal(r.dispatches.length, 0);
+  assert.equal(r.state.queued, EQUIP);
+  assert.equal(r.state.handled, null);
+});
+
+test('terminally closed URL cannot re-enter issuance after reset', () => {
+  const queued = fold([{ type: 'deliver', url: AUTH, path: 'runtime' }]);
+  const failed = fold([{ type: 'session', gate: 'failed' }], queued.state);
+  assert.ok(failed.rejects.includes('revalidation_failed'));
+  const reset = fold([{ type: 'reset' }], failed.state);
+  const again = fold([
+    { type: 'deliver', url: AUTH, path: 'runtime' },
+    { type: 'session', gate: 'ready' },
+  ], reset.state);
+  assert.equal(again.dispatches.length, 0);
 });

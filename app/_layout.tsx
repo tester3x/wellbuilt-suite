@@ -26,6 +26,7 @@ import {
 import { getSsoSessionGate } from '@/core/services/ssoSessionGate';
 import { dispatchSsoUrl } from '@/core/services/ssoRuntime';
 import { isSsoAuthorizeUrl } from '@/core/services/ssoRouteAdapter';
+import { respondSsoTerminalError } from '@/core/services/ssoTerminalResponder';
 
 // Keep the native splash screen visible until we're ready
 // This prevents the black flicker between native splash and React render
@@ -40,10 +41,13 @@ SplashScreen.preventAutoHideAsync();
 function SsoAuthorizeListener() {
   useEffect(() => {
     bindSsoAuthorizeDispatch((url) => dispatchSsoUrl(url));
-    // Terminal error return: a stranded authorize routes through the same handler,
-    // which returns a bounded error callback (ssoAuthorizationCore refuses to
-    // issue a code unless reconciliation is verified) so WB-E is not stranded.
-    bindSsoTerminalDispatch((url) => dispatchSsoUrl(url));
+    // Issuance-incapable terminal path. Never dispatchSsoUrl / authorize / requestCode.
+    bindSsoTerminalDispatch((url, reason) =>
+      respondSsoTerminalError(url, reason, {
+        openUrl: (callbackUrl) => Linking.openURL(callbackUrl),
+        log: (event, code) => console.log(`[sso] ${event}: ${code}`),
+      }),
+    );
     Linking.getInitialURL().then((url) => acceptSsoAuthorizeUrl(url, 'initial'));
     const sub = Linking.addEventListener('url', (e) => {
       acceptSsoAuthorizeUrl(e.url, 'runtime');
