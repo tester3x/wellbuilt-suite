@@ -30,7 +30,8 @@ import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shif
 import {
   decideEndShiftRoute,
   performEndShiftDirectClose,
-  type DvirObligationSignal,
+  type PreTripSignal,
+  type OperatedSignal,
   type EndShiftRoute,
   type EndShiftDirectCloseResult,
 } from '../services/workPeriodAuthority/endShiftDvirRouting';
@@ -1159,13 +1160,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user, shiftActive, returningToYard]);
 
-  // Canonical vehicle/DVIR obligation signal for the shift: a matching completed
-  // Pre-Trip receipt, or an armed pending Post-Trip — the same durable signals the
-  // Post-Trip gate uses to require Post-Trip. Never ticket/job activity. An
-  // unavailable signal is reported as 'unknown', never assumed to be absent.
-  const determineDvirObligation = useCallback(
-    async (periodId: string | null): Promise<DvirObligationSignal> => {
-      if (!periodId) return 'unknown';
+  // Canonical DVIR signals for the shift.
+  //   preTrip:  a matching Pre-Trip receipt, or an armed pending Post-Trip — the
+  //             same durable signals the Post-Trip gate uses. 'indeterminate' when
+  //             the receipt store cannot be read (never assumed absent).
+  //   operated: whether the inspected equipment was actually driven. WB-S has NO
+  //             durable, period-attributed operation signal today (its only
+  //             "depart" is the return-to-yard leg; WB-T's depart is invoice-
+  //             scoped, not period-attributed), so this is truthfully 'unknown'.
+  //             The routing fails safe on 'unknown' (require Post-Trip when a
+  //             Pre-Trip exists) — it never fabricates operation or bypasses.
+  //             See the return report for the smallest required contract change.
+  const determineDvirSignals = useCallback(
+    async (periodId: string | null): Promise<{ preTrip: PreTripSignal; operated: OperatedSignal }> => {
+      const operated: OperatedSignal = 'unknown';
+      if (!periodId) return { preTrip: 'indeterminate', operated };
       try {
         const { createSuiteDvirGate } = await import('../services/dvirGate');
         const gate = createSuiteDvirGate({ isShiftActive: () => true });
@@ -1174,9 +1183,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           gate.peekPendingEndShift(),
         ]);
         const pendingForShift = !!pending && pending.shiftId === periodId;
-        return hasPreTrip || pendingForShift ? 'obligation' : 'no_obligation';
+        return { preTrip: hasPreTrip || pendingForShift ? 'yes' : 'no', operated };
       } catch {
-        return 'unknown';
+        return { preTrip: 'indeterminate', operated };
       }
     },
     [],
@@ -1194,14 +1203,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
     const enforcement = parseSuiteEnforcement(cfg ?? undefined);
     const periodId = await getCurrentShiftId();
-    const obligation = await determineDvirObligation(periodId);
+    const { preTrip, operated } = await determineDvirSignals(periodId);
     return decideEndShiftRoute({
       enforcedExplicit: isEnforcedExplicitShift(enforcement),
       shiftOpen: shiftActive || returningToYard,
       periodId,
-      obligation,
+      preTrip,
+      operated,
     });
-  }, [user, shiftActive, returningToYard, determineDvirObligation]);
+  }, [user, shiftActive, returningToYard, determineDvirSignals]);
 
   const closeShiftDirect = useCallback(async (): Promise<EndShiftDirectCloseResult> => {
     if (!user) return { kind: 'existing_flow' };

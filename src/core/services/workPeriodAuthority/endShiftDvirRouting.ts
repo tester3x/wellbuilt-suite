@@ -7,21 +7,36 @@
  * mean "no work" — it means there is no vehicle-operation obligation gating the
  * close. Ticket/job activity is never the predicate.
  *
- * The predicate is the existing canonical Post-Trip obligation signal: a
- * matching completed Pre-Trip receipt (or an armed pending Post-Trip) for the
- * shift. That is exactly what ensurePostTripGate uses to arm Post-Trip, so this
- * reuses the canonical signal rather than inventing one.
+ * LOCKED RULE:  Post-Trip required = matching valid Pre-Trip AND actual
+ * operation of that equipment.  Completing a Pre-Trip creates an inspected /
+ * planned equipment session; it does NOT prove the equipment was driven.
  *
- *  - obligation present  → existing governed return / arrival / Post-Trip path.
- *  - definitively absent  → ordinary End Shift closes the work period directly
- *                           via the existing authoritative closeDriverShift.
- *  - unknown/unavailable  → never assume absent; verify/reconcile, never bypass.
+ *   preTrip  operated                result
+ *   ───────  ─────────────────────   ─────────────────────────────────────────
+ *   no       (any)                   End Shift directly; no Post-Trip
+ *   yes      not_operated (proven)   End Shift directly; retain Pre-Trip record
+ *   yes      operated                require the matching Post-Trip
+ *   yes      unknown                 fail safe: require Post-Trip (never bypass)
+ *   indeterminate / no period        fail safe into verification
  *
- * No backend change, no local authoritative marker, no reason token, and no
- * arrival / inspection / odometer / job / "no work" record is created.
+ * The predicate reuses the existing canonical Pre-Trip receipt signal (what the
+ * Post-Trip gate itself uses) plus an equipment-operation signal. It never uses
+ * ticket/job activity, invents a local authoritative marker, or weakens the gate.
+ * No backend change, no reason token, and no arrival / inspection / odometer /
+ * job / "no work" record is created.
+ *
+ * NOTE (contract gap): WB-S has no durable, period-attributed "vehicle operated"
+ * signal today, so the wiring supplies operated = 'unknown' for every inspected
+ * shift and the "yes + not_operated → direct close" row is not yet reachable in
+ * production. The rule is encoded and tested here so it is correct the moment a
+ * truthful operated signal exists. See the return report for the smallest
+ * required contract change.
  */
 
-export type DvirObligationSignal = 'obligation' | 'no_obligation' | 'unknown';
+/** Whether a matching valid Pre-Trip receipt exists for the shift. */
+export type PreTripSignal = 'yes' | 'no' | 'indeterminate';
+/** Whether the inspected equipment was actually operated this shift. */
+export type OperatedSignal = 'operated' | 'not_operated' | 'unknown';
 
 export interface EndShiftRouteInput {
   /** Enforced explicit_shift company. Legacy shifts keep their existing flow. */
@@ -30,8 +45,10 @@ export interface EndShiftRouteInput {
   shiftOpen: boolean;
   /** Authoritative server period id for the open shift. */
   periodId: string | null;
-  /** Canonical vehicle/DVIR obligation signal for this shift. */
-  obligation: DvirObligationSignal;
+  /** Canonical Pre-Trip receipt signal for this shift. */
+  preTrip: PreTripSignal;
+  /** Canonical equipment-operation signal for this shift. */
+  operated: OperatedSignal;
 }
 
 export type EndShiftRoute =
@@ -41,23 +58,27 @@ export type EndShiftRoute =
 
 /**
  * Pure routing decision for the End Shift action. Never converts a governed or
- * unverified shift into a direct close.
+ * unverified shift into a direct close, and never bypasses a possibly-required
+ * Post-Trip: when operation cannot be proven for an inspected shift it fails
+ * safe onto the governed Post-Trip path (which requires the inspection).
  */
 export function decideEndShiftRoute(i: EndShiftRouteInput): EndShiftRoute {
   // Legacy/non-enforced shifts and not-open shifts keep the existing behavior.
   if (!i.enforcedExplicit) return { action: 'existing_flow' };
   if (!i.shiftOpen) return { action: 'existing_flow' };
-  // A matching completed Pre-Trip (or armed Post-Trip) establishes the
-  // vehicle-operation obligation — the governed return/arrival/Post-Trip path
-  // owns the close and must not be weakened or bypassed.
-  if (i.obligation === 'obligation') return { action: 'existing_flow' };
-  // Never assume "no obligation" when the canonical signal is unavailable or
-  // still verifying: reconcile / show a recoverable message instead.
-  if (i.obligation === 'unknown') return { action: 'verify_obligation', reason: 'obligation_unknown' };
   if (!i.periodId) return { action: 'verify_obligation', reason: 'no_period' };
-  // Definitively no vehicle/DVIR obligation → ordinary End Shift closes the work
-  // period directly. Full shift duration is preserved (paid work may have occurred).
-  return { action: 'direct_close', periodId: i.periodId };
+  // Cannot even read the Pre-Trip signal → verify, never assume absent.
+  if (i.preTrip === 'indeterminate') return { action: 'verify_obligation', reason: 'obligation_unknown' };
+  // No vehicle/DVIR obligation → ordinary End Shift closes the work period
+  // directly. Full shift duration is preserved (paid work may have occurred).
+  if (i.preTrip === 'no') return { action: 'direct_close', periodId: i.periodId };
+  // Inspected shift, canonically proven NOT operated (e.g. reassigned before
+  // departing) → close directly and retain the Pre-Trip record. No false Post-Trip.
+  if (i.operated === 'not_operated') return { action: 'direct_close', periodId: i.periodId };
+  // Inspected AND (operated | operation unknown) → the existing governed
+  // return/arrival/Post-Trip path owns the close. Fail-safe on unknown: require
+  // the inspection rather than silently bypass it.
+  return { action: 'existing_flow' };
 }
 
 export interface EndShiftDirectCloseDeps {

@@ -238,14 +238,13 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         return;
       }
       setShowStartModal(false);
-      // Force Pre-Trip only after successful claim/adoption (still under busy).
-      try {
-        const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
-        const gate = createSuiteDvirGate({ isShiftActive: () => true });
-        await gate.ensurePreTripGate({ alertOnBlock: true });
-      } catch (err) {
-        console.warn('[ActionCardRow] Pre-Trip gate launch failed:', err);
-      }
+      // Start Shift begins paid work time immediately and does NOT force a DVIR
+      // (Pre-Trip) or JSA handoff, equipment selection, or any driving/job action.
+      // A shift is a work period; vehicle operation is a separate lifecycle. The
+      // Pre-Trip obligation is enforced at the actual vehicle boundary (opening
+      // Tickets / departure), not at clock-in — so shop work, maintenance,
+      // training, and paperwork shifts start without any inspection prompt. The
+      // WellBuilt eQuipment card stays available for voluntary early Pre-Trip.
     } finally {
       setStartConfirmBusy(false);
     }

@@ -1,9 +1,12 @@
 /**
- * End Shift vs. DVIR-obligation routing (P0 reframe) — failing-first coverage.
+ * End Shift vs. DVIR-obligation routing (P0) — failing-first behavioral coverage.
  *
  * A shift is paid work time; the vehicle/DVIR (Post-Trip) obligation is a
- * separate lifecycle. These tests pin the pure routing decision, the direct
- * close orchestration, and the real Suite action/routing seams.
+ * separate lifecycle. Post-Trip required = matching valid Pre-Trip AND actual
+ * operation of the equipment. These tests pin the pure routing decision, the
+ * direct-close orchestration, and the real Suite action/routing seams
+ * (Start-Shift correction, departure DVIR hand-off, Sign Out separation, and
+ * the truthful — never fabricated — operation signal).
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -17,13 +20,16 @@ import {
 } from './endShiftDvirRouting.js';
 
 const PERIOD = '2026-09-05_070000';
+const root = join(__dirname, '..', '..', '..', '..');
+const read = (p: string) => readFileSync(join(root, p), 'utf8');
 
 function routeInput(over: Partial<EndShiftRouteInput> = {}): EndShiftRouteInput {
   return {
     enforcedExplicit: true,
     shiftOpen: true,
     periodId: PERIOD,
-    obligation: 'no_obligation',
+    preTrip: 'no',
+    operated: 'unknown',
     ...over,
   };
 }
@@ -48,25 +54,34 @@ function harness(over: Partial<EndShiftDirectCloseDeps> = {}) {
   return { deps, calls };
 }
 
-describe('decideEndShiftRoute (product rules)', () => {
-  it('Rule 2: definitively no Pre-Trip/DVIR obligation → ordinary direct close', () => {
-    const r = decideEndShiftRoute(routeInput({ obligation: 'no_obligation' }));
-    assert.deepEqual(r, { action: 'direct_close', periodId: PERIOD });
+describe('decideEndShiftRoute — locked rule (Pre-Trip AND operated)', () => {
+  it('no Pre-Trip → ordinary direct close (any operation state)', () => {
+    for (const operated of ['unknown', 'not_operated', 'operated'] as const) {
+      assert.deepEqual(
+        decideEndShiftRoute(routeInput({ preTrip: 'no', operated })),
+        { action: 'direct_close', periodId: PERIOD },
+      );
+    }
   });
 
-  it('Rule 1: matching completed Pre-Trip obligation → existing governed flow', () => {
-    const r = decideEndShiftRoute(routeInput({ obligation: 'obligation' }));
-    assert.equal(r.action, 'existing_flow');
+  it('Pre-Trip + canonically NOT operated → direct close, retain Pre-Trip (no false Post-Trip)', () => {
+    assert.deepEqual(
+      decideEndShiftRoute(routeInput({ preTrip: 'yes', operated: 'not_operated' })),
+      { action: 'direct_close', periodId: PERIOD },
+    );
   });
 
-  it('Rule 3: unknown/verifying obligation → verify, never assume absent, never bypass', () => {
-    const r = decideEndShiftRoute(routeInput({ obligation: 'unknown' }));
-    assert.equal(r.action, 'verify_obligation');
+  it('Pre-Trip + operated → require the matching Post-Trip (existing governed flow)', () => {
+    assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'yes', operated: 'operated' })).action, 'existing_flow');
   });
 
-  it('no period id → verify (cannot close), never direct close', () => {
-    const r = decideEndShiftRoute(routeInput({ obligation: 'no_obligation', periodId: null }));
-    assert.equal(r.action, 'verify_obligation');
+  it('Pre-Trip + operation UNKNOWN → fail safe: require Post-Trip, never silently bypass', () => {
+    assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'yes', operated: 'unknown' })).action, 'existing_flow');
+  });
+
+  it('Pre-Trip signal indeterminate, or no period → verify (never assume absent)', () => {
+    assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'indeterminate' })).action, 'verify_obligation');
+    assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'no', periodId: null })).action, 'verify_obligation');
   });
 
   it('legacy (non-enforced) or not-open shift → existing flow unchanged', () => {
@@ -80,8 +95,8 @@ describe('decideEndShiftRoute (product rules)', () => {
   });
 });
 
-describe('performEndShiftDirectClose (orchestration)', () => {
-  it('T1: no Pre-Trip → normal close called exactly once, then return state cleared', async () => {
+describe('performEndShiftDirectClose — orchestration', () => {
+  it('T1: trapped no-Pre-Trip shift closes exactly once, then return state cleared', async () => {
     const { deps, calls } = harness();
     const r = await performEndShiftDirectClose(deps);
     assert.equal(r.kind, 'closed');
@@ -90,142 +105,157 @@ describe('performEndShiftDirectClose (orchestration)', () => {
     assert.equal(calls.cleared, 1);
   });
 
-  it('T2/T3: closes by period id only — no odometer/arrival/post-trip/receipt dep exists', async () => {
+  it('T1: closes by period id only — no arrival/odometer/post-trip/receipt dep exists', async () => {
     const { deps } = harness();
     const depKeys = Object.keys(deps);
     assert.ok(!depKeys.some((k) => /odometer|arrival|postTrip|receipt|markArrived|enRoute|reason|marker/i.test(k)));
     await performEndShiftDirectClose(deps);
   });
 
-  it('T6: unknown/verifying obligation route → verify passthrough, never closes', async () => {
-    const { deps, calls } = harness({
-      route: decideEndShiftRoute(routeInput({ obligation: 'unknown' })),
-    });
-    const r = await performEndShiftDirectClose(deps);
-    assert.equal(r.kind, 'verify_obligation');
-    assert.equal(calls.realClosures, 0);
-    assert.equal(calls.cleared, 0);
-  });
-
-  it('T5(governed): obligation route → existing_flow, no close', async () => {
-    const { deps, calls } = harness({
-      route: decideEndShiftRoute(routeInput({ obligation: 'obligation' })),
-    });
-    const r = await performEndShiftDirectClose(deps);
-    assert.equal(r.kind, 'existing_flow');
-    assert.equal(calls.realClosures, 0);
-  });
-
-  it('T7: close failure → retry, shift + return state left intact', async () => {
+  it('T2: close failure → retry, shift + return state left intact', async () => {
     const { deps, calls } = harness({ close: async () => ({ ok: false, reason: 'transport' }) });
     const r = await performEndShiftDirectClose(deps);
     assert.equal(r.kind, 'retry');
     assert.equal(calls.cleared, 0);
   });
 
-  it('T7b: close throwing (offline) → retry, nothing cleared', async () => {
+  it('T2b: close throwing (offline) → retry, nothing cleared', async () => {
     const { deps, calls } = harness({
-      close: async () => {
-        throw new Error('network_unavailable');
-      },
+      close: async () => { throw new Error('network_unavailable'); },
     });
     const r = await performEndShiftDirectClose(deps);
     assert.equal(r.kind, 'retry');
     assert.equal(calls.cleared, 0);
   });
 
-  it('T8: repeated closes are idempotent (server alreadyClosed dedupe)', async () => {
+  it('idempotent: repeated closes dedupe via the server alreadyClosed contract', async () => {
     let n = 0;
-    const { deps } = harness({
-      close: async () => {
-        n += 1;
-        return { ok: true, alreadyClosed: n > 1 };
-      },
-    });
+    const { deps } = harness({ close: async () => { n += 1; return { ok: true, alreadyClosed: n > 1 }; } });
     const first = await performEndShiftDirectClose(deps);
     const second = await performEndShiftDirectClose(deps);
-    assert.equal(first.kind, 'closed');
-    assert.equal(second.kind, 'closed');
     if (first.kind === 'closed') assert.equal(first.alreadyClosed, false);
     if (second.kind === 'closed') assert.equal(second.alreadyClosed, true);
   });
 
-  it('stale generation after ok close → does not mutate a replaced session’s state', async () => {
+  it('T7(governed): Pre-Trip+operated route → existing_flow, no direct close', async () => {
+    const { deps, calls } = harness({
+      route: decideEndShiftRoute(routeInput({ preTrip: 'yes', operated: 'operated' })),
+    });
+    const r = await performEndShiftDirectClose(deps);
+    assert.equal(r.kind, 'existing_flow');
+    assert.equal(calls.realClosures, 0);
+  });
+
+  it('T10: verify route → passthrough, never closes', async () => {
+    const { deps, calls } = harness({
+      route: decideEndShiftRoute(routeInput({ preTrip: 'indeterminate' })),
+    });
+    const r = await performEndShiftDirectClose(deps);
+    assert.equal(r.kind, 'verify_obligation');
+    assert.equal(calls.realClosures, 0);
+  });
+
+  it('T10: stale generation after ok close → does not mutate a replaced session', async () => {
     let current = true;
     const { deps, calls } = harness({ isCurrent: () => current });
-    deps.close = async () => {
-      current = false;
-      return { ok: true, alreadyClosed: false };
-    };
+    deps.close = async () => { current = false; return { ok: true, alreadyClosed: false }; };
     const r = await performEndShiftDirectClose(deps);
     assert.equal(r.kind, 'closed');
     assert.equal(calls.cleared, 0);
   });
 });
 
-describe('Suite wiring (real action/routing seams)', () => {
-  const root = join(__dirname, '..', '..', '..', '..');
-  const read = (p: string) => readFileSync(join(root, p), 'utf8');
+describe('T3/T4/T5 — Start-Shift correction (no forced DVIR or JSA)', () => {
+  const row = read('src/ui/shared/ActionCardRow.tsx');
 
-  it('AuthContext exposes resolveEndShiftRoute + closeShiftDirect on performEndShiftDirectClose', () => {
-    const auth = read('src/core/context/AuthContext.tsx');
-    assert.ok(auth.includes('performEndShiftDirectClose'));
-    assert.ok(auth.includes('resolveEndShiftRoute'));
-    assert.ok(auth.includes('closeShiftDirect'));
-    assert.ok(/resolveEndShiftRoute,/.test(auth) && /closeShiftDirect,/.test(auth));
+  it('T3: Start Shift does not force a DVIR Pre-Trip (the only Pre-Trip force is removed)', () => {
+    assert.ok(row.includes('const handleStartConfirm'), 'Start-Shift confirm present');
+    // The forced-Pre-Trip-after-claim block is gone; the Pre-Trip gate now lives
+    // only at the vehicle boundary (Tickets/depart), never at clock-in.
+    assert.ok(!row.includes('ensurePreTripGate'), 'no Pre-Trip force anywhere in ActionCardRow');
+    assert.ok(/Start Shift begins paid work time immediately/.test(row), 'correction documented');
   });
 
-  it('T2 duration preserved: direct close cleanup never clears shiftStartTime', () => {
-    const auth = read('src/core/context/AuthContext.tsx');
-    const s = auth.indexOf('const closeShiftDirect');
-    const e = auth.indexOf('const logoutWithCascade');
-    const region = auth.slice(s, e > s ? e : undefined);
-    assert.ok(s > 0, 'closeShiftDirect located');
-    assert.ok(!/shiftStartTime/.test(region), 'must not touch shiftStartTime (paid duration preserved)');
+  it('T4: Start Shift does not launch JSA, and the JSA choice launcher stays dead', () => {
+    assert.ok(!/jsaapp|launchJsa/.test(row));
+    assert.ok(!row.includes('onJsaLaunch('), 'JSA launch prop never invoked');
+    assert.ok(!row.includes('<JsaChoiceModal'), 'removed JsaChoiceModal not rendered');
+  });
+});
+
+describe('T8/T9 — departure DVIR hand-off remains enforced (gate not weakened)', () => {
+  it('T8: opening Tickets while on shift still enforces Pre-Trip → WB-E hand-off', () => {
+    const launcher = read('src/core/hooks/useAppLauncher.ts');
+    const dvir = read('src/core/services/dvirGate/dvirGateService.ts');
+    // The Tickets/vehicle boundary still gates on a Pre-Trip receipt and launches
+    // eQuipment when missing — removing the Start-Shift force did not weaken it.
+    assert.ok(launcher.includes('ensurePreTripGate'));
+    assert.ok(dvir.includes('launchEquipmentPhase(deps, \'pre_trip\''));
   });
 
-  it('T9: Sign Out / logout never closes the shift', () => {
-    const auth = read('src/core/context/AuthContext.tsx');
+  it('T9: a satisfied Pre-Trip receipt lets the boundary through (single, idempotent)', () => {
+    const dvir = read('src/core/services/dvirGate/dvirGateService.ts');
+    // ensurePreTripGate returns allowed with no relaunch once a receipt exists.
+    assert.ok(dvir.includes('if (await isPreTripCompleteForShift(deps, shiftId)) {'));
+  });
+});
+
+describe('T11/T12/T15 — operation is truthful; job/GPS/JSA never fabricate it', () => {
+  const auth = read('src/core/context/AuthContext.tsx');
+  it('T11/T12: WB-S never sets operated to a truthy value (no job/GPS-derived operation)', () => {
+    // WB-S has no durable operated signal; the wiring is truthfully 'unknown'.
+    const sig = auth.slice(auth.indexOf('const determineDvirSignals'), auth.indexOf('const resolveEndShiftRoute'));
+    assert.ok(sig.includes("const operated: OperatedSignal = 'unknown'"));
+    assert.ok(!/operated:\s*'operated'/.test(sig), 'never asserts operated');
+  });
+  it('T15: JSA is not an input to End Shift routing (disabled/enabled cannot gate it)', () => {
+    const src = readFileSync(join(__dirname, 'endShiftDvirRouting.ts'), 'utf8');
+    assert.ok(!/jsa/i.test(src));
+    const route = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const closeShiftDirect'));
+    assert.ok(!/jsa/i.test(route));
+  });
+});
+
+describe('T13/T16 — Sign Out separation + withdrawn naming', () => {
+  const auth = read('src/core/context/AuthContext.tsx');
+  it('T13: Sign Out / logout never closes the shift', () => {
     const s = auth.indexOf('const logoutWithCascade');
     const e = auth.indexOf('const refreshSession');
     const region = auth.slice(s, e > 0 ? e : undefined);
     assert.ok(s > 0);
     assert.ok(!region.includes('closeShiftDirect') && !region.includes('performEndShiftDirectClose'));
   });
-
-  it('T4: already-returning without obligation exposes truthful End Shift, not Mark Arrived overload', () => {
-    const row = read('src/ui/shared/ActionCardRow.tsx');
-    assert.ok(row.includes('closeShiftDirect'));
-    assert.ok(row.includes('ShiftEndRecoveryCard'), 'truthful recovery card used in returning branch');
-    // The direct close must NOT be wired onto EnRouteYardCard's arrival action.
-    assert.ok(!/onArrived=\{[^}]*closeShiftDirect/.test(row), 'Mark Arrived must not trigger direct close');
-  });
-
-  it('T5: governed arrival path still enforces Post-Trip', () => {
-    const row = read('src/ui/shared/ActionCardRow.tsx');
-    assert.ok(row.includes('ensurePostTripGate'));
-    assert.ok(row.includes('EnRouteYardCard'));
+  it('T16: no withdrawn "No Work" / aborted_before_pretrip concepts return', () => {
+    const src = readFileSync(join(__dirname, 'endShiftDvirRouting.ts'), 'utf8');
+    const en = JSON.parse(read('src/core/localization/translations/en.json'));
+    const es = JSON.parse(read('src/core/localization/translations/es.json'));
+    assert.ok(!/aborted_before_pretrip/.test(src));
+    assert.ok(!auth.includes('aborted_before_pretrip'));
+    assert.ok(!en.shift.endNoWorkAction && !es.shift.endNoWorkAction);
   });
 });
 
-describe('truthful copy + withdrawn naming', () => {
-  const root = join(__dirname, '..', '..', '..', '..');
-  const en = JSON.parse(readFileSync(join(root, 'src/core/localization/translations/en.json'), 'utf8'));
-  const es = JSON.parse(readFileSync(join(root, 'src/core/localization/translations/es.json'), 'utf8'));
-  const NEW = ['endShiftConfirmTitle', 'endShiftConfirmBody', 'endShiftFailed', 'endVerifying', 'endShiftOpenTitle'];
-
-  it('new shift.* keys exist and are translated in both languages', () => {
-    for (const k of NEW) {
-      assert.ok(en.shift[k] && typeof en.shift[k] === 'string', `en shift.${k} missing`);
-      assert.ok(es.shift[k] && typeof es.shift[k] === 'string', `es shift.${k} missing`);
-      assert.notEqual(es.shift[k], en.shift[k], `es shift.${k} must be translated`);
-    }
+describe('Suite wiring (routing seams) + truthful copy', () => {
+  const auth = read('src/core/context/AuthContext.tsx');
+  const row = read('src/ui/shared/ActionCardRow.tsx');
+  it('AuthContext exposes resolveEndShiftRoute + closeShiftDirect on performEndShiftDirectClose', () => {
+    assert.ok(auth.includes('performEndShiftDirectClose'));
+    assert.ok(/resolveEndShiftRoute,/.test(auth) && /closeShiftDirect,/.test(auth));
   });
-
-  it('withdrawn "no work" / aborted_before_pretrip naming is absent from the routing module', () => {
-    const src = readFileSync(join(__dirname, 'endShiftDvirRouting.ts'), 'utf8');
-    assert.ok(!/aborted_before_pretrip/.test(src));
-    // No user-facing "No Work" action naming survives.
-    assert.ok(!en.shift.endNoWorkAction && !es.shift.endNoWorkAction);
+  it('trapped returning shift w/o obligation shows truthful End Shift, not Mark Arrived overload', () => {
+    assert.ok(row.includes('closeShiftDirect'));
+    assert.ok(row.includes('ShiftEndRecoveryCard'));
+    assert.ok(!/onArrived=\{[^}]*closeShiftDirect/.test(row));
+  });
+  it('governed arrival path still enforces Post-Trip', () => {
+    assert.ok(row.includes('ensurePostTripGate'));
+    assert.ok(row.includes('EnRouteYardCard'));
+  });
+  it('new shift.* copy is present and translated in both languages', () => {
+    const en = JSON.parse(read('src/core/localization/translations/en.json'));
+    const es = JSON.parse(read('src/core/localization/translations/es.json'));
+    for (const k of ['endShiftConfirmTitle', 'endShiftConfirmBody', 'endShiftFailed', 'endVerifying', 'endShiftOpenTitle']) {
+      assert.ok(en.shift[k] && es.shift[k] && es.shift[k] !== en.shift[k], `shift.${k} translated`);
+    }
   });
 });

@@ -63,10 +63,12 @@ test('wiring: startReturn enforced uses recordEnforcedDepartReturn', () => {
   assert.ok(!/recordShiftEvent\(\s*'depart_return'/.test(enforced));
 });
 
-test('wiring: ActionCardRow gates checklist and Pre-Trip on claim ok', () => {
+test('wiring: ActionCardRow gates the start checklist but no longer forces Pre-Trip on claim ok', () => {
   const row = src('src/ui/shared/ActionCardRow.tsx');
   assert.ok(row.includes('mayOpenStartShiftChecklist'));
-  assert.ok(row.includes('ensurePreTripGate'));
+  // P0 Start-Shift correction: claiming a work shift never forces a Pre-Trip/DVIR
+  // handoff. The Pre-Trip gate lives only at the vehicle boundary (Tickets/depart).
+  assert.ok(!row.includes('ensurePreTripGate'));
   assert.ok(row.includes('isExplicitStartShiftSuccess'));
   assert.ok(row.includes('Checking shift status'));
   assert.ok(row.includes('refreshShiftAuthority'));

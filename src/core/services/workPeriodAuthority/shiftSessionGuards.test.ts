@@ -113,12 +113,15 @@ test('wiring: startShift single-flight guard', () => {
   assert.ok(auth.includes('setStartShiftBusy(false)'));
 });
 
-test('wiring: ActionCardRow rejects null/undefined success and gates Pre-Trip', () => {
+test('wiring: ActionCardRow rejects null/undefined success and does NOT force Pre-Trip on Start Shift', () => {
   const row = src('src/ui/shared/ActionCardRow.tsx');
   assert.ok(row.includes('isExplicitStartShiftSuccess'));
   assert.ok(row.includes('startShiftFailureReason'));
   assert.ok(!/result == null \|\| result === undefined\s*\?\s*true/.test(row));
-  assert.ok(row.includes('ensurePreTripGate'));
+  // P0 Start-Shift correction: a work shift is not a vehicle obligation. Start
+  // Shift no longer forces a Pre-Trip/DVIR (nor JSA) handoff — the Pre-Trip gate
+  // lives only at the vehicle boundary (Tickets/depart).
+  assert.ok(!row.includes('ensurePreTripGate'));
   assert.ok(row.includes('if (!isExplicitStartShiftSuccess'));
   assert.ok(row.includes('confirming={claimBusy}'));
 });
