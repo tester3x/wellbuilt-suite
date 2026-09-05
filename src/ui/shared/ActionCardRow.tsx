@@ -4,7 +4,7 @@
 // odometer, and pre-trip checklist.
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, Pressable, Animated, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -28,6 +28,7 @@ import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
+import ShiftEndRecoveryCard from './ShiftEndRecoveryCard';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -85,7 +86,7 @@ function getShiftColor(startIso: string | null): string {
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp, dvirGate } = useAppLauncher();
-  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
+  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy, resolveEndShiftRoute, closeShiftDirect } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
@@ -93,6 +94,11 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [showEndModal, setShowEndModal] = useState(false);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
   const [startConfirmBusy, setStartConfirmBusy] = useState(false);
+  // Route the returning-to-yard recovery: 'existing_flow' keeps the governed
+  // arrival/Post-Trip card; 'direct_close' shows a truthful End Shift; null =
+  // still verifying the obligation (never assume none / never a false arrival).
+  const [returningRoute, setReturningRoute] =
+    useState<'existing_flow' | 'direct_close' | 'verify_obligation' | null>(null);
   const canOpenChecklist = mayOpenStartShiftChecklist(shiftAuthorityUi);
   const claimBusy = startShiftBusy || startConfirmBusy;
   // (Pre-shift JSA preview breadcrumb + banner removed 2026-05-01. The
@@ -121,14 +127,66 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     return () => clearInterval(interval);
   }, [returning, returnStartTime]);
 
+  // Resolve how a returning-to-yard shift should recover: obligation present →
+  // governed arrival/Post-Trip; definitively none → truthful direct End Shift;
+  // unknown → verify. Recomputed whenever we (re)enter the returning state.
+  const refreshReturningRoute = useCallback(async () => {
+    const route = await resolveEndShiftRoute();
+    setReturningRoute(route.action);
+  }, [resolveEndShiftRoute]);
+  useEffect(() => {
+    if (!returning) { setReturningRoute(null); return; }
+    let cancelled = false;
+    setReturningRoute(null);
+    (async () => {
+      const route = await resolveEndShiftRoute();
+      if (!cancelled) setReturningRoute(route.action);
+    })();
+    return () => { cancelled = true; };
+  }, [returning, resolveEndShiftRoute]);
+
+  // ── Ordinary direct End Shift (no vehicle/DVIR obligation) ──
+  // Truthful confirmation, then the existing authoritative close. Never routes
+  // to EN ROUTE and never asks the driver to claim an arrival that did not occur.
+  const runDirectClose = async () => {
+    const r = await closeShiftDirect();
+    if (r.kind === 'closed') return;
+    if (r.kind === 'retry') {
+      Alert.alert(t('shift.endShiftConfirmTitle'), t('shift.endShiftFailed'));
+    } else if (r.kind === 'verify_obligation') {
+      Alert.alert(t('shift.endShiftConfirmTitle'), t('shift.endVerifying'));
+      void refreshReturningRoute();
+    } else {
+      // An obligation appeared — fall to the governed flow.
+      setShowEndModal(true);
+    }
+  };
+  const promptDirectEndShift = () => {
+    Alert.alert(
+      t('shift.endShiftConfirmTitle'),
+      t('shift.endShiftConfirmBody'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('shift.endShiftAction'), style: 'destructive', onPress: () => { void runDirectClose(); } },
+      ],
+    );
+  };
+
   // ── Shift card press handler ──
   const handleShiftPress = () => {
     if (returning) {
       // Returning to yard — branded arrival confirmation with post-trip checklist
       setShowArrivalModal(true);
     } else if (active) {
-      // Active shift — show end shift modal
-      setShowEndModal(true);
+      // Active shift — route by the vehicle/DVIR obligation. No obligation →
+      // truthful ordinary End Shift (direct close); obligation/unknown → the
+      // existing governed Return-to-Yard flow (never bypass Post-Trip).
+      void (async () => {
+        const route = await resolveEndShiftRoute();
+        if (route.action === 'direct_close') promptDirectEndShift();
+        else if (route.action === 'verify_obligation') Alert.alert(t('shift.endShiftConfirmTitle'), t('shift.endVerifying'));
+        else setShowEndModal(true);
+      })();
     } else {
       // Authority must clear before checklist (enforced explicit_shift).
       if (shiftAuthorityUi.kind === 'checking') {
@@ -235,14 +293,26 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     shiftBorder = 'rgba(245, 158, 11, 0.3)';
   }
 
-  // When returning to yard, show full-width en route card instead of 3-card row
+  // When returning to yard, show full-width recovery/en-route card instead of the
+  // 3-card row. A shift with NO vehicle/DVIR obligation gets a truthful End Shift
+  // recovery (never "Mark Arrived"); an obligation keeps the governed arrival card;
+  // while the obligation is still verifying we show a neutral checking state.
   if (returning) {
     return (
       <View>
-        <EnRouteYardCard
-          returnStartTime={returnStartTime}
-          onArrived={() => setShowArrivalModal(true)}
-        />
+        {returningRoute === 'existing_flow' ? (
+          <EnRouteYardCard
+            returnStartTime={returnStartTime}
+            onArrived={() => setShowArrivalModal(true)}
+          />
+        ) : (
+          <ShiftEndRecoveryCard
+            mode={returningRoute === 'direct_close' ? 'end' : returningRoute === 'verify_obligation' ? 'verify' : 'checking'}
+            returnStartTime={returnStartTime}
+            onEndShift={promptDirectEndShift}
+            onRetry={() => { void refreshReturningRoute(); }}
+          />
+        )}
 
         {/* ── Arrival Confirmation Modal ── */}
         <ShiftArrivalModal

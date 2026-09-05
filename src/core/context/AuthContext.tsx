@@ -27,6 +27,13 @@ import { wbDiagLog } from '../services/wbDiagLog';
 import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/postLoginShiftRestoration';
 import { createGenerationClock } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
+import {
+  decideEndShiftRoute,
+  performEndShiftDirectClose,
+  type DvirObligationSignal,
+  type EndShiftRoute,
+  type EndShiftDirectCloseResult,
+} from '../services/workPeriodAuthority/endShiftDvirRouting';
 import { registerLiveEquipmentShiftAuthority } from '../services/dvirGate/equipmentShiftLiveAuthority';
 import {
   createAuthoritySessionMachine,
@@ -113,6 +120,22 @@ interface AuthContextType {
    * so the UI can keep the modal open for retry.
    */
   confirmArrival: (odometerMiles?: number) => Promise<boolean>;
+  /**
+   * Decide how the End Shift action should route for the current shift, based on
+   * the canonical vehicle/DVIR (Post-Trip) obligation signal — WITHOUT acting:
+   *   - 'existing_flow'     → governed return/arrival/Post-Trip (obligation, or legacy).
+   *   - 'direct_close'      → no vehicle/DVIR obligation; ordinary End Shift may close.
+   *   - 'verify_obligation' → obligation unknown/unavailable; reconcile, never bypass.
+   */
+  resolveEndShiftRoute: () => Promise<EndShiftRoute>;
+  /**
+   * Ordinary End Shift for a shift with no vehicle/DVIR obligation: closes the
+   * work period via the existing authoritative closeDriverShift — no EN ROUTE,
+   * no Mark Arrived, no Post-Trip, no arrival/inspection/odometer/marker. Full
+   * shift duration is preserved. On failure the shift is left open and retryable.
+   * Idempotent. Separate from Sign Out, which never closes a shift.
+   */
+  closeShiftDirect: () => Promise<EndShiftDirectCloseResult>;
   /** Register a new driver (goes to pending state) */
   register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
@@ -988,6 +1011,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // UI action from even firing.
   const returnInFlight = useRef(false);
   const arrivalInFlight = useRef(false);
+  const directCloseInFlight = useRef(false);
 
   const startReturn = useCallback(async () => {
     if (!user) return;
@@ -1134,6 +1158,101 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       arrivalInFlight.current = false;
     }
   }, [user, shiftActive, returningToYard]);
+
+  // Canonical vehicle/DVIR obligation signal for the shift: a matching completed
+  // Pre-Trip receipt, or an armed pending Post-Trip — the same durable signals the
+  // Post-Trip gate uses to require Post-Trip. Never ticket/job activity. An
+  // unavailable signal is reported as 'unknown', never assumed to be absent.
+  const determineDvirObligation = useCallback(
+    async (periodId: string | null): Promise<DvirObligationSignal> => {
+      if (!periodId) return 'unknown';
+      try {
+        const { createSuiteDvirGate } = await import('../services/dvirGate');
+        const gate = createSuiteDvirGate({ isShiftActive: () => true });
+        const [hasPreTrip, pending] = await Promise.all([
+          gate.isPreTripComplete(periodId),
+          gate.peekPendingEndShift(),
+        ]);
+        const pendingForShift = !!pending && pending.shiftId === periodId;
+        return hasPreTrip || pendingForShift ? 'obligation' : 'no_obligation';
+      } catch {
+        return 'unknown';
+      }
+    },
+    [],
+  );
+
+  const resolveEndShiftRoute = useCallback(async (): Promise<EndShiftRoute> => {
+    if (!user) return { action: 'existing_flow' };
+    if (!shiftActive && !returningToYard) return { action: 'existing_flow' };
+    const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }] =
+      await Promise.all([
+        import('../services/companyConfig'),
+        import('../services/workPeriodAuthority/suiteShiftAuthority'),
+        import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+      ]);
+    const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+    const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+    const periodId = await getCurrentShiftId();
+    const obligation = await determineDvirObligation(periodId);
+    return decideEndShiftRoute({
+      enforcedExplicit: isEnforcedExplicitShift(enforcement),
+      shiftOpen: shiftActive || returningToYard,
+      periodId,
+      obligation,
+    });
+  }, [user, shiftActive, returningToYard, determineDvirObligation]);
+
+  const closeShiftDirect = useCallback(async (): Promise<EndShiftDirectCloseResult> => {
+    if (!user) return { kind: 'existing_flow' };
+    // Single-flight: a second tap while the first close is resolving is a no-op,
+    // so repeated End Shift taps close at most once.
+    if (directCloseInFlight.current) return { kind: 'verify_obligation', reason: 'in_flight' };
+    directCloseInFlight.current = true;
+    const gen = authorityGenRef.current.current();
+    try {
+      const route = await resolveEndShiftRoute();
+      const { closeEnforcedExplicit } = await import(
+        '../services/workPeriodAuthority/explicitShiftLifecycle'
+      );
+      const result = await performEndShiftDirectClose({
+        route,
+        // Existing authoritative close: periodId only. No odometer, no arrival.
+        close: async (pid) => {
+          const closed = await closeEnforcedExplicit({
+            periodId: pid,
+            gate: { isCurrent: () => authorityGenRef.current.isCurrent(gen) },
+          });
+          return { ok: closed.ok, alreadyClosed: closed.alreadyClosed, reason: closed.reason };
+        },
+        // Clear local return/active state only after ok close. Full shift
+        // duration is preserved — the start-time and shift-id local state are
+        // untouched here (real cleanup happens on logout; Day Summary needs the id).
+        clearReturnState: async () => {
+          setShiftActive(false);
+          setReturningToYard(false);
+          setReturnDepartTime(null);
+          setShiftAuthorityUi({ kind: 'none' });
+          await Promise.all([
+            SecureStore.setItemAsync('shiftEnded', 'true'),
+            SecureStore.deleteItemAsync('shiftStarted'),
+            SecureStore.deleteItemAsync('returnDepartTime'),
+          ]).catch(() => {});
+        },
+        isCurrent: () => authorityGenRef.current.isCurrent(gen),
+      });
+      if (result.kind === 'closed') {
+        console.log('[AuthContext] Shift closed via ordinary End Shift (no DVIR obligation) for:', user.displayName);
+      }
+      return result;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'close_failed';
+      console.warn('[AuthContext] closeShiftDirect error — shift left open:', reason);
+      return { kind: 'retry', reason };
+    } finally {
+      directCloseInFlight.current = false;
+    }
+  }, [user, resolveEndShiftRoute]);
 
   const logoutWithCascade = useCallback(async () => {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
@@ -1368,6 +1487,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logoutWithCascade,
       startReturn,
       confirmArrival,
+      resolveEndShiftRoute,
+      closeShiftDirect,
       register,
       checkRegistration,
       completeReg,

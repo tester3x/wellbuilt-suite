@@ -230,7 +230,14 @@
     "tapToClockIn": "Toque para registrar entrada",
     "returning": "Regresando",
     "tapToEndShort": "Toque para terminar",
-    "selectPackage": "Seleccione su paquete de trabajo para este turno"
+    "selectPackage": "Seleccione su paquete de trabajo para este turno",
+    "endShiftConfirmTitle": "¿Terminar Turno?",
+    "endShiftConfirmBody": "Esto termina su turno de trabajo y registra su salida. Se conserva todo su tiempo de turno. No se requiere inspección del vehículo para este turno.",
+    "endShiftFailed": "No se pudo terminar el turno. Su turno sigue abierto: verifique su conexión e inténtelo de nuevo.",
+    "endVerifying": "Verificando el estado de inspección de este turno. Inténtelo de nuevo en un momento.",
+    "endShiftOpenTitle": "Turno aún abierto",
+    "endShiftAction": "Terminar Turno",
+    "verifyRetry": "Reintentar"
   },
   "actionCard": {
     "timesheet": "Nómina",

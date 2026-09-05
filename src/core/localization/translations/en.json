@@ -230,7 +230,14 @@
     "tapToClockIn": "Tap to clock in",
     "returning": "Returning",
     "tapToEndShort": "Tap to end",
-    "selectPackage": "Select your job package for this shift"
+    "selectPackage": "Select your job package for this shift",
+    "endShiftConfirmTitle": "End Shift?",
+    "endShiftConfirmBody": "This ends your work shift and records your clock-out. Your full shift time is kept. No vehicle inspection is required for this shift.",
+    "endShiftFailed": "Could not end shift. Your shift is still open — check your connection and try again.",
+    "endVerifying": "Checking this shift's inspection status. Please try again in a moment.",
+    "endShiftOpenTitle": "Shift still open",
+    "endShiftAction": "End Shift",
+    "verifyRetry": "Retry"
   },
   "actionCard": {
     "timesheet": "Timesheet",
