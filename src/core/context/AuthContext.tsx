@@ -32,6 +32,7 @@ import {
   performEndShiftDirectClose,
   type PreTripSignal,
   type OperatedSignal,
+  type ServerShiftState,
   type EndShiftRoute,
   type EndShiftDirectCloseResult,
 } from '../services/workPeriodAuthority/endShiftDvirRouting';
@@ -129,6 +130,14 @@ interface AuthContextType {
    *   - 'verify_obligation' → obligation unknown/unavailable; reconcile, never bypass.
    */
   resolveEndShiftRoute: () => Promise<EndShiftRoute>;
+  /**
+   * Reconcile a stale local returning/shift state against the authenticated
+   * server authority. If the server has NO open period, clear local returning/
+   * shift state ONLY (no server event of any kind). Returns 'cleared' on an
+   * authoritative 'none' ack, 'not_none' if the server still has an open period
+   * (or authority not live), 'error' on failure. Never guesses or fabricates.
+   */
+  reconcileStaleReturningShift: () => Promise<'cleared' | 'not_none' | 'error'>;
   /**
    * Ordinary End Shift for a shift with no vehicle/DVIR obligation: closes the
    * work period via the existing authoritative closeDriverShift — no EN ROUTE,
@@ -1013,6 +1022,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const returnInFlight = useRef(false);
   const arrivalInFlight = useRef(false);
   const directCloseInFlight = useRef(false);
+  const reconcileInFlight = useRef(false);
 
   const startReturn = useCallback(async () => {
     if (!user) return;
@@ -1194,32 +1204,93 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const resolveEndShiftRoute = useCallback(async (): Promise<EndShiftRoute> => {
     if (!user) return { action: 'existing_flow' };
     if (!shiftActive && !returningToYard) return { action: 'existing_flow' };
-    const [{ loadCompanyConfigResult }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }] =
+    const [{ loadCompanyConfigResult }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { resolveEnforcedExplicit }] =
       await Promise.all([
         import('../services/companyConfig'),
         import('../services/workPeriodAuthority/suiteShiftAuthority'),
         import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+        import('../services/workPeriodAuthority/explicitShiftLifecycle'),
       ]);
     // LIVE authority read: enforcement must be confirmed live before any
-    // permissive route. Cache/unavailable → not live → authority gate fails
-    // closed. Never trust the SecureStore returning hint as authority.
+    // permissive route. Cache/unavailable → not live → authority gate fails closed.
     const cfgResult = user.companyId
       ? await loadCompanyConfigResult(user.companyId, { forceRefresh: true })
       : ({ kind: 'unavailable' } as const);
     const enforcementLive = cfgResult.kind === 'live';
     const cfg = cfgResult.kind === 'unavailable' ? null : cfgResult.config;
     const enforcement = parseSuiteEnforcement(cfg ?? undefined);
-    const periodId = await getCurrentShiftId();
-    const { preTrip, operated } = await determineDvirSignals(periodId);
-    return decideEndShiftRoute({
-      enforcedExplicit: isEnforcedExplicitShift(enforcement),
-      enforcementLive,
-      shiftOpen: shiftActive || returningToYard,
-      periodId,
-      preTrip,
-      operated,
-    });
+    const enforcedExplicit = isEnforcedExplicitShift(enforcement);
+    const shiftOpen = shiftActive || returningToYard;
+
+    // Under a LIVE enforced contract, consult the authenticated server authority
+    // (resolveActiveDriverShift). Its state is the TRUTH — the SecureStore
+    // returning hint never determines the route. DVIR is evaluated for the exact
+    // SERVER period, not a local binding.
+    let serverShift: ServerShiftState = { state: 'not_read' };
+    let preTrip: PreTripSignal = 'indeterminate';
+    let operated: OperatedSignal = 'unknown';
+    if (enforcementLive && enforcedExplicit && shiftOpen) {
+      try {
+        const resolved = await resolveEnforcedExplicit();
+        if (resolved.state === 'open') {
+          serverShift = { state: 'open', periodId: resolved.periodId, originLocalDate: resolved.originLocalDate };
+          const sig = await determineDvirSignals(resolved.periodId);
+          preTrip = sig.preTrip;
+          operated = sig.operated;
+        } else if (resolved.state === 'none') {
+          serverShift = { state: 'none' };
+        } else {
+          serverShift = { state: 'unverifiable' };
+        }
+      } catch {
+        serverShift = { state: 'unverifiable' };
+      }
+    }
+    return decideEndShiftRoute({ enforcedExplicit, enforcementLive, shiftOpen, serverShift, preTrip, operated });
   }, [user, shiftActive, returningToYard, determineDvirSignals]);
+
+  // Server said NO open period → the local returning/shift state is stale.
+  // Clear it ONLY after this authenticated authoritative acknowledgement, and
+  // write NO server event (no logout / arrival / DVIR / Post-Trip / odometer).
+  const reconcileStaleReturningShift = useCallback(async (): Promise<'cleared' | 'not_none' | 'error'> => {
+    if (!user) return 'error';
+    if (reconcileInFlight.current) return 'not_none';
+    reconcileInFlight.current = true;
+    const gen = authorityGenRef.current.current();
+    try {
+      const [{ loadCompanyConfigResult }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { resolveEnforcedExplicit }] =
+        await Promise.all([
+          import('../services/companyConfig'),
+          import('../services/workPeriodAuthority/suiteShiftAuthority'),
+          import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+          import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+        ]);
+      const cfgResult = user.companyId
+        ? await loadCompanyConfigResult(user.companyId, { forceRefresh: true })
+        : ({ kind: 'unavailable' } as const);
+      if (cfgResult.kind !== 'live') return 'not_none';
+      if (!isEnforcedExplicitShift(parseSuiteEnforcement(cfgResult.config))) return 'not_none';
+      const resolved = await resolveEnforcedExplicit();
+      if (resolved.state !== 'none') return 'not_none';
+      if (!authorityGenRef.current.isCurrent(gen)) return 'not_none';
+      // Authenticated ack: server has no open period. Local-only cleanup.
+      setShiftActive(false);
+      setReturningToYard(false);
+      setReturnDepartTime(null);
+      setShiftAuthorityUi({ kind: 'none' });
+      await Promise.all([
+        SecureStore.setItemAsync('shiftEnded', 'true'),
+        SecureStore.deleteItemAsync('shiftStarted'),
+        SecureStore.deleteItemAsync('returnDepartTime'),
+      ]).catch(() => {});
+      console.log('[AuthContext] Reconciled stale local returning state — server has no open period (no write issued)');
+      return 'cleared';
+    } catch {
+      return 'error';
+    } finally {
+      reconcileInFlight.current = false;
+    }
+  }, [user]);
 
   const closeShiftDirect = useCallback(async (): Promise<EndShiftDirectCloseResult> => {
     if (!user) return { kind: 'existing_flow' };
@@ -1506,6 +1577,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       startReturn,
       confirmArrival,
       resolveEndShiftRoute,
+      reconcileStaleReturningShift,
       closeShiftDirect,
       register,
       checkRegistration,

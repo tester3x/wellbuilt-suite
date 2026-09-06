@@ -29,6 +29,7 @@ import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
 import ShiftEndRecoveryCard from './ShiftEndRecoveryCard';
+import { type EndShiftRoute } from '@/core/services/workPeriodAuthority/endShiftDvirRouting';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -86,7 +87,7 @@ function getShiftColor(startIso: string | null): string {
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp, dvirGate } = useAppLauncher();
-  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy, resolveEndShiftRoute, closeShiftDirect } = useAuth();
+  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy, resolveEndShiftRoute, reconcileStaleReturningShift, closeShiftDirect } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
@@ -97,8 +98,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   // Route the returning-to-yard recovery: 'existing_flow' keeps the governed
   // arrival/Post-Trip card; 'direct_close' shows a truthful End Shift; null =
   // still verifying the obligation (never assume none / never a false arrival).
-  const [returningRoute, setReturningRoute] =
-    useState<'existing_flow' | 'direct_close' | 'verify_obligation' | null>(null);
+  const [returningRoute, setReturningRoute] = useState<EndShiftRoute | null>(null);
   const canOpenChecklist = mayOpenStartShiftChecklist(shiftAuthorityUi);
   const claimBusy = startShiftBusy || startConfirmBusy;
   // (Pre-shift JSA preview breadcrumb + banner removed 2026-05-01. The
@@ -127,23 +127,31 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     return () => clearInterval(interval);
   }, [returning, returnStartTime]);
 
-  // Resolve how a returning-to-yard shift should recover: obligation present →
-  // governed arrival/Post-Trip; definitively none → truthful direct End Shift;
-  // unknown → verify. Recomputed whenever we (re)enter the returning state.
+  // Resolve how a returning-to-yard shift should recover against the AUTHENTICATED
+  // server authority (never the local returning hint): server open + no Pre-Trip →
+  // truthful direct End Shift; server none → reconcile the stale local state;
+  // unverifiable/cached → verify/retry; obligation present → governed Post-Trip.
+  const applyReturningRoute = useCallback(async (route: EndShiftRoute) => {
+    setReturningRoute(route);
+    if (route.action === 'reconcile_none') {
+      // Server has no open period → clear stale local state (no write). On
+      // 'cleared' the returning flag flips and this card unmounts.
+      await reconcileStaleReturningShift();
+    }
+  }, [reconcileStaleReturningShift]);
   const refreshReturningRoute = useCallback(async () => {
-    const route = await resolveEndShiftRoute();
-    setReturningRoute(route.action);
-  }, [resolveEndShiftRoute]);
+    await applyReturningRoute(await resolveEndShiftRoute());
+  }, [resolveEndShiftRoute, applyReturningRoute]);
   useEffect(() => {
     if (!returning) { setReturningRoute(null); return; }
     let cancelled = false;
     setReturningRoute(null);
     (async () => {
       const route = await resolveEndShiftRoute();
-      if (!cancelled) setReturningRoute(route.action);
+      if (!cancelled) await applyReturningRoute(route);
     })();
     return () => { cancelled = true; };
-  }, [returning, resolveEndShiftRoute]);
+  }, [returning, resolveEndShiftRoute, applyReturningRoute]);
 
   // ── Ordinary direct End Shift (no vehicle/DVIR obligation) ──
   // Truthful confirmation, then the existing authoritative close. Never routes
@@ -156,6 +164,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     } else if (r.kind === 'verify_obligation') {
       Alert.alert(t('shift.endShiftConfirmTitle'), t('shift.endVerifying'));
       void refreshReturningRoute();
+    } else if (r.kind === 'reconcile_none') {
+      // Server closed the period out from under us — reconcile, do not re-close.
+      await reconcileStaleReturningShift();
     } else {
       // An obligation appeared — fall to the governed flow.
       setShowEndModal(true);
@@ -299,15 +310,16 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   if (returning) {
     return (
       <View>
-        {returningRoute === 'existing_flow' ? (
+        {returningRoute?.action === 'existing_flow' ? (
           <EnRouteYardCard
             returnStartTime={returnStartTime}
             onArrived={() => setShowArrivalModal(true)}
           />
         ) : (
           <ShiftEndRecoveryCard
-            mode={returningRoute === 'direct_close' ? 'end' : returningRoute === 'verify_obligation' ? 'verify' : 'checking'}
+            mode={returningRoute?.action === 'direct_close' ? 'end' : returningRoute?.action === 'verify_obligation' ? 'verify' : 'checking'}
             returnStartTime={returnStartTime}
+            originDate={returningRoute?.action === 'direct_close' ? returningRoute.originLocalDate : null}
             onEndShift={promptDirectEndShift}
             onRetry={() => { void refreshReturningRoute(); }}
           />

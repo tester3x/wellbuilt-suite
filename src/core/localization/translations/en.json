@@ -238,7 +238,8 @@
     "endShiftOpenTitle": "Shift still open",
     "endShiftAction": "End Shift",
     "verifyingStatus": "Verifying shift status…",
-    "verifyRetry": "Retry"
+    "verifyRetry": "Retry",
+    "startedOn": "Started"
   },
   "actionCard": {
     "timesheet": "Timesheet",

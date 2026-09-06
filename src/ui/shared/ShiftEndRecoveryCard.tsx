@@ -5,7 +5,7 @@
 // be ended directly. While the obligation is still being verified it shows a
 // neutral checking/verify state and never offers a false arrival action.
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -16,31 +16,14 @@ type RecoveryMode = 'end' | 'verify' | 'checking';
 interface ShiftEndRecoveryCardProps {
   mode: RecoveryMode;
   returnStartTime: string | null;
+  /** Authoritative origin day of the open period (YYYY-MM-DD) — truthful, from the server. */
+  originDate?: string | null;
   onEndShift: () => void;
   onRetry: () => void;
 }
 
-function formatElapsed(startIso: string): string {
-  const ms = Date.now() - new Date(startIso).getTime();
-  if (ms < 0) return '0:00';
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-export default function ShiftEndRecoveryCard({ mode, returnStartTime, onEndShift, onRetry }: ShiftEndRecoveryCardProps) {
+export default function ShiftEndRecoveryCard({ mode, originDate, onEndShift, onRetry }: ShiftEndRecoveryCardProps) {
   const { t } = useTranslation();
-  const [elapsed, setElapsed] = useState('0:00');
-
-  useEffect(() => {
-    if (!returnStartTime) return;
-    setElapsed(formatElapsed(returnStartTime));
-    const interval = setInterval(() => setElapsed(formatElapsed(returnStartTime)), 1000);
-    return () => clearInterval(interval);
-  }, [returnStartTime]);
 
   if (mode === 'checking') {
     return (
@@ -74,7 +57,10 @@ export default function ShiftEndRecoveryCard({ mode, returnStartTime, onEndShift
       <View style={s.header}>
         <MaterialCommunityIcons name="clock-outline" size={18} color={colors.status.warning} />
         <Text style={s.title}>{t('shift.endShiftOpenTitle')}</Text>
-        {returnStartTime ? <Text style={s.timer}>{elapsed}</Text> : null}
+        {/* Truthful authoritative origin day (never the local drive timer). */}
+        {originDate ? (
+          <Text style={s.timer}>{`${t('shift.startedOn')} ${originDate}`}</Text>
+        ) : null}
       </View>
       <Pressable onPress={onEndShift} style={s.endButton}>
         <MaterialCommunityIcons name="clock-check-outline" size={18} color="#000" />

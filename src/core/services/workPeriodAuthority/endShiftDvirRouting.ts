@@ -38,74 +38,99 @@ export type PreTripSignal = 'yes' | 'no' | 'indeterminate';
 /** Whether the inspected equipment was actually operated this shift. */
 export type OperatedSignal = 'operated' | 'not_operated' | 'unknown';
 
+/**
+ * Authenticated server-authority shift state for the driver (from the
+ * resolveActiveDriverShift callable). This is the TRUTH — a local
+ * returning-to-yard hint never overrides it.
+ *   - 'open'         → an authoritative open period (its exact id + origin day).
+ *   - 'none'         → the server has NO open period (a local returning hint is stale).
+ *   - 'unverifiable' → could not be authenticated/read (network/authority).
+ *   - 'not_read'     → the server was not consulted (enforcement not live-enforced).
+ */
+export type ServerShiftState =
+  | { state: 'open'; periodId: string; originLocalDate: string }
+  | { state: 'none' }
+  | { state: 'unverifiable' }
+  | { state: 'not_read' };
+
 export interface EndShiftRouteInput {
   /** Enforced explicit_shift company (from the enforcement value in hand). */
   enforcedExplicit: boolean;
   /**
    * Whether the enforcement value was confirmed by a LIVE authoritative read
    * this generation (not cache/unavailable/unresolved). A permissive route
-   * (direct close, or a legacy path) requires live confirmation; a restrictive
-   * cached enforced config may still retain the governed path.
+   * requires live confirmation; a restrictive cached enforced config may still
+   * retain the governed path.
    */
   enforcementLive: boolean;
-  /** Shift is open locally — an active clock OR a returning-to-yard drive. */
+  /**
+   * Local hint that a shift may be open (active clock OR returning-to-yard).
+   * This only TRIGGERS a server reconciliation — it never determines truth.
+   */
   shiftOpen: boolean;
-  /** Authoritative server period id for the open shift. */
-  periodId: string | null;
-  /** Canonical Pre-Trip receipt signal for this shift. */
+  /** Authenticated server-authority shift state (the source of truth). */
+  serverShift: ServerShiftState;
+  /** Canonical Pre-Trip receipt signal for the SERVER period. */
   preTrip: PreTripSignal;
-  /** Canonical equipment-operation signal for this shift. */
+  /** Canonical equipment-operation signal for the SERVER period. */
   operated: OperatedSignal;
 }
 
 export type EndShiftRoute =
-  | { action: 'direct_close'; periodId: string }
+  | { action: 'direct_close'; periodId: string; originLocalDate: string | null }
   | { action: 'existing_flow' }
-  | { action: 'verify_obligation'; reason: 'obligation_unknown' | 'no_period' | 'authority_unresolved' };
+  | { action: 'reconcile_none' }
+  | { action: 'verify_obligation'; reason: 'obligation_unknown' | 'authority_unresolved' };
 
 /**
  * Pure routing decision for the End Shift action.
  *
- * Authority gate first: an unresolved enforcement state (cached legacy,
- * unavailable, or otherwise not live-confirmed) NEVER renders a permissive
- * control. It fails closed to a non-actionable verify/retry, so a stale cached
- * "legacy" can never enable the permissive legacy path (Mark Arrived) without a
- * live read. A restrictive cached ENFORCED config may retain the governed path.
+ * Authority gate first: an unresolved enforcement (cached legacy, unavailable,
+ * or not live-confirmed) NEVER renders a permissive control — it fails closed to
+ * a non-actionable verify/retry. A restrictive cached ENFORCED config may retain
+ * the governed path.
  *
- * Once authority is live-confirmed: it never converts a governed or unverified
- * shift into a direct close, and never bypasses a possibly-required Post-Trip —
- * when operation cannot be proven for an inspected shift it fails safe onto the
- * governed Post-Trip path (which requires the inspection).
+ * Under a LIVE enforced contract the authenticated SERVER state is the truth —
+ * the local returning hint never determines it:
+ *   - server 'none'         → reconcile the stale local returning state (no write).
+ *   - server 'unverifiable' → non-actionable verify/retry (never guess).
+ *   - server 'open'         → use the exact returned period; no Pre-Trip → ordinary
+ *                             direct close; inspected+operated/unknown → governed.
  */
 export function decideEndShiftRoute(i: EndShiftRouteInput): EndShiftRoute {
   if (!i.shiftOpen) return { action: 'existing_flow' };
 
   // ── Authority gate ──────────────────────────────────────────────────────
   if (!i.enforcementLive) {
-    // A restrictive cached ENFORCED config may retain the governed path (it
-    // only ever requires more — a Post-Trip — never less).
     if (i.enforcedExplicit) return { action: 'existing_flow' };
-    // Cached legacy / unavailable / unresolved → non-actionable. Never enable
-    // the permissive legacy path (Mark Arrived / End Shift) without live proof.
     return { action: 'verify_obligation', reason: 'authority_unresolved' };
   }
 
   // ── Live-confirmed authority ────────────────────────────────────────────
-  // Live legacy keeps the existing flow (the legacy recovery ACTION is deferred
-  // pending the authoritative backend-shift findings — never a client logout).
+  // Live legacy keeps the existing flow (legacy recovery ACTION deferred).
   if (!i.enforcedExplicit) return { action: 'existing_flow' };
-  if (!i.periodId) return { action: 'verify_obligation', reason: 'no_period' };
-  // Cannot even read the Pre-Trip signal → verify, never assume absent.
-  if (i.preTrip === 'indeterminate') return { action: 'verify_obligation', reason: 'obligation_unknown' };
-  // No vehicle/DVIR obligation → ordinary End Shift closes the work period
-  // directly. Full shift duration is preserved (paid work may have occurred).
-  if (i.preTrip === 'no') return { action: 'direct_close', periodId: i.periodId };
-  // Inspected shift, canonically proven NOT operated (e.g. reassigned before
-  // departing) → close directly and retain the Pre-Trip record. No false Post-Trip.
-  if (i.operated === 'not_operated') return { action: 'direct_close', periodId: i.periodId };
-  // Inspected AND (operated | operation unknown) → the existing governed
-  // return/arrival/Post-Trip path owns the close. Fail-safe on unknown.
-  return { action: 'existing_flow' };
+
+  // Live enforced: the authenticated server state decides, not the local hint.
+  switch (i.serverShift.state) {
+    case 'not_read':
+    case 'unverifiable':
+      return { action: 'verify_obligation', reason: 'authority_unresolved' };
+    case 'none':
+      // No authoritative open period → the local returning state is stale.
+      return { action: 'reconcile_none' };
+    case 'open': {
+      const { periodId, originLocalDate } = i.serverShift;
+      // Cannot read the Pre-Trip signal → verify, never assume absent.
+      if (i.preTrip === 'indeterminate') return { action: 'verify_obligation', reason: 'obligation_unknown' };
+      // No vehicle/DVIR obligation → ordinary End Shift closes the work period
+      // directly (full duration preserved; paid work may have occurred).
+      if (i.preTrip === 'no') return { action: 'direct_close', periodId, originLocalDate };
+      // Inspected, canonically NOT operated → direct close, retain Pre-Trip.
+      if (i.operated === 'not_operated') return { action: 'direct_close', periodId, originLocalDate };
+      // Inspected AND (operated | unknown) → governed Post-Trip. Fail-safe.
+      return { action: 'existing_flow' };
+    }
+  }
 }
 
 export interface EndShiftDirectCloseDeps {
@@ -125,6 +150,7 @@ export interface EndShiftDirectCloseDeps {
 export type EndShiftDirectCloseResult =
   | { kind: 'closed'; alreadyClosed: boolean }
   | { kind: 'existing_flow' }
+  | { kind: 'reconcile_none' }
   | { kind: 'verify_obligation'; reason: string }
   | { kind: 'retry'; reason: string };
 
@@ -138,6 +164,7 @@ export async function performEndShiftDirectClose(
   deps: EndShiftDirectCloseDeps,
 ): Promise<EndShiftDirectCloseResult> {
   if (deps.route.action === 'existing_flow') return { kind: 'existing_flow' };
+  if (deps.route.action === 'reconcile_none') return { kind: 'reconcile_none' };
   if (deps.route.action === 'verify_obligation') {
     return { kind: 'verify_obligation', reason: deps.route.reason };
   }

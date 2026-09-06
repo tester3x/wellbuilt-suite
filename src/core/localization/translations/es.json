@@ -238,7 +238,8 @@
     "endShiftOpenTitle": "Turno aún abierto",
     "endShiftAction": "Terminar Turno",
     "verifyingStatus": "Verificando el estado del turno…",
-    "verifyRetry": "Reintentar"
+    "verifyRetry": "Reintentar",
+    "startedOn": "Iniciado"
   },
   "actionCard": {
     "timesheet": "Nómina",

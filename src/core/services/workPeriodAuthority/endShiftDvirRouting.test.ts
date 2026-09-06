@@ -20,6 +20,7 @@ import {
 } from './endShiftDvirRouting.js';
 
 const PERIOD = '2026-09-05_070000';
+const ORIGIN = '2026-09-05';
 const root = join(__dirname, '..', '..', '..', '..');
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
 
@@ -28,7 +29,7 @@ function routeInput(over: Partial<EndShiftRouteInput> = {}): EndShiftRouteInput 
     enforcedExplicit: true,
     enforcementLive: true,
     shiftOpen: true,
-    periodId: PERIOD,
+    serverShift: { state: 'open', periodId: PERIOD, originLocalDate: ORIGIN },
     preTrip: 'no',
     operated: 'unknown',
     ...over,
@@ -56,11 +57,11 @@ function harness(over: Partial<EndShiftDirectCloseDeps> = {}) {
 }
 
 describe('decideEndShiftRoute — locked rule (Pre-Trip AND operated)', () => {
-  it('no Pre-Trip → ordinary direct close (any operation state)', () => {
+  it('no Pre-Trip → ordinary direct close on the exact SERVER period (any operation state)', () => {
     for (const operated of ['unknown', 'not_operated', 'operated'] as const) {
       assert.deepEqual(
         decideEndShiftRoute(routeInput({ preTrip: 'no', operated })),
-        { action: 'direct_close', periodId: PERIOD },
+        { action: 'direct_close', periodId: PERIOD, originLocalDate: ORIGIN },
       );
     }
   });
@@ -68,7 +69,7 @@ describe('decideEndShiftRoute — locked rule (Pre-Trip AND operated)', () => {
   it('Pre-Trip + canonically NOT operated → direct close, retain Pre-Trip (no false Post-Trip)', () => {
     assert.deepEqual(
       decideEndShiftRoute(routeInput({ preTrip: 'yes', operated: 'not_operated' })),
-      { action: 'direct_close', periodId: PERIOD },
+      { action: 'direct_close', periodId: PERIOD, originLocalDate: ORIGIN },
     );
   });
 
@@ -80,9 +81,32 @@ describe('decideEndShiftRoute — locked rule (Pre-Trip AND operated)', () => {
     assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'yes', operated: 'unknown' })).action, 'existing_flow');
   });
 
-  it('Pre-Trip signal indeterminate, or no period → verify (never assume absent)', () => {
+  it('server open but Pre-Trip signal indeterminate → verify (never assume absent)', () => {
     assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'indeterminate' })).action, 'verify_obligation');
-    assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'no', periodId: null })).action, 'verify_obligation');
+  });
+
+  it('server authority is the truth: none → reconcile; unverifiable/not_read → verify', () => {
+    // The local returning hint (shiftOpen) never overrides the server state.
+    assert.deepEqual(decideEndShiftRoute(routeInput({ serverShift: { state: 'none' } })), { action: 'reconcile_none' });
+    assert.equal(decideEndShiftRoute(routeInput({ serverShift: { state: 'unverifiable' } })).action, 'verify_obligation');
+    assert.equal(decideEndShiftRoute(routeInput({ serverShift: { state: 'not_read' } })).action, 'verify_obligation');
+  });
+
+  it('server open + Pre-Trip + operated → require matching Post-Trip on that exact period', () => {
+    const r = decideEndShiftRoute(routeInput({
+      serverShift: { state: 'open', periodId: '2026-08-23_232617', originLocalDate: '2026-08-23' },
+      preTrip: 'yes',
+      operated: 'operated',
+    }));
+    assert.equal(r.action, 'existing_flow');
+  });
+
+  it('server open + no Pre-Trip → direct close on the returned period id + origin date', () => {
+    const r = decideEndShiftRoute(routeInput({
+      serverShift: { state: 'open', periodId: '2026-08-23_232617', originLocalDate: '2026-08-23' },
+      preTrip: 'no',
+    }));
+    assert.deepEqual(r, { action: 'direct_close', periodId: '2026-08-23_232617', originLocalDate: '2026-08-23' });
   });
 
   it('live legacy, or not-open shift → existing flow unchanged (legacy recovery deferred)', () => {
@@ -310,19 +334,41 @@ describe('safety wiring — live authority, hint-not-authority, no synthetic wri
   const auth = read('src/core/context/AuthContext.tsx');
   const tracking = read('src/core/services/shiftTracking.ts');
 
-  it('resolveEndShiftRoute reads LIVE company config (forceRefresh) and gates on kind:live', () => {
-    const region = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const closeShiftDirect'));
+  it('resolveEndShiftRoute reads LIVE config + the authenticated server authority', () => {
+    const region = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const reconcileStaleReturningShift'));
     assert.ok(region.includes('loadCompanyConfigResult'));
     assert.ok(/forceRefresh:\s*true/.test(region));
     assert.ok(region.includes("cfgResult.kind === 'live'"), 'enforcementLive derives from a live read');
-    assert.ok(region.includes('enforcementLive'));
+    // The authenticated server-authority reader (resolveActiveDriverShift) is consulted.
+    assert.ok(region.includes('resolveEnforcedExplicit'));
+    assert.ok(region.includes('serverShift'));
+    // DVIR is evaluated for the SERVER period id, not a local binding.
+    assert.ok(region.includes('determineDvirSignals(resolved.periodId)'));
   });
 
-  it('local returningToYard is only a hint — never the authority for the route', () => {
-    const region = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const closeShiftDirect'));
-    // The route is decided from the live enforcement read, not the restored flag.
+  it('local returningToYard is only a hint — the server state determines the route', () => {
+    const region = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const reconcileStaleReturningShift'));
+    // shiftOpen (the local hint) only TRIGGERS the server read; decide is fed serverShift.
     assert.ok(!/returningToYard[^;]*decideEndShiftRoute/.test(region));
     assert.ok(region.includes('decideEndShiftRoute'));
+  });
+
+  it('reconcileStaleReturningShift clears local state only on an authenticated server "none", with no write', () => {
+    const region = auth.slice(auth.indexOf('const reconcileStaleReturningShift'), auth.indexOf('const closeShiftDirect'));
+    assert.ok(region.includes('resolveEnforcedExplicit'));
+    assert.ok(region.includes("resolved.state !== 'none'"), 'only an authoritative none clears');
+    assert.ok(region.includes('setReturningToYard(false)'));
+    // No server event of any kind is written from the reconcile path.
+    assert.ok(!region.includes('recordShiftEvent') && !region.includes('closeEnforcedExplicit'));
+    assert.ok(!region.includes('depart_return') && !/ensurePostTripGate|closeDriverShift/.test(region));
+  });
+
+  it('ActionCardRow reconciles a server-none returning shift (never guesses/clears blindly)', () => {
+    const row = read('src/ui/shared/ActionCardRow.tsx');
+    assert.ok(row.includes("route.action === 'reconcile_none'"));
+    assert.ok(row.includes('reconcileStaleReturningShift'));
+    // Truthful origin date is surfaced from the server route, not a local timer.
+    assert.ok(row.includes('originDate') && row.includes('originLocalDate'));
   });
 
   it('autoCloseStaleShift issues ZERO shift writes (detection/diagnostic only)', () => {
