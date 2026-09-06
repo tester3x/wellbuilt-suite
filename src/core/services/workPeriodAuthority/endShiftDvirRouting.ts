@@ -39,8 +39,15 @@ export type PreTripSignal = 'yes' | 'no' | 'indeterminate';
 export type OperatedSignal = 'operated' | 'not_operated' | 'unknown';
 
 export interface EndShiftRouteInput {
-  /** Enforced explicit_shift company. Legacy shifts keep their existing flow. */
+  /** Enforced explicit_shift company (from the enforcement value in hand). */
   enforcedExplicit: boolean;
+  /**
+   * Whether the enforcement value was confirmed by a LIVE authoritative read
+   * this generation (not cache/unavailable/unresolved). A permissive route
+   * (direct close, or a legacy path) requires live confirmation; a restrictive
+   * cached enforced config may still retain the governed path.
+   */
+  enforcementLive: boolean;
   /** Shift is open locally — an active clock OR a returning-to-yard drive. */
   shiftOpen: boolean;
   /** Authoritative server period id for the open shift. */
@@ -54,18 +61,39 @@ export interface EndShiftRouteInput {
 export type EndShiftRoute =
   | { action: 'direct_close'; periodId: string }
   | { action: 'existing_flow' }
-  | { action: 'verify_obligation'; reason: 'obligation_unknown' | 'no_period' };
+  | { action: 'verify_obligation'; reason: 'obligation_unknown' | 'no_period' | 'authority_unresolved' };
 
 /**
- * Pure routing decision for the End Shift action. Never converts a governed or
- * unverified shift into a direct close, and never bypasses a possibly-required
- * Post-Trip: when operation cannot be proven for an inspected shift it fails
- * safe onto the governed Post-Trip path (which requires the inspection).
+ * Pure routing decision for the End Shift action.
+ *
+ * Authority gate first: an unresolved enforcement state (cached legacy,
+ * unavailable, or otherwise not live-confirmed) NEVER renders a permissive
+ * control. It fails closed to a non-actionable verify/retry, so a stale cached
+ * "legacy" can never enable the permissive legacy path (Mark Arrived) without a
+ * live read. A restrictive cached ENFORCED config may retain the governed path.
+ *
+ * Once authority is live-confirmed: it never converts a governed or unverified
+ * shift into a direct close, and never bypasses a possibly-required Post-Trip —
+ * when operation cannot be proven for an inspected shift it fails safe onto the
+ * governed Post-Trip path (which requires the inspection).
  */
 export function decideEndShiftRoute(i: EndShiftRouteInput): EndShiftRoute {
-  // Legacy/non-enforced shifts and not-open shifts keep the existing behavior.
-  if (!i.enforcedExplicit) return { action: 'existing_flow' };
   if (!i.shiftOpen) return { action: 'existing_flow' };
+
+  // ── Authority gate ──────────────────────────────────────────────────────
+  if (!i.enforcementLive) {
+    // A restrictive cached ENFORCED config may retain the governed path (it
+    // only ever requires more — a Post-Trip — never less).
+    if (i.enforcedExplicit) return { action: 'existing_flow' };
+    // Cached legacy / unavailable / unresolved → non-actionable. Never enable
+    // the permissive legacy path (Mark Arrived / End Shift) without live proof.
+    return { action: 'verify_obligation', reason: 'authority_unresolved' };
+  }
+
+  // ── Live-confirmed authority ────────────────────────────────────────────
+  // Live legacy keeps the existing flow (the legacy recovery ACTION is deferred
+  // pending the authoritative backend-shift findings — never a client logout).
+  if (!i.enforcedExplicit) return { action: 'existing_flow' };
   if (!i.periodId) return { action: 'verify_obligation', reason: 'no_period' };
   // Cannot even read the Pre-Trip signal → verify, never assume absent.
   if (i.preTrip === 'indeterminate') return { action: 'verify_obligation', reason: 'obligation_unknown' };
@@ -76,8 +104,7 @@ export function decideEndShiftRoute(i: EndShiftRouteInput): EndShiftRoute {
   // departing) → close directly and retain the Pre-Trip record. No false Post-Trip.
   if (i.operated === 'not_operated') return { action: 'direct_close', periodId: i.periodId };
   // Inspected AND (operated | operation unknown) → the existing governed
-  // return/arrival/Post-Trip path owns the close. Fail-safe on unknown: require
-  // the inspection rather than silently bypass it.
+  // return/arrival/Post-Trip path owns the close. Fail-safe on unknown.
   return { action: 'existing_flow' };
 }
 

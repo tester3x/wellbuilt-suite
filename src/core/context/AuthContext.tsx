@@ -1194,18 +1194,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const resolveEndShiftRoute = useCallback(async (): Promise<EndShiftRoute> => {
     if (!user) return { action: 'existing_flow' };
     if (!shiftActive && !returningToYard) return { action: 'existing_flow' };
-    const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }] =
+    const [{ loadCompanyConfigResult }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }] =
       await Promise.all([
         import('../services/companyConfig'),
         import('../services/workPeriodAuthority/suiteShiftAuthority'),
         import('../services/workPeriodAuthority/postLoginShiftRestoration'),
       ]);
-    const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+    // LIVE authority read: enforcement must be confirmed live before any
+    // permissive route. Cache/unavailable → not live → authority gate fails
+    // closed. Never trust the SecureStore returning hint as authority.
+    const cfgResult = user.companyId
+      ? await loadCompanyConfigResult(user.companyId, { forceRefresh: true })
+      : ({ kind: 'unavailable' } as const);
+    const enforcementLive = cfgResult.kind === 'live';
+    const cfg = cfgResult.kind === 'unavailable' ? null : cfgResult.config;
     const enforcement = parseSuiteEnforcement(cfg ?? undefined);
     const periodId = await getCurrentShiftId();
     const { preTrip, operated } = await determineDvirSignals(periodId);
     return decideEndShiftRoute({
       enforcedExplicit: isEnforcedExplicitShift(enforcement),
+      enforcementLive,
       shiftOpen: shiftActive || returningToYard,
       periodId,
       preTrip,

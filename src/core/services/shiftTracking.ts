@@ -276,22 +276,17 @@ export async function observeEnforcementSafety(
 }
 
 /**
- * LEGACY DOT-hygiene sweep: auto-close a stale open shift from a
- * previous calendar day (up to 3 days back, covering weekend gaps) by
- * appending a synthetic `{date}T23:59:59.000Z` logout event.
+ * DETECTION ONLY — stale-open-shift diagnostic sweep (P0 safety).
  *
- * vc51.9C — ENFORCEMENT-GATED. This is a CALENDAR-BOUNDARY closure: it
- * fires purely because a day elapsed, so under active canonical
- * enforcement it would end a legitimate overnight or long-running
- * period that the driver never logged out of (and would falsify the DOT
- * event record, since it does not — and must not — clear
- * `currentShiftId`). An enforced explicit period is owned by the genuine
- * sign-in/Start Shift → logout lifecycle ONLY; midnight, elapsed hours,
- * and day boundaries never end it, and crossing midnight never creates a
- * replacement shift.
- *
- * For legacy/unenforced companies the established behavior is preserved
- * verbatim — there is no canonical authority to consult there.
+ * Previously this appended a synthetic `{date}T23:59:59.000Z` logout to
+ * auto-close a stale open shift from a prior calendar day. That is REMOVED: a
+ * synthetic logout does not (and must not) clear the authoritative
+ * `currentShiftId` pointer, so it produced an apparent close followed by another
+ * trapped/stale shift. This function now NEVER closes, clears, or mutates any
+ * shift. It only observes enforcement (to refresh live LKG) and, for
+ * legacy/unenforced companies, DETECTS a stale open day and surfaces it (a
+ * bounded diagnostic) for authoritative reconciliation. Enforced explicit
+ * periods are owned by the genuine sign-in/Start Shift → logout lifecycle ONLY.
  */
 async function autoCloseStaleShift(
   driverId: string,
@@ -344,45 +339,19 @@ async function autoCloseStaleShift(
       }
 
       if (logins > logouts) {
-        const syntheticLogout: ShiftEvent = {
-          type: 'logout',
-          timestamp: `${checkDate}T23:59:59.000Z`,
-          lat: 0,
-          lng: 0,
+        // DETECTION ONLY: never append a fabricated logout. A synthetic close
+        // cannot clear the authoritative pointer, so it would strand the shift.
+        // Surface it for authoritative reconciliation; issue NO write.
+        console.log(JSON.stringify({
+          tag: '[shiftTracking][stale-shift.detected]',
+          driverHash: driverId,
+          localDate: checkDate,
+          docId: `${driverId}_${checkDate}`,
+          logins,
+          logouts,
           source,
-          synthetic: true,
-        };
-
-        const body = {
-          writes: [
-            {
-              update: {
-                name: path,
-                fields: {
-                  updatedAt: { timestampValue: new Date().toISOString() },
-                },
-              },
-              updateMask: { fieldPaths: ['updatedAt'] },
-            },
-            {
-              transform: {
-                document: path,
-                fieldTransforms: [{
-                  fieldPath: 'events',
-                  appendMissingElements: { values: [eventToFirestoreMap(syntheticLogout)] },
-                }],
-              },
-            },
-          ],
-        };
-
-        await fetchSafe(commitUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-
-        console.log(`[shiftTracking] Auto-closed stale shift from ${checkDate}`);
+          note: 'stale open shift detected — presented for authoritative reconciliation; no write issued',
+        }));
       }
 
       break;

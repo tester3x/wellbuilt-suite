@@ -47,7 +47,7 @@ export default function ShiftEndRecoveryCard({ mode, returnStartTime, onEndShift
       <View style={s.container}>
         <View style={s.header}>
           <ActivityIndicator size="small" color={colors.text.muted} />
-          <Text style={s.checkingLabel}>{t('shift.endVerifying')}</Text>
+          <Text style={s.checkingLabel}>{t('shift.verifyingStatus')}</Text>
         </View>
       </View>
     );
@@ -58,7 +58,7 @@ export default function ShiftEndRecoveryCard({ mode, returnStartTime, onEndShift
       <View style={s.container}>
         <View style={s.header}>
           <MaterialCommunityIcons name="clock-alert-outline" size={18} color={colors.status.warning} />
-          <Text style={s.verifyLabel}>{t('shift.endVerifying')}</Text>
+          <Text style={s.verifyLabel}>{t('shift.verifyingStatus')}</Text>
         </View>
         <Pressable onPress={onRetry} style={s.retryButton}>
           <MaterialCommunityIcons name="refresh" size={16} color={colors.brand.primary} />

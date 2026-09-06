@@ -132,21 +132,24 @@ test('a prior closed period never satisfies a new period', async () => {
 const root = join(__dirname, '..', '..', '..', '..');
 const tracking = () => readFileSync(join(root, 'src/core/services/shiftTracking.ts'), 'utf8');
 
-test('autoCloseStaleShift is enforcement-gated (no calendar closure under enforcement)', () => {
+test('autoCloseStaleShift is detection-only — never synthesizes a calendar-boundary logout', () => {
   const src = tracking();
-  const fn = src.slice(src.indexOf('async function autoCloseStaleShift'), src.indexOf('async function autoCloseStaleShift') + 2200);
-  assert.ok(/observeEnforcementSafety|resolveSyntheticCloseDecision/.test(fn),
-    'autoCloseStaleShift still synthesizes a calendar-boundary logout under enforcement');
+  const fn = src.slice(src.indexOf('async function autoCloseStaleShift'), src.indexOf('async function autoCloseStaleShift') + 3000);
+  // Still observes enforcement (refreshes live LKG), but issues NO write.
   assert.ok(fn.includes('observeEnforcementSafety'),
     'autoCloseStaleShift must use force-refresh observe path (cutover-safe LKG)');
-  assert.ok(src.includes('23:59:59'), 'legacy synthetic close should remain for unenforced companies');
+  // P0 safety: the fabricated 23:59:59 logout and its commit are removed.
+  assert.ok(!fn.includes('23:59:59'), 'synthetic 23:59:59 logout must be removed');
+  assert.ok(!/appendMissingElements/.test(fn), 'no event append write may remain');
+  assert.ok(!/fetchSafe\(commitUrl/.test(fn), 'no commit write may remain in the sweep');
+  assert.ok(fn.includes('stale-shift.detected'), 'stale open shift must be surfaced for reconciliation');
 });
 
-test('legacy/unenforced stale-shift behavior preserved', () => {
+test('legacy/unenforced stale shift is detected and presented, never auto-closed', () => {
   const src = tracking();
-  const region = src.slice(src.indexOf('async function autoCloseStaleShift'), src.indexOf('async function autoCloseStaleShift') + 2200);
-  assert.ok(/observed\.allow|legacy/i.test(region),
-    'the legacy path must be retained via the observe decision gate');
+  const region = src.slice(src.indexOf('async function autoCloseStaleShift'), src.indexOf('async function autoCloseStaleShift') + 3000);
+  assert.ok(/no write issued|authoritative reconciliation/.test(region),
+    'stale shift must be presented for authoritative reconciliation, not mutated');
 });
 
 test('no time-threshold constant governs enforced shift closure', () => {

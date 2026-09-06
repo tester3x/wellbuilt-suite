@@ -237,6 +237,7 @@
     "endVerifying": "Verificando el estado de inspección de este turno. Inténtelo de nuevo en un momento.",
     "endShiftOpenTitle": "Turno aún abierto",
     "endShiftAction": "Terminar Turno",
+    "verifyingStatus": "Verificando el estado del turno…",
     "verifyRetry": "Reintentar"
   },
   "actionCard": {

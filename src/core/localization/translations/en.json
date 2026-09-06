@@ -237,6 +237,7 @@
     "endVerifying": "Checking this shift's inspection status. Please try again in a moment.",
     "endShiftOpenTitle": "Shift still open",
     "endShiftAction": "End Shift",
+    "verifyingStatus": "Verifying shift status…",
     "verifyRetry": "Retry"
   },
   "actionCard": {

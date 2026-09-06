@@ -26,6 +26,7 @@ const read = (p: string) => readFileSync(join(root, p), 'utf8');
 function routeInput(over: Partial<EndShiftRouteInput> = {}): EndShiftRouteInput {
   return {
     enforcedExplicit: true,
+    enforcementLive: true,
     shiftOpen: true,
     periodId: PERIOD,
     preTrip: 'no',
@@ -84,14 +85,59 @@ describe('decideEndShiftRoute — locked rule (Pre-Trip AND operated)', () => {
     assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'no', periodId: null })).action, 'verify_obligation');
   });
 
-  it('legacy (non-enforced) or not-open shift → existing flow unchanged', () => {
-    assert.equal(decideEndShiftRoute(routeInput({ enforcedExplicit: false })).action, 'existing_flow');
+  it('live legacy, or not-open shift → existing flow unchanged (legacy recovery deferred)', () => {
+    assert.equal(decideEndShiftRoute(routeInput({ enforcedExplicit: false, enforcementLive: true })).action, 'existing_flow');
     assert.equal(decideEndShiftRoute(routeInput({ shiftOpen: false })).action, 'existing_flow');
   });
 
   it('ticket/job activity is NOT an input to the routing decision', () => {
     const keys = Object.keys(routeInput());
     assert.ok(!keys.some((k) => /ticket|job|load|work/i.test(k)));
+  });
+});
+
+describe('authority gate — never act on cached/unresolved enforcement', () => {
+  it('cached legacy returning shift → non-actionable verify (no Mark Arrived / End Shift)', () => {
+    const r = decideEndShiftRoute(routeInput({ enforcedExplicit: false, enforcementLive: false }));
+    assert.deepEqual(r, { action: 'verify_obligation', reason: 'authority_unresolved' });
+  });
+
+  it('unavailable/unresolved enforcement → non-actionable verify', () => {
+    // AuthContext maps kind:"unavailable" to enforcedExplicit=false + enforcementLive=false.
+    const r = decideEndShiftRoute(routeInput({ enforcedExplicit: false, enforcementLive: false, preTrip: 'indeterminate' }));
+    assert.equal(r.action, 'verify_obligation');
+  });
+
+  it('cached legacy must NOT enable the permissive legacy path regardless of Pre-Trip', () => {
+    for (const preTrip of ['no', 'yes', 'indeterminate'] as const) {
+      assert.equal(
+        decideEndShiftRoute(routeInput({ enforcedExplicit: false, enforcementLive: false, preTrip })).action,
+        'verify_obligation',
+      );
+    }
+  });
+
+  it('restrictive cached ENFORCED config retains the governed path (never verify/legacy)', () => {
+    assert.equal(decideEndShiftRoute(routeInput({ enforcedExplicit: true, enforcementLive: false })).action, 'existing_flow');
+    // Even with no Pre-Trip, a cached (not live) enforced config must NOT direct-close.
+    assert.equal(
+      decideEndShiftRoute(routeInput({ enforcedExplicit: true, enforcementLive: false, preTrip: 'no' })).action,
+      'existing_flow',
+    );
+  });
+
+  it('enforced LKG cannot downgrade to a permissive legacy route: cached enforced ≠ direct/verify-legacy', () => {
+    // A cached enforced value only ever retains the (more-restrictive) governed
+    // path; it can never become the permissive legacy Mark Arrived path.
+    assert.notEqual(decideEndShiftRoute(routeInput({ enforcedExplicit: true, enforcementLive: false })).action, 'direct_close');
+  });
+
+  it('retry → live resolution transitions to the correct governed/direct route', () => {
+    // Before: cached legacy → verify. After a live read confirms enforced + no
+    // Pre-Trip → direct close; live enforced + operated → governed.
+    assert.equal(decideEndShiftRoute(routeInput({ enforcedExplicit: false, enforcementLive: false })).action, 'verify_obligation');
+    assert.equal(decideEndShiftRoute(routeInput({ enforcedExplicit: true, enforcementLive: true, preTrip: 'no' })).action, 'direct_close');
+    assert.equal(decideEndShiftRoute(routeInput({ enforcedExplicit: true, enforcementLive: true, preTrip: 'yes', operated: 'operated' })).action, 'existing_flow');
   });
 });
 
@@ -254,8 +300,41 @@ describe('Suite wiring (routing seams) + truthful copy', () => {
   it('new shift.* copy is present and translated in both languages', () => {
     const en = JSON.parse(read('src/core/localization/translations/en.json'));
     const es = JSON.parse(read('src/core/localization/translations/es.json'));
-    for (const k of ['endShiftConfirmTitle', 'endShiftConfirmBody', 'endShiftFailed', 'endVerifying', 'endShiftOpenTitle']) {
+    for (const k of ['endShiftConfirmTitle', 'endShiftConfirmBody', 'endShiftFailed', 'endVerifying', 'endShiftOpenTitle', 'verifyingStatus']) {
       assert.ok(en.shift[k] && es.shift[k] && es.shift[k] !== en.shift[k], `shift.${k} translated`);
     }
+  });
+});
+
+describe('safety wiring — live authority, hint-not-authority, no synthetic writes', () => {
+  const auth = read('src/core/context/AuthContext.tsx');
+  const tracking = read('src/core/services/shiftTracking.ts');
+
+  it('resolveEndShiftRoute reads LIVE company config (forceRefresh) and gates on kind:live', () => {
+    const region = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const closeShiftDirect'));
+    assert.ok(region.includes('loadCompanyConfigResult'));
+    assert.ok(/forceRefresh:\s*true/.test(region));
+    assert.ok(region.includes("cfgResult.kind === 'live'"), 'enforcementLive derives from a live read');
+    assert.ok(region.includes('enforcementLive'));
+  });
+
+  it('local returningToYard is only a hint — never the authority for the route', () => {
+    const region = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const closeShiftDirect'));
+    // The route is decided from the live enforcement read, not the restored flag.
+    assert.ok(!/returningToYard[^;]*decideEndShiftRoute/.test(region));
+    assert.ok(region.includes('decideEndShiftRoute'));
+  });
+
+  it('autoCloseStaleShift issues ZERO shift writes (detection/diagnostic only)', () => {
+    const fn = tracking.slice(
+      tracking.indexOf('async function autoCloseStaleShift'),
+      tracking.indexOf('async function autoCloseStaleShift') + 3000,
+    );
+    assert.ok(!fn.includes('23:59:59'), 'no fabricated 23:59:59 logout');
+    assert.ok(!/appendMissingElements/.test(fn), 'no event-append transform');
+    assert.ok(!/fetchSafe\(commitUrl/.test(fn), 'no commit write');
+    assert.ok(!/synthetic:\s*true/.test(fn), 'no synthetic logout event constructed');
+    assert.ok(fn.includes('stale-shift.detected'), 'stale shift surfaced for reconciliation');
+    assert.ok(fn.includes('observeEnforcementSafety'), 'still refreshes live LKG');
   });
 });
