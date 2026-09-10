@@ -37,12 +37,16 @@ export default function ShiftEndRecoveryCard({ mode, originDate, onEndShift, onR
   }
 
   if (mode === 'verify') {
+    // A bounded, actionable error — NOT an endless "Verifying…" spinner. The
+    // shift is left open and unchanged; the only path here is a genuine
+    // server-unreachable state, so the copy is truthful and offers Retry.
     return (
       <View style={s.container}>
         <View style={s.header}>
-          <MaterialCommunityIcons name="clock-alert-outline" size={18} color={colors.status.warning} />
-          <Text style={s.verifyLabel}>{t('shift.verifyingStatus')}</Text>
+          <MaterialCommunityIcons name="alert-circle-outline" size={18} color={colors.status.warning} />
+          <Text style={s.title}>{t('shift.verifyFailedTitle')}</Text>
         </View>
+        <Text style={s.verifyBody}>{t('shift.verifyFailedBody')}</Text>
         <Pressable onPress={onRetry} style={s.retryButton}>
           <MaterialCommunityIcons name="refresh" size={16} color={colors.brand.primary} />
           <Text style={s.retryText}>{t('shift.verifyRetry')}</Text>
@@ -96,10 +100,11 @@ const s = StyleSheet.create({
     fontSize: 13,
     flex: 1,
   },
-  verifyLabel: {
+  verifyBody: {
     color: colors.text.secondary,
     fontSize: 13,
-    flex: 1,
+    lineHeight: 18,
+    marginBottom: 12,
   },
   timer: {
     color: colors.text.muted,

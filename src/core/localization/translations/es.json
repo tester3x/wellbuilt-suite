@@ -238,6 +238,8 @@
     "endShiftOpenTitle": "Turno aún abierto",
     "endShiftAction": "Terminar Turno",
     "verifyingStatus": "Verificando el estado del turno…",
+    "verifyFailedTitle": "No se pudo verificar tu turno",
+    "verifyFailedBody": "No pudimos comunicarnos con el servidor para confirmar el estado de tu turno. Verifica tu conexión y toca Reintentar; tu turno permanece abierto y sin cambios.",
     "verifyRetry": "Reintentar",
     "startedOn": "Iniciado"
   },

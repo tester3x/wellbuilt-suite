@@ -90,6 +90,13 @@ export type EndShiftRoute =
  * a non-actionable verify/retry. A restrictive cached ENFORCED config may retain
  * the governed path.
  *
+ * NOTE on "live" authority: the authenticated server authority
+ * (resolveActiveDriverShift) is itself a live enforcement confirmation. When it
+ * returns a definitive enforced-explicit period, the caller passes
+ * enforcementLive=true (the server IS the authority) even if the OPTIONAL
+ * company-config read failed — so a denied/offline company-config read can never
+ * strand shift resolution. See resolveEndShiftRoute in AuthContext.
+ *
  * Under a LIVE enforced contract the authenticated SERVER state is the truth —
  * the local returning hint never determines it:
  *   - server 'none'         → reconcile the stale local returning state (no write).
@@ -123,7 +130,8 @@ export function decideEndShiftRoute(i: EndShiftRouteInput): EndShiftRoute {
       // Cannot read the Pre-Trip signal → verify, never assume absent.
       if (i.preTrip === 'indeterminate') return { action: 'verify_obligation', reason: 'obligation_unknown' };
       // No vehicle/DVIR obligation → ordinary End Shift closes the work period
-      // directly (full duration preserved; paid work may have occurred).
+      // directly (full duration preserved; paid work may have occurred). A denied
+      // or partial Pre-Trip is never a completed Pre-Trip, so it lands here.
       if (i.preTrip === 'no') return { action: 'direct_close', periodId, originLocalDate };
       // Inspected, canonically NOT operated → direct close, retain Pre-Trip.
       if (i.operated === 'not_operated') return { action: 'direct_close', periodId, originLocalDate };

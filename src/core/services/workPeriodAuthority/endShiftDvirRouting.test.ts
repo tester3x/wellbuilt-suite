@@ -384,3 +384,95 @@ describe('safety wiring — live authority, hint-not-authority, no synthetic wri
     assert.ok(fn.includes('observeEnforcementSafety'), 'still refreshes live LKG');
   });
 });
+
+describe('config-read failure never strands shift resolution (server-authority bridge)', () => {
+  const auth = read('src/core/context/AuthContext.tsx');
+  const region = auth.slice(auth.indexOf('const resolveEndShiftRoute'), auth.indexOf('const reconcileStaleReturningShift'));
+
+  it('MISSING/DENIED config: the server authority is consulted even when the config read is NOT live', () => {
+    // consultServerAuthority fires on an open shift when enforced-explicit OR when
+    // the OPTIONAL company-config read did not live-confirm (denied/offline/missing).
+    assert.ok(/consultServerAuthority\s*=\s*shiftOpen\s*&&\s*\(enforcedExplicit\s*\|\|\s*!enforcementLive\)/.test(region));
+  });
+
+  it('a definitive server open/none confirms enforcement even if config failed (no false verify spinner)', () => {
+    // effectiveEnforcement{Live,Explicit} are raised to true on a server open/none
+    // answer, so decideEndShiftRoute routes from server truth instead of the
+    // config-gated verify — the endless "Verifying shift status…" cannot recur.
+    assert.ok(region.includes('effectiveEnforcementLive = true'));
+    assert.ok(region.includes('effectiveEnforcedExplicit = true'));
+    assert.ok(/enforcementLive:\s*effectiveEnforcementLive/.test(region));
+    assert.ok(/enforcedExplicit:\s*effectiveEnforcedExplicit/.test(region));
+    // DVIR is still evaluated for the exact SERVER period.
+    assert.ok(region.includes('determineDvirSignals(resolved.periodId)'));
+  });
+
+  it('reconcileStaleReturningShift consults the server directly and no longer gates on a live config', () => {
+    const rec = auth.slice(auth.indexOf('const reconcileStaleReturningShift'), auth.indexOf('const closeShiftDirect'));
+    assert.ok(rec.includes('resolveEnforcedExplicit'));
+    assert.ok(rec.includes("resolved.state !== 'none'"));
+    assert.ok(!/cfgResult\.kind !== 'live'/.test(rec), 'the live-config precondition is removed');
+    assert.ok(!rec.includes('loadCompanyConfigResult'), 'config read no longer blocks clearing stale state');
+    // Still writes NO server event of any kind.
+    assert.ok(!/recordShiftEvent|closeEnforcedExplicit|closeDriverShift|ensurePostTripGate/.test(rec));
+  });
+});
+
+describe('mandated deadlock scenarios — decider truth table (server-confirmed)', () => {
+  // Under the caller bridge a server open/none makes enforcement live-confirmed,
+  // so these inputs model exactly what resolveEndShiftRoute feeds the decider.
+  const OLD = '2026-08-23_232617'; // Mike's real preserved open period
+  const OLDDAY = '2026-08-23';
+  const openMikes = (over: Partial<EndShiftRouteInput> = {}) =>
+    routeInput({ serverShift: { state: 'open', periodId: OLD, originLocalDate: OLDDAY }, ...over });
+
+  it('OPEN CANONICAL SHIFT + no completed Pre-Trip → direct close, no Post-Trip (Mike’s expected result)', () => {
+    assert.deepEqual(
+      decideEndShiftRoute(openMikes({ preTrip: 'no' })),
+      { action: 'direct_close', periodId: OLD, originLocalDate: OLDDAY },
+    );
+  });
+
+  it('PARTIAL / DENIED / abandoned Pre-Trip is not a completed Pre-Trip → still direct close (no Post-Trip)', () => {
+    // A partial or permission-failed Pre-Trip leaves no valid receipt (preTrip='no').
+    for (const operated of ['unknown', 'not_operated', 'operated'] as const) {
+      assert.equal(decideEndShiftRoute(openMikes({ preTrip: 'no', operated })).action, 'direct_close');
+    }
+  });
+
+  it('APP RESTART AFTER SEVERAL DAYS: shift age never forces Post-Trip (days-old period still direct-closes)', () => {
+    assert.equal(decideEndShiftRoute(openMikes({ preTrip: 'no' })).action, 'direct_close');
+  });
+
+  it('LEGITIMATE POST-TRIP: completed Pre-Trip + operated → governed existing flow', () => {
+    assert.equal(decideEndShiftRoute(openMikes({ preTrip: 'yes', operated: 'operated' })).action, 'existing_flow');
+  });
+
+  it('SERVER + CONFIG BOTH UNAVAILABLE → bounded actionable verify, never a permissive close', () => {
+    const r = decideEndShiftRoute(
+      routeInput({ enforcedExplicit: false, enforcementLive: false, serverShift: { state: 'unverifiable' } }),
+    );
+    assert.deepEqual(r, { action: 'verify_obligation', reason: 'authority_unresolved' });
+  });
+});
+
+describe('verify is a bounded, actionable error — not an endless spinner', () => {
+  const card = read('src/ui/shared/ShiftEndRecoveryCard.tsx');
+  it('the verify mode renders a truthful failure title + body + Retry (no in-progress "Verifying…" copy)', () => {
+    const verify = card.slice(card.indexOf("mode === 'verify'"), card.indexOf("mode === 'end'"));
+    assert.ok(verify.includes("t('shift.verifyFailedTitle')"));
+    assert.ok(verify.includes("t('shift.verifyFailedBody')"));
+    assert.ok(verify.includes("t('shift.verifyRetry')"));
+    assert.ok(!verify.includes("t('shift.verifyingStatus')"), 'verify mode no longer shows the in-progress spinner copy');
+  });
+  it('no raw Android/browser alert is used for the failure state', () => {
+    assert.ok(!/Alert\.alert|window\.alert|confirm\(/.test(card));
+  });
+  it('the new failure copy is present and translated in both languages', () => {
+    const en = JSON.parse(read('src/core/localization/translations/en.json'));
+    const es = JSON.parse(read('src/core/localization/translations/es.json'));
+    for (const k of ['verifyFailedTitle', 'verifyFailedBody']) {
+      assert.ok(en.shift[k] && es.shift[k] && es.shift[k] !== en.shift[k], `shift.${k} translated`);
+    }
+  });
+});

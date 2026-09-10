@@ -1222,23 +1222,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const enforcedExplicit = isEnforcedExplicitShift(enforcement);
     const shiftOpen = shiftActive || returningToYard;
 
-    // Under a LIVE enforced contract, consult the authenticated server authority
-    // (resolveActiveDriverShift). Its state is the TRUTH — the SecureStore
-    // returning hint never determines the route. DVIR is evaluated for the exact
-    // SERVER period, not a local binding.
+    // Consult the authenticated server authority (resolveActiveDriverShift)
+    // whenever a shift is open AND the company is enforced-explicit OR the
+    // company-config read did NOT live-confirm. The server session is
+    // authenticated independently of the (optional) company-config read, so a
+    // denied/offline config must NOT skip the authoritative call — that is
+    // exactly what stranded the returning state on "Verifying shift status…".
+    // Its state is the TRUTH — the SecureStore returning hint never determines
+    // the route. DVIR is evaluated for the exact SERVER period, not a local
+    // binding. (Live legacy — live-confirmed AND not enforced-explicit — still
+    // skips the enforced-explicit callable and keeps the existing flow.)
     let serverShift: ServerShiftState = { state: 'not_read' };
     let preTrip: PreTripSignal = 'indeterminate';
     let operated: OperatedSignal = 'unknown';
-    if (enforcementLive && enforcedExplicit && shiftOpen) {
+    // The authenticated server authority IS a live enforcement confirmation: a
+    // definitive open/none answer means the driver is on the enforced-explicit
+    // lifecycle (driver_shift_authority is that store), so we treat enforcement
+    // as live-confirmed BY THE SERVER even if the optional company-config read
+    // failed. This is what lets an unreadable/denied/offline config no longer
+    // strand the route on "Verifying shift status…".
+    let effectiveEnforcedExplicit = enforcedExplicit;
+    let effectiveEnforcementLive = enforcementLive;
+    const consultServerAuthority = shiftOpen && (enforcedExplicit || !enforcementLive);
+    if (consultServerAuthority) {
       try {
         const resolved = await resolveEnforcedExplicit();
         if (resolved.state === 'open') {
           serverShift = { state: 'open', periodId: resolved.periodId, originLocalDate: resolved.originLocalDate };
+          effectiveEnforcedExplicit = true;
+          effectiveEnforcementLive = true;
           const sig = await determineDvirSignals(resolved.periodId);
           preTrip = sig.preTrip;
           operated = sig.operated;
         } else if (resolved.state === 'none') {
           serverShift = { state: 'none' };
+          effectiveEnforcedExplicit = true;
+          effectiveEnforcementLive = true;
         } else {
           serverShift = { state: 'unverifiable' };
         }
@@ -1246,7 +1265,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         serverShift = { state: 'unverifiable' };
       }
     }
-    return decideEndShiftRoute({ enforcedExplicit, enforcementLive, shiftOpen, serverShift, preTrip, operated });
+    return decideEndShiftRoute({
+      enforcedExplicit: effectiveEnforcedExplicit,
+      enforcementLive: effectiveEnforcementLive,
+      shiftOpen,
+      serverShift,
+      preTrip,
+      operated,
+    });
   }, [user, shiftActive, returningToYard, determineDvirSignals]);
 
   // Server said NO open period → the local returning/shift state is stale.
@@ -1258,18 +1284,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     reconcileInFlight.current = true;
     const gen = authorityGenRef.current.current();
     try {
-      const [{ loadCompanyConfigResult }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { resolveEnforcedExplicit }] =
-        await Promise.all([
-          import('../services/companyConfig'),
-          import('../services/workPeriodAuthority/suiteShiftAuthority'),
-          import('../services/workPeriodAuthority/postLoginShiftRestoration'),
-          import('../services/workPeriodAuthority/explicitShiftLifecycle'),
-        ]);
-      const cfgResult = user.companyId
-        ? await loadCompanyConfigResult(user.companyId, { forceRefresh: true })
-        : ({ kind: 'unavailable' } as const);
-      if (cfgResult.kind !== 'live') return 'not_none';
-      if (!isEnforcedExplicitShift(parseSuiteEnforcement(cfgResult.config))) return 'not_none';
+      const { resolveEnforcedExplicit } = await import('../services/workPeriodAuthority/explicitShiftLifecycle');
+      // The company-config read is OPTIONAL and must NOT gate reconciliation: the
+      // authenticated server authority is the truth and is consulted directly, so
+      // a denied/offline config can never block clearing a genuinely stale local
+      // returning state. Clear ONLY on an authenticated server 'none'; no server
+      // event of any kind is written.
       const resolved = await resolveEnforcedExplicit();
       if (resolved.state !== 'none') return 'not_none';
       if (!authorityGenRef.current.isCurrent(gen)) return 'not_none';

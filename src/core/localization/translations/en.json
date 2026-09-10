@@ -238,6 +238,8 @@
     "endShiftOpenTitle": "Shift still open",
     "endShiftAction": "End Shift",
     "verifyingStatus": "Verifying shift status…",
+    "verifyFailedTitle": "Couldn't verify your shift",
+    "verifyFailedBody": "We couldn't reach the server to confirm your shift status. Check your connection and tap Retry — your shift stays open and unchanged.",
     "verifyRetry": "Retry",
     "startedOn": "Started"
   },
