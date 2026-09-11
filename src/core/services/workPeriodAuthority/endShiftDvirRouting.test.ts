@@ -476,3 +476,84 @@ describe('verify is a bounded, actionable error — not an endless spinner', () 
     }
   });
 });
+
+/**
+ * REGRESSION — documents the CURRENT observed "returned to Home, shift still
+ * open" behavior for Mike's exact runtime. These pin what the code does TODAY;
+ * they intentionally do NOT assert a desired fix (none is approved yet).
+ */
+describe('observed bounce / no-close path (current behavior — Mike 2026-08-23_232617)', () => {
+  const MIKE = '2026-08-23_232617';
+  const MIKE_ORIGIN = '2026-08-23';
+
+  it('server OPEN + stale local Pre-Trip signal (preTrip="yes") → existing_flow (EN ROUTE; no direct End Shift control shown)', () => {
+    const r = decideEndShiftRoute(
+      routeInput({
+        serverShift: { state: 'open', periodId: MIKE, originLocalDate: MIKE_ORIGIN },
+        preTrip: 'yes',
+        operated: 'unknown',
+      }),
+    );
+    // Current behavior: a stale local Pre-Trip signal traps the driver in the
+    // governed EN ROUTE / "Mark Arrived" card — there is NO bare End Shift
+    // button, so the only end-of-shift-looking control is the red logout icon.
+    assert.equal(r.action, 'existing_flow');
+  });
+
+  it('server OPEN + no Pre-Trip (preTrip="no") on the SAME period → direct_close (the intended path when no stale signal)', () => {
+    const r = decideEndShiftRoute(
+      routeInput({
+        serverShift: { state: 'open', periodId: MIKE, originLocalDate: MIKE_ORIGIN },
+        preTrip: 'no',
+      }),
+    );
+    assert.equal(r.action, 'direct_close');
+    assert.equal(r.action === 'direct_close' && r.periodId, MIKE);
+  });
+
+  it('the red Home logout icon is wired to logout(), and logout() invokes NO close callable (Sign Out ≠ End Shift → Home, shift left open)', () => {
+    const home = read('src/ui/v1-grid/screens/HomeScreen.tsx');
+    assert.ok(home.includes('onPress={logout}'), 'red header icon wired to logout');
+    assert.ok(home.includes('name="logout"'), 'the icon is the logout icon');
+    const auth = read('src/core/context/AuthContext.tsx');
+    const start = auth.indexOf('const logout = useCallback');
+    const end = auth.indexOf('const register = useCallback', start);
+    const logoutRegion = auth.slice(start, end);
+    assert.ok(start >= 0 && end > start, 'logout region located');
+    assert.ok(
+      !/closeEnforcedExplicit|closeDriverShift|performEndShiftDirectClose|closeShiftDirect/.test(logoutRegion),
+      'logout must not invoke any close path',
+    );
+  });
+});
+
+/**
+ * Diagnostic breadcrumbs are wired at every step of the chain (source-only,
+ * non-behavioral). Verifies the instrumentation exists so the "returned to
+ * Home, shift open" path is observable without inference.
+ */
+describe('End Shift breadcrumbs are wired across the chain', () => {
+  const auth = read('src/core/context/AuthContext.tsx');
+  const acr = read('src/ui/shared/ActionCardRow.tsx');
+
+  it('route decision + reason is instrumented in resolveEndShiftRoute', () => {
+    assert.ok(auth.includes("emitEndShiftBreadcrumb('route_decision'"));
+  });
+  it('taps are instrumented (logout icon, direct close, mark arrived)', () => {
+    assert.ok(auth.includes("emitEndShiftBreadcrumb('tap', { source: 'logout_icon'"));
+    assert.ok(auth.includes("emitEndShiftBreadcrumb('tap', { source: 'direct_close'"));
+    assert.ok(auth.includes("emitEndShiftBreadcrumb('tap', { source: 'mark_arrived'"));
+  });
+  it('callable start + result are instrumented for both close paths', () => {
+    assert.ok(auth.includes("emitEndShiftBreadcrumb('callable_start'"));
+    assert.ok(auth.includes("emitEndShiftBreadcrumb('callable_result'"));
+  });
+  it('final navigation is instrumented (logout leaves shift open; arrival closes)', () => {
+    assert.ok(auth.includes("emitEndShiftBreadcrumb('navigation'"));
+    assert.ok(auth.includes('shiftLeftOpen: shiftOpenAtLogout'));
+  });
+  it('confirmation shown/result is instrumented in ActionCardRow', () => {
+    assert.ok(acr.includes("emitEndShiftBreadcrumb('confirmation'"));
+    assert.ok(acr.includes("emitEndShiftBreadcrumb('navigation'"));
+  });
+});

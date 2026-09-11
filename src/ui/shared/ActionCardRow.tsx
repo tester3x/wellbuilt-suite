@@ -28,6 +28,7 @@ import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
+import { emitEndShiftBreadcrumb } from '../../core/services/workPeriodAuthority/endShiftBreadcrumbs';
 import ShiftEndRecoveryCard from './ShiftEndRecoveryCard';
 import { type EndShiftRoute } from '@/core/services/workPeriodAuthority/endShiftDvirRouting';
 
@@ -158,6 +159,12 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   // to EN ROUTE and never asks the driver to claim an arrival that did not occur.
   const runDirectClose = async () => {
     const r = await closeShiftDirect();
+    emitEndShiftBreadcrumb('navigation', {
+      source: 'direct_close',
+      result: r.kind,
+      shiftLeftOpen: r.kind !== 'closed',
+      closeInvoked: true,
+    });
     if (r.kind === 'closed') return;
     if (r.kind === 'retry') {
       Alert.alert(t('shift.endShiftConfirmTitle'), t('shift.endShiftFailed'));
@@ -173,12 +180,13 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     }
   };
   const promptDirectEndShift = () => {
+    emitEndShiftBreadcrumb('confirmation', { source: 'direct_close', shown: true });
     Alert.alert(
       t('shift.endShiftConfirmTitle'),
       t('shift.endShiftConfirmBody'),
       [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('shift.endShiftAction'), style: 'destructive', onPress: () => { void runDirectClose(); } },
+        { text: t('common.cancel'), style: 'cancel', onPress: () => emitEndShiftBreadcrumb('confirmation', { source: 'direct_close', result: 'cancel' }) },
+        { text: t('shift.endShiftAction'), style: 'destructive', onPress: () => { emitEndShiftBreadcrumb('confirmation', { source: 'direct_close', result: 'confirm' }); void runDirectClose(); } },
       ],
     );
   };

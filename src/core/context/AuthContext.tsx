@@ -27,6 +27,7 @@ import { wbDiagLog } from '../services/wbDiagLog';
 import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/postLoginShiftRestoration';
 import { createGenerationClock } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
+import { emitEndShiftBreadcrumb } from '../services/workPeriodAuthority/endShiftBreadcrumbs';
 import {
   decideEndShiftRoute,
   performEndShiftDirectClose,
@@ -1080,6 +1081,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!shiftActive && !returningToYard) return false;
     if (arrivalInFlight.current) return false;
     arrivalInFlight.current = true;
+    emitEndShiftBreadcrumb('tap', { source: 'mark_arrived' });
     try {
     const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { closeEnforcedExplicit }] =
       await Promise.all([
@@ -1101,6 +1103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('[confirmArrival] invalid odometer miles — close blocked:', odo.reason);
         return false;
       }
+      emitEndShiftBreadcrumb('callable_start', { source: 'mark_arrived', periodId: periodId ?? undefined });
       const closed = await closeEnforcedExplicit({
         periodId,
         odometerMiles: odo.kind === 'valid' ? odo.miles : undefined,
@@ -1112,9 +1115,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           '[confirmArrival] closeDriverShift failed — retaining active local state:',
           closed.reason,
         );
+        emitEndShiftBreadcrumb('callable_result', { source: 'mark_arrived', outcome: 'error', reason: closed.reason });
         // Do not clear local active flags on failed close.
         return false;
       }
+      emitEndShiftBreadcrumb('callable_result', {
+        source: 'mark_arrived',
+        outcome: 'success',
+        alreadyClosed: closed.alreadyClosed,
+      });
     } else {
       shiftEndOk = await recordShiftEvent(
         'logout',
@@ -1163,6 +1172,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       SecureStore.deleteItemAsync('returnDepartTime'),
     ]).catch(() => {});
     console.log('[AuthContext] Arrived at yard, shift ended for:', user.displayName);
+    emitEndShiftBreadcrumb('navigation', {
+      source: 'mark_arrived',
+      destination: 'day_summary',
+      closeInvoked: true,
+      shiftLeftOpen: false,
+    });
     // No cascade here — day summary screen handles logout via logoutWithCascade
     return true;
     } finally {
@@ -1265,7 +1280,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         serverShift = { state: 'unverifiable' };
       }
     }
-    return decideEndShiftRoute({
+    const route = decideEndShiftRoute({
       enforcedExplicit: effectiveEnforcedExplicit,
       enforcementLive: effectiveEnforcementLive,
       shiftOpen,
@@ -1273,6 +1288,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       preTrip,
       operated,
     });
+    // Diagnostic (non-behavioral): the route + reason that determines whether an
+    // End Shift control / confirmation is even offered vs. EN ROUTE / verify.
+    emitEndShiftBreadcrumb('route_decision', {
+      action: route.action,
+      reason: 'reason' in route ? route.reason : undefined,
+      serverState: serverShift.state,
+      preTrip,
+      operated,
+      enforcedExplicit: effectiveEnforcedExplicit,
+      enforcementLive: effectiveEnforcementLive,
+      consultServerAuthority,
+      shiftOpen,
+    });
+    return route;
   }, [user, shiftActive, returningToYard, determineDvirSignals]);
 
   // Server said NO open period → the local returning/shift state is stale.
@@ -1318,12 +1347,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // so repeated End Shift taps close at most once.
     if (directCloseInFlight.current) return { kind: 'verify_obligation', reason: 'in_flight' };
     directCloseInFlight.current = true;
+    emitEndShiftBreadcrumb('tap', { source: 'direct_close' });
     const gen = authorityGenRef.current.current();
     try {
       const route = await resolveEndShiftRoute();
       const { closeEnforcedExplicit } = await import(
         '../services/workPeriodAuthority/explicitShiftLifecycle'
       );
+      // closeDriverShift is reached only for a direct_close route; other routes
+      // short-circuit inside performEndShiftDirectClose with no callable.
+      emitEndShiftBreadcrumb('callable_start', {
+        source: 'direct_close',
+        action: route.action,
+        periodId: route.action === 'direct_close' ? route.periodId : undefined,
+      });
       const result = await performEndShiftDirectClose({
         route,
         // Existing authoritative close: periodId only. No odometer, no arrival.
@@ -1353,10 +1390,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (result.kind === 'closed') {
         console.log('[AuthContext] Shift closed via ordinary End Shift (no DVIR obligation) for:', user.displayName);
       }
+      emitEndShiftBreadcrumb('callable_result', {
+        source: 'direct_close',
+        result: result.kind,
+        reason: 'reason' in result ? result.reason : undefined,
+        outcome:
+          result.kind === 'closed'
+            ? 'success'
+            : result.kind === 'retry'
+              ? 'error'
+              : 'not_reached',
+      });
       return result;
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'close_failed';
       console.warn('[AuthContext] closeShiftDirect error — shift left open:', reason);
+      emitEndShiftBreadcrumb('callable_result', { source: 'direct_close', outcome: 'error', reason });
       return { kind: 'retry', reason };
     } finally {
       directCloseInFlight.current = false;
@@ -1446,6 +1495,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // into a Post-Trip or a close by signing out.
     const passcodeHash = user?.passcodeHash;
     const shiftActiveAtLogout = shiftActive;
+    // Sign Out ≠ End Shift: an authoritative open period is left OPEN, no close.
+    const shiftOpenAtLogout = shiftActive || returningToYard;
+    emitEndShiftBreadcrumb('tap', { source: 'logout_icon', shiftOpen: shiftOpenAtLogout });
     await executeSignOutSession({
       writeLogoutSignal: async () => {
         if (passcodeHash) await writeLogoutSignal(passcodeHash);
@@ -1482,7 +1534,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearDriverSession: () => clearDriverSession(),
       clearMemoryUser: () => setUser(null),
     });
-  }, [shiftActive, user]);
+    // Sign Out never runs the shift-close path; a still-open period returns the
+    // driver to Home/login with the shift open (re-login reconciles it).
+    emitEndShiftBreadcrumb('navigation', {
+      source: 'logout_icon',
+      destination: 'login',
+      shiftLeftOpen: shiftOpenAtLogout,
+      closeInvoked: false,
+    });
+  }, [shiftActive, returningToYard, user]);
 
   const register = useCallback(async (displayName: string, passcode: string, companyName?: string, legalName?: string) => {
     const result = await submitRegistration({ displayName, passcode, companyName, legalName });
