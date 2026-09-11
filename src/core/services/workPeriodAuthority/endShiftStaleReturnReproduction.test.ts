@@ -101,9 +101,10 @@ describe('stale EN ROUTE reproduction — terminal decision + differential diagn
     assert.ok(/direct_close/.test(acr));
   });
 
-  it('CAUSE #5 callable never reached (logout path): the red Home logout icon -> logout(), which invokes NO close callable', () => {
+  it('CAUSE #5 callable never reached (logout path): REPAIRED — the red icon now routes through the guarded Sign Out; logout() still invokes NO close callable', () => {
     const home = read('src/ui/v1-grid/screens/HomeScreen.tsx');
-    assert.ok(home.includes('onPress={logout}') && home.includes('name="logout"'));
+    assert.ok(home.includes('handleSignOutPress') && home.includes('name="logout"'));
+    assert.ok(!home.includes('onPress={logout}'), 'no silent logout on the red icon');
     const auth = read('src/core/context/AuthContext.tsx');
     const start = auth.indexOf('const logout = useCallback');
     const end = auth.indexOf('const register = useCallback', start);

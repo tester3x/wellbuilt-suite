@@ -11,7 +11,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius } from '@/core/theme';
 
-type RecoveryMode = 'end' | 'verify' | 'checking';
+type RecoveryMode = 'end' | 'verify' | 'checking' | 'ask_pretrip';
 
 interface ShiftEndRecoveryCardProps {
   mode: RecoveryMode;
@@ -50,6 +50,27 @@ export default function ShiftEndRecoveryCard({ mode, originDate, onEndShift, onR
         <Pressable onPress={onRetry} style={s.retryButton}>
           <MaterialCommunityIcons name="refresh" size={16} color={colors.brand.primary} />
           <Text style={s.retryText}>{t('shift.verifyRetry')}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (mode === 'ask_pretrip') {
+    // A receipt exists but with no trustworthy period identity. Never infer —
+    // the End Shift button opens a Yes/No/Cancel Pre-Trip question (onEndShift).
+    return (
+      <View style={s.container}>
+        <View style={s.header}>
+          <MaterialCommunityIcons name="help-circle-outline" size={18} color={colors.status.warning} />
+          <Text style={s.title}>{t('shift.askPreTripCardTitle')}</Text>
+          {originDate ? (
+            <Text style={s.timer}>{`${t('shift.startedOn')} ${originDate}`}</Text>
+          ) : null}
+        </View>
+        <Text style={s.verifyBody}>{t('shift.askPreTripCardBody')}</Text>
+        <Pressable onPress={onEndShift} style={s.endButton}>
+          <MaterialCommunityIcons name="clock-check-outline" size={18} color="#000" />
+          <Text style={s.endText}>{t('shift.endShiftAction')}</Text>
         </Pressable>
       </View>
     );

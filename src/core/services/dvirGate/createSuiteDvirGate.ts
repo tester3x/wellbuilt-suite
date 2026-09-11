@@ -16,7 +16,7 @@ import {
   consumePendingEndShiftIfReady,
   clearDvirRoutingAfterFinalization,
 } from './dvirGateService';
-import { getPendingEndShift, type DvirReceiptKv } from './dvirReceiptStore';
+import { getPendingEndShift, receiptKey, type DvirReceiptKv } from './dvirReceiptStore';
 import {
   buildShiftDvirSummaryFromStore,
   hydrateShiftDvirSummaryIfMissing,
@@ -62,6 +62,15 @@ export function createSuiteDvirGate(opts?: {
     shiftId: string,
   ) => ReturnType<typeof launchEquipmentPhase>;
   peekPendingEndShift: () => ReturnType<typeof getPendingEndShift>;
+  /** Period-scoped Pre-Trip evidence for the exact shiftId. rawPresent=false when
+   *  no receipt at that key; parseError=true when present but unparseable. A
+   *  thrown storage error propagates (caller treats as unverifiable). */
+  readPreTripEvidence: (shiftId: string) => Promise<{
+    rawPresent: boolean;
+    receiptShiftId: string | null;
+    receiptPhaseIsPreTrip: boolean;
+    parseError: boolean;
+  }>;
   consumePendingEndShiftIfReady: () => ReturnType<typeof consumePendingEndShiftIfReady>;
   clearDvirRoutingAfterFinalization: () => Promise<void>;
   /** Build + persist Shift Complete DVIR summary from durable receipts. */
@@ -103,6 +112,24 @@ export function createSuiteDvirGate(opts?: {
     isPostTripComplete: (shiftId) => isPostTripCompleteForShift(deps, shiftId),
     launchPhase: (phase, shiftId) => launchEquipmentPhase(deps, phase, shiftId),
     peekPendingEndShift: () => getPendingEndShift(kv),
+    readPreTripEvidence: async (shiftId: string) => {
+      // A thrown storage error propagates to the caller (→ unverifiable).
+      const raw = await kv.getItem(receiptKey(shiftId, 'pre_trip'));
+      if (raw == null) {
+        return { rawPresent: false, receiptShiftId: null, receiptPhaseIsPreTrip: false, parseError: false };
+      }
+      try {
+        const r = JSON.parse(raw) as { shiftId?: unknown; phase?: unknown };
+        return {
+          rawPresent: true,
+          receiptShiftId: typeof r.shiftId === 'string' ? r.shiftId : null,
+          receiptPhaseIsPreTrip: r.phase === 'pre_trip',
+          parseError: false,
+        };
+      } catch {
+        return { rawPresent: true, receiptShiftId: null, receiptPhaseIsPreTrip: false, parseError: true };
+      }
+    },
     consumePendingEndShiftIfReady: () => consumePendingEndShiftIfReady(deps),
     clearDvirRoutingAfterFinalization: () => clearDvirRoutingAfterFinalization(deps),
     finalizeShiftDvirSummary: async (shiftId: string) => {

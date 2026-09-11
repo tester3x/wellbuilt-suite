@@ -183,10 +183,26 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     emitEndShiftBreadcrumb('confirmation', { source: 'direct_close', shown: true });
     Alert.alert(
       t('shift.endShiftConfirmTitle'),
-      t('shift.endShiftConfirmBody'),
+      // Truthful: no Pre-Trip was recorded for this period, so no Post-Trip owed.
+      t('shift.endShiftNoPreTripBody'),
       [
         { text: t('common.cancel'), style: 'cancel', onPress: () => emitEndShiftBreadcrumb('confirmation', { source: 'direct_close', result: 'cancel' }) },
         { text: t('shift.endShiftAction'), style: 'destructive', onPress: () => { emitEndShiftBreadcrumb('confirmation', { source: 'direct_close', result: 'confirm' }); void runDirectClose(); } },
+      ],
+    );
+  };
+
+  // Legacy/unscoped receipt: never silently infer. Ask the driver; Yes → governed
+  // Post-Trip/arrival path, No → confirmed direct close, Cancel → no mutation.
+  const promptPreTripChoice = () => {
+    emitEndShiftBreadcrumb('confirmation', { source: 'ask_pretrip', shown: true });
+    Alert.alert(
+      t('shift.askPreTripTitle'),
+      t('shift.askPreTripBody'),
+      [
+        { text: t('common.cancel'), style: 'cancel', onPress: () => emitEndShiftBreadcrumb('confirmation', { source: 'ask_pretrip', result: 'cancel' }) },
+        { text: t('shift.askPreTripNo'), onPress: () => { emitEndShiftBreadcrumb('confirmation', { source: 'ask_pretrip', result: 'no_pretrip' }); promptDirectEndShift(); } },
+        { text: t('shift.askPreTripYes'), onPress: () => { emitEndShiftBreadcrumb('confirmation', { source: 'ask_pretrip', result: 'yes_pretrip' }); setShowArrivalModal(true); } },
       ],
     );
   };
@@ -325,10 +341,22 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           />
         ) : (
           <ShiftEndRecoveryCard
-            mode={returningRoute?.action === 'direct_close' ? 'end' : returningRoute?.action === 'verify_obligation' ? 'verify' : 'checking'}
+            mode={
+              returningRoute?.action === 'direct_close'
+                ? 'end'
+                : returningRoute?.action === 'ask_pretrip'
+                  ? 'ask_pretrip'
+                  : returningRoute?.action === 'verify_obligation'
+                    ? 'verify'
+                    : 'checking'
+            }
             returnStartTime={returnStartTime}
-            originDate={returningRoute?.action === 'direct_close' ? returningRoute.originLocalDate : null}
-            onEndShift={promptDirectEndShift}
+            originDate={
+              returningRoute?.action === 'direct_close' || returningRoute?.action === 'ask_pretrip'
+                ? returningRoute.originLocalDate
+                : null
+            }
+            onEndShift={returningRoute?.action === 'ask_pretrip' ? promptPreTripChoice : promptDirectEndShift}
             onRetry={() => { void refreshReturningRoute(); }}
           />
         )}

@@ -28,6 +28,7 @@ import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/post
 import { createGenerationClock } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { emitEndShiftBreadcrumb } from '../services/workPeriodAuthority/endShiftBreadcrumbs';
+import { derivePreTripSignal } from '../services/workPeriodAuthority/preTripSignal';
 import {
   decideEndShiftRoute,
   performEndShiftDirectClose,
@@ -123,6 +124,12 @@ interface AuthContextType {
    * so the UI can keep the modal open for retry.
    */
   confirmArrival: (odometerMiles?: number) => Promise<boolean>;
+  /**
+   * Guard consulted before Sign Out. Returns 'open_shift' when the authenticated
+   * server authority reports an open period (or is unverifiable — fail-safe), so
+   * the UI can warn instead of silently signing out; 'no_open_shift' otherwise.
+   */
+  resolveSignOutGuard: () => Promise<'no_open_shift' | 'open_shift'>;
   /**
    * Decide how the End Shift action should route for the current shift, based on
    * the canonical vehicle/DVIR (Post-Trip) obligation signal — WITHOUT acting:
@@ -1203,13 +1210,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { createSuiteDvirGate } = await import('../services/dvirGate');
         const gate = createSuiteDvirGate({ isShiftActive: () => true });
-        const [hasPreTrip, pending] = await Promise.all([
-          gate.isPreTripComplete(periodId),
-          gate.peekPendingEndShift(),
-        ]);
-        const pendingForShift = !!pending && pending.shiftId === periodId;
-        return { preTrip: hasPreTrip || pendingForShift ? 'yes' : 'no', operated };
+        // Period-scoped evidence for the EXACT authoritative period. A pending
+        // End Shift flag and another period's receipt are NOT evidence of a
+        // Pre-Trip; a stale/unscoped receipt yields 'legacy_unscoped' (ask the
+        // driver); a storage read failure yields 'indeterminate' (never assume).
+        const ev = await gate.readPreTripEvidence(periodId);
+        const preTrip = derivePreTripSignal({
+          activePeriodId: periodId,
+          readOk: true,
+          rawPresent: ev.rawPresent,
+          parseError: ev.parseError,
+          receiptShiftId: ev.receiptShiftId,
+          receiptPhaseIsPreTrip: ev.receiptPhaseIsPreTrip,
+        });
+        return { preTrip, operated };
       } catch {
+        // Storage/read failure → unverifiable; never assume yes or no.
         return { preTrip: 'indeterminate', operated };
       }
     },
@@ -1340,6 +1356,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       reconcileInFlight.current = false;
     }
   }, [user]);
+
+  // Sign Out guard: consult the authenticated server authority for an OPEN
+  // period BEFORE signing out, so an open shift is never silently abandoned.
+  // Fail-safe: 'none' → no_open_shift; 'open' or unverifiable/throw → open_shift
+  // (warn — never silently sign out of a possibly-open shift). No write.
+  const resolveSignOutGuard = useCallback(async (): Promise<'no_open_shift' | 'open_shift'> => {
+    if (!user) return 'no_open_shift';
+    if (!shiftActive && !returningToYard) return 'no_open_shift';
+    try {
+      const { resolveEnforcedExplicit } = await import(
+        '../services/workPeriodAuthority/explicitShiftLifecycle'
+      );
+      const resolved = await resolveEnforcedExplicit();
+      return resolved.state === 'none' ? 'no_open_shift' : 'open_shift';
+    } catch {
+      return 'open_shift';
+    }
+  }, [user, shiftActive, returningToYard]);
 
   const closeShiftDirect = useCallback(async (): Promise<EndShiftDirectCloseResult> => {
     if (!user) return { kind: 'existing_flow' };
@@ -1656,6 +1690,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logoutWithCascade,
       startReturn,
       confirmArrival,
+      resolveSignOutGuard,
       resolveEndShiftRoute,
       reconcileStaleReturningShift,
       closeShiftDirect,

@@ -32,7 +32,14 @@ export const FORBIDDEN_BREADCRUMB_KEYS: readonly string[] = Object.freeze(
 );
 
 export interface EndShiftBreadcrumbFields {
-  source?: 'logout_icon' | 'direct_close' | 'mark_arrived' | 'shift_card' | 'day_summary';
+  source?:
+    | 'logout_icon'
+    | 'direct_close'
+    | 'mark_arrived'
+    | 'shift_card'
+    | 'day_summary'
+    | 'ask_pretrip'
+    | 'sign_out_warning';
   action?: string; // route action
   reason?: string; // route/close reason code
   serverState?: string; // open | none | unverifiable | not_read

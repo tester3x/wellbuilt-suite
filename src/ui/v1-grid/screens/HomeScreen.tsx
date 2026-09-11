@@ -1,11 +1,12 @@
 import React, { useCallback, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, AppState } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, AppState, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { useAuth } from '@/core/context/AuthContext';
+import { emitEndShiftBreadcrumb } from '@/core/services/workPeriodAuthority/endShiftBreadcrumbs';
 import { wellbuiltApps } from '@/core/data/apps';
 import { useGreeting, useAppLauncher, useAppCardActions, useCompanyConfig } from '@/core/hooks';
 import { TIER_DESCRIPTIONS } from '@/core/services/companyConfig';
@@ -15,7 +16,7 @@ import { ActionCardRow } from '@/ui/shared/ActionCardRow';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
-  const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
+  const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival, resolveSignOutGuard, closeShiftDirect } = useAuth();
   const { launchWBApp } = useAppLauncher();
   const { onPrimaryTap, onOpenDetails } = useAppCardActions();
   const { isWBAppEnabled, config: companyConfig, tierLabel } = useCompanyConfig(user?.companyId);
@@ -31,6 +32,61 @@ export default function HomeScreen() {
     router.push('/day-summary');
     return true;
   }, [confirmArrival]);
+
+  // Sign Out is distinct from End Shift. If the authoritative shift is open, do
+  // NOT silently return Home — offer End Shift / Sign Out and Leave Shift Open /
+  // Cancel. Never auto-close and never fabricate an arrival.
+  const handleSignOutPress = useCallback(async () => {
+    emitEndShiftBreadcrumb('tap', { source: 'logout_icon' });
+    let guard: 'no_open_shift' | 'open_shift' = 'open_shift';
+    try {
+      guard = await resolveSignOutGuard();
+    } catch {
+      guard = 'open_shift'; // fail-safe: warn rather than silently sign out
+    }
+    if (guard === 'no_open_shift') {
+      await logout();
+      return;
+    }
+    emitEndShiftBreadcrumb('confirmation', { source: 'sign_out_warning', shown: true });
+    Alert.alert(
+      t('shift.signOutOpenTitle'),
+      t('shift.signOutOpenBody'),
+      [
+        {
+          text: t('common.cancel'),
+          style: 'cancel',
+          onPress: () => emitEndShiftBreadcrumb('confirmation', { source: 'sign_out_warning', result: 'cancel' }),
+        },
+        {
+          text: t('shift.signOutLeaveOpen'),
+          onPress: () => {
+            emitEndShiftBreadcrumb('confirmation', { source: 'sign_out_warning', result: 'leave_open' });
+            void logout();
+          },
+        },
+        {
+          text: t('shift.signOutEndShift'),
+          onPress: () => {
+            void (async () => {
+              emitEndShiftBreadcrumb('confirmation', { source: 'sign_out_warning', result: 'end_shift' });
+              const r = await closeShiftDirect();
+              emitEndShiftBreadcrumb('navigation', {
+                source: 'sign_out_warning',
+                result: r.kind,
+                closeInvoked: true,
+                shiftLeftOpen: r.kind !== 'closed',
+              });
+              // Never a silent return Home: on any non-close, show the exact reason.
+              if (r.kind !== 'closed') {
+                Alert.alert(t('shift.signOutEndShiftBlockedTitle'), t('shift.signOutEndShiftBlockedBody'));
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [resolveSignOutGuard, logout, closeShiftDirect, t]);
 
   // ── JSA shift-start gate ──────────────────────────────────────
   const jsaMode = companyConfig?.jsaMode || 'off';
@@ -119,7 +175,7 @@ export default function HomeScreen() {
           <Pressable onPress={() => router.push('/settings')} style={styles.headerButton}>
             <MaterialCommunityIcons name="cog-outline" size={20} color={colors.text.muted} />
           </Pressable>
-          <Pressable onPress={logout} style={[styles.headerButton, styles.logoutHeaderButton]}>
+          <Pressable onPress={() => { void handleSignOutPress(); }} style={[styles.headerButton, styles.logoutHeaderButton]}>
             <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
           </Pressable>
         </View>

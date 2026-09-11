@@ -34,7 +34,14 @@
  */
 
 /** Whether a matching valid Pre-Trip receipt exists for the shift. */
-export type PreTripSignal = 'yes' | 'no' | 'indeterminate';
+// Period-scoped Pre-Trip signal (see preTripSignal.ts for derivation):
+//   yes            — a completed Pre-Trip receipt matching the exact active periodId
+//   no             — successful read, no exact-period Pre-Trip (a pending End Shift
+//                    flag or another period's receipt is NOT evidence)
+//   legacy_unscoped— a receipt exists but with no trustworthy period identity;
+//                    ask the driver rather than silently inferring
+//   indeterminate  — the local store could not be read (never assume yes or no)
+export type PreTripSignal = 'yes' | 'no' | 'legacy_unscoped' | 'indeterminate';
 /** Whether the inspected equipment was actually operated this shift. */
 export type OperatedSignal = 'operated' | 'not_operated' | 'unknown';
 
@@ -80,6 +87,7 @@ export type EndShiftRoute =
   | { action: 'direct_close'; periodId: string; originLocalDate: string | null }
   | { action: 'existing_flow' }
   | { action: 'reconcile_none' }
+  | { action: 'ask_pretrip'; periodId: string; originLocalDate: string | null }
   | { action: 'verify_obligation'; reason: 'obligation_unknown' | 'authority_unresolved' };
 
 /**
@@ -129,6 +137,9 @@ export function decideEndShiftRoute(i: EndShiftRouteInput): EndShiftRoute {
       const { periodId, originLocalDate } = i.serverShift;
       // Cannot read the Pre-Trip signal → verify, never assume absent.
       if (i.preTrip === 'indeterminate') return { action: 'verify_obligation', reason: 'obligation_unknown' };
+      // A receipt exists but with no trustworthy period identity → never silently
+      // infer yes/no; ask the driver whether a Pre-Trip was completed.
+      if (i.preTrip === 'legacy_unscoped') return { action: 'ask_pretrip', periodId, originLocalDate };
       // No vehicle/DVIR obligation → ordinary End Shift closes the work period
       // directly (full duration preserved; paid work may have occurred). A denied
       // or partial Pre-Trip is never a completed Pre-Trip, so it lands here.

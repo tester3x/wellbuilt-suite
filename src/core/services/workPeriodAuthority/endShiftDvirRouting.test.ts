@@ -511,17 +511,22 @@ describe('observed bounce / no-close path (current behavior — Mike 2026-08-23_
     assert.equal(r.action === 'direct_close' && r.periodId, MIKE);
   });
 
-  it('the red Home logout icon is wired to logout(), and logout() invokes NO close callable (Sign Out ≠ End Shift → Home, shift left open)', () => {
+  it('REPAIRED: the red Home logout icon routes through the guarded Sign Out (no silent logout); logout() still invokes NO close callable', () => {
     const home = read('src/ui/v1-grid/screens/HomeScreen.tsx');
-    assert.ok(home.includes('onPress={logout}'), 'red header icon wired to logout');
+    assert.ok(home.includes('handleSignOutPress'), 'red icon routes through the sign-out guard');
+    assert.ok(!home.includes('onPress={logout}'), 'red icon no longer signs out silently');
     assert.ok(home.includes('name="logout"'), 'the icon is the logout icon');
+    assert.ok(
+      home.includes('resolveSignOutGuard') && home.includes("t('shift.signOutOpenTitle')"),
+      'open-shift Sign Out shows the warning',
+    );
     const auth = read('src/core/context/AuthContext.tsx');
     const start = auth.indexOf('const logout = useCallback');
     const end = auth.indexOf('const register = useCallback', start);
     const logoutRegion = auth.slice(start, end);
     assert.ok(start >= 0 && end > start, 'logout region located');
     assert.ok(
-      !/closeEnforcedExplicit|closeDriverShift|performEndShiftDirectClose|closeShiftDirect/.test(logoutRegion),
+      !/closeEnforcedExplicit|performEndShiftDirectClose|closeShiftDirect/.test(logoutRegion),
       'logout must not invoke any close path',
     );
   });
@@ -555,5 +560,101 @@ describe('End Shift breadcrumbs are wired across the chain', () => {
   it('confirmation shown/result is instrumented in ActionCardRow', () => {
     assert.ok(acr.includes("emitEndShiftBreadcrumb('confirmation'"));
     assert.ok(acr.includes("emitEndShiftBreadcrumb('navigation'"));
+  });
+});
+
+/**
+ * Blended End Shift repair: period-scoped signal routing + UX + copy + breadcrumbs.
+ */
+describe('blended End Shift repair', () => {
+  const MIKE = '2026-08-23_232617';
+  const MIKE_ORIGIN = '2026-08-23';
+  const acr = read('src/ui/shared/ActionCardRow.tsx');
+  const card = read('src/ui/shared/ShiftEndRecoveryCard.tsx');
+  const home = read('src/ui/v1-grid/screens/HomeScreen.tsx');
+  const authSrc = read('src/core/context/AuthContext.tsx');
+  const en = JSON.parse(read('src/core/localization/translations/en.json'));
+  const es = JSON.parse(read('src/core/localization/translations/es.json'));
+
+  it('legacy_unscoped signal → ask_pretrip (never a silent yes/no)', () => {
+    const r = decideEndShiftRoute(routeInput({ preTrip: 'legacy_unscoped' }));
+    assert.equal(r.action, 'ask_pretrip');
+    assert.equal(r.action === 'ask_pretrip' && r.periodId, PERIOD);
+  });
+
+  it('Mike stale state: server-open 2026-08-23_232617 + no exact-period Pre-Trip → direct_close', () => {
+    const r = decideEndShiftRoute(
+      routeInput({ serverShift: { state: 'open', periodId: MIKE, originLocalDate: MIKE_ORIGIN }, preTrip: 'no' }),
+    );
+    assert.equal(r.action, 'direct_close');
+    assert.equal(r.action === 'direct_close' && r.periodId, MIKE);
+  });
+
+  it('exact-period completed Pre-Trip → governed obligated path (existing_flow)', () => {
+    assert.equal(decideEndShiftRoute(routeInput({ preTrip: 'yes' })).action, 'existing_flow');
+  });
+
+  it('local-store read failure → verify_obligation (unverifiable/retry), never a silent close', () => {
+    const r = decideEndShiftRoute(routeInput({ preTrip: 'indeterminate' }));
+    assert.equal(r.action, 'verify_obligation');
+  });
+
+  it('ask_pretrip route renders the ask card + a Yes/No/Cancel Pre-Trip question', () => {
+    assert.ok(card.includes("mode === 'ask_pretrip'"), 'recovery card has ask_pretrip mode');
+    assert.ok(acr.includes('promptPreTripChoice'), 'ActionCardRow wires the choice');
+    assert.ok(
+      acr.includes("t('shift.askPreTripYes')") &&
+        acr.includes("t('shift.askPreTripNo')") &&
+        acr.includes("t('common.cancel')"),
+      'Yes/No/Cancel present',
+    );
+    assert.ok(acr.includes('setShowArrivalModal(true)'), 'Yes → governed arrival/Post-Trip path');
+    assert.ok(acr.includes('promptDirectEndShift'), 'No → confirmed direct close');
+  });
+
+  it('direct_close confirmation explains: no Pre-Trip recorded → no Post-Trip required', () => {
+    assert.ok(acr.includes("t('shift.endShiftNoPreTripBody')"));
+    assert.match(en.shift.endShiftNoPreTripBody, /No Pre-Trip was recorded/i);
+    assert.match(en.shift.endShiftNoPreTripBody, /Post-Trip is not required/i);
+  });
+
+  it('Sign Out with an open shift shows End Shift / Leave Open / Cancel; never auto-closes; distinct from End Shift', () => {
+    assert.ok(home.includes('resolveSignOutGuard'), 'consults the server-authority guard');
+    assert.ok(
+      home.includes("t('shift.signOutOpenTitle')") &&
+        home.includes("t('shift.signOutEndShift')") &&
+        home.includes("t('shift.signOutLeaveOpen')") &&
+        home.includes("t('common.cancel')"),
+      'three explicit options',
+    );
+    assert.match(en.shift.signOutOpenBody, /leaves it open|left open|remains open|until you End Shift/i);
+    assert.ok(home.includes('closeShiftDirect('), 'End Shift goes through the confirmed close, not an auto-close');
+    // Sign Out (leave open) still calls the unchanged logout(); no close callable.
+    assert.ok(home.includes('void logout();'));
+  });
+
+  it('direct-close cancel path triggers zero callable calls', () => {
+    const prompt = acr.slice(acr.indexOf('const promptDirectEndShift'), acr.indexOf('const promptPreTripChoice'));
+    assert.ok(/style: 'cancel'/.test(prompt), 'has a cancel option');
+    assert.ok(!/style: 'cancel'[^}]*runDirectClose/.test(prompt), 'cancel does not run the close');
+  });
+
+  it('new copy is present and translated in both languages', () => {
+    for (const k of [
+      'endShiftNoPreTripBody', 'askPreTripTitle', 'askPreTripBody', 'askPreTripYes', 'askPreTripNo',
+      'askPreTripCardTitle', 'askPreTripCardBody', 'signOutOpenTitle', 'signOutOpenBody',
+      'signOutEndShift', 'signOutLeaveOpen', 'signOutEndShiftBlockedTitle', 'signOutEndShiftBlockedBody',
+    ]) {
+      assert.ok(en.shift[k] && es.shift[k] && es.shift[k] !== en.shift[k], `shift.${k} translated`);
+    }
+  });
+
+  it('sanitized breadcrumbs distinguish route / confirmation / callable / navigation for the new flows (no identity/creds)', () => {
+    assert.ok(authSrc.includes("emitEndShiftBreadcrumb('route_decision'"));
+    assert.ok(acr.includes("source: 'ask_pretrip'"));
+    assert.ok(home.includes("source: 'sign_out_warning'"));
+    assert.ok(home.includes("emitEndShiftBreadcrumb('navigation'"));
+    // No raw credential/identity fields are ever passed to a breadcrumb call.
+    assert.ok(!/emitEndShiftBreadcrumb\([^)]*(passcode|driverId|passcodeHash|token)/.test(authSrc + acr + home));
   });
 });

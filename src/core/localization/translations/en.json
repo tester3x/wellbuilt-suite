@@ -241,7 +241,20 @@
     "verifyFailedTitle": "Couldn't verify your shift",
     "verifyFailedBody": "We couldn't reach the server to confirm your shift status. Check your connection and tap Retry — your shift stays open and unchanged.",
     "verifyRetry": "Retry",
-    "startedOn": "Started"
+    "startedOn": "Started",
+    "endShiftNoPreTripBody": "No Pre-Trip was recorded for this shift, so a Post-Trip is not required. This ends your work shift and records your clock-out. Your full shift time is kept.",
+    "askPreTripCardTitle": "Unverified Pre-Trip record",
+    "askPreTripCardBody": "This shift has a Pre-Trip record we can't tie to it. Tap End Shift to confirm whether a Pre-Trip was done.",
+    "askPreTripTitle": "Did you complete a Pre-Trip for this shift?",
+    "askPreTripBody": "We found a Pre-Trip record with no clear link to this shift. Your answer decides whether a Post-Trip is required.",
+    "askPreTripYes": "Yes, I did a Pre-Trip",
+    "askPreTripNo": "No Pre-Trip",
+    "signOutOpenTitle": "Your shift is still open",
+    "signOutOpenBody": "You have an open shift. End Shift closes it now. Sign Out leaves it open — you'll be clocked in until you End Shift.",
+    "signOutEndShift": "End Shift",
+    "signOutLeaveOpen": "Sign Out and Leave Shift Open",
+    "signOutEndShiftBlockedTitle": "Finish ending your shift",
+    "signOutEndShiftBlockedBody": "This shift needs a Pre-Trip or Post-Trip step before it can close. Open the shift card on the home screen to finish. Your shift is still open."
   },
   "actionCard": {
     "timesheet": "Timesheet",

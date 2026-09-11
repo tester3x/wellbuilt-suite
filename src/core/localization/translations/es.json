@@ -241,7 +241,20 @@
     "verifyFailedTitle": "No se pudo verificar tu turno",
     "verifyFailedBody": "No pudimos comunicarnos con el servidor para confirmar el estado de tu turno. Verifica tu conexión y toca Reintentar; tu turno permanece abierto y sin cambios.",
     "verifyRetry": "Reintentar",
-    "startedOn": "Iniciado"
+    "startedOn": "Iniciado",
+    "endShiftNoPreTripBody": "No se registró una inspección previa (Pre-Trip) para este turno, por lo que no se requiere una inspección posterior (Post-Trip). Esto termina tu turno y registra tu salida. Se conserva todo tu tiempo de turno.",
+    "askPreTripCardTitle": "Registro de Pre-Trip sin verificar",
+    "askPreTripCardBody": "Este turno tiene un registro de Pre-Trip que no podemos asociarle. Toca Terminar Turno para confirmar si se hizo un Pre-Trip.",
+    "askPreTripTitle": "¿Completaste un Pre-Trip para este turno?",
+    "askPreTripBody": "Encontramos un registro de Pre-Trip sin un vínculo claro con este turno. Tu respuesta determina si se requiere un Post-Trip.",
+    "askPreTripYes": "Sí, hice un Pre-Trip",
+    "askPreTripNo": "Sin Pre-Trip",
+    "signOutOpenTitle": "Tu turno sigue abierto",
+    "signOutOpenBody": "Tienes un turno abierto. Terminar Turno lo cierra ahora. Cerrar Sesión lo deja abierto: seguirás con el turno iniciado hasta que termines el turno.",
+    "signOutEndShift": "Terminar Turno",
+    "signOutLeaveOpen": "Cerrar Sesión y Dejar el Turno Abierto",
+    "signOutEndShiftBlockedTitle": "Termina de cerrar tu turno",
+    "signOutEndShiftBlockedBody": "Este turno necesita un paso de Pre-Trip o Post-Trip antes de cerrarse. Abre la tarjeta de turno en la pantalla de inicio para terminar. Tu turno sigue abierto."
   },
   "actionCard": {
     "timesheet": "Nómina",
