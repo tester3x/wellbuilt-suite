@@ -34,3 +34,15 @@ changes, add authenticated owner/company/operator-scoped recovery without age-ba
 silencing, and use actual review/sign-off completion before acknowledging success.
 Exercise account switches, legacy periods, multiple operators, offline retry and
 off-shift recovery. No JSA setting or live JSA record was changed for this census.
+
+Located the newer branch `origin/repair/governed-handoff-2026-08-22` at a9ae301.
+A clean worktree at C:/dev/JSA on fix/jsa-owned-recovery-20260912 preserves the dirty
+older checkout. Its governed implementation already replaces several legacy paths
+described above; audit that newer branch before treating the main-checkout findings
+as current shipped defects. The missing sibling test now passes: 173/173 Suite
+SSO tests. No JSA source changes were made. Mike requested finishing DVIR first.
+
+Confirmed product rule: separate oil-company/customer JSAs can accumulate throughout
+one shift and all unfinished ones close at shift end; earlier individual close-out
+can remain optional. Additional work after signing must preserve the signed record
+and use an explicit additional-work flow. Do not silently mutate signed evidence.

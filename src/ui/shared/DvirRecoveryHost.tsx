@@ -44,9 +44,18 @@ export default function DvirRecoveryHost() {
     if (!available) return;
     void (async () => {
       // Do not intercept the Suite authorization leg of a live handoff.
-      if (await hydrateGovernedEquipmentHandoff()) return;
+      const handoff = await hydrateGovernedEquipmentHandoff();
+      if (handoff && handoff.purpose !== 'recovery') return;
       const next = await resolveDvirRecovery();
       if (gen !== generation.current) return;
+      if (handoff?.purpose === 'recovery') {
+        // A recovery return goes Home, not through current-shift receipt close.
+        // Retire its Suite handoff once the server no longer lists that report,
+        // then allow the next older obligation to surface immediately.
+        if (next?.shiftId === handoff.shiftId) return;
+        await clearGovernedEquipmentHandoff('recovery_no_longer_pending');
+        if (gen !== generation.current) return;
+      }
       setRecovery(next);
       setReason('');
       setNote('');

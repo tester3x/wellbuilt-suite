@@ -68,3 +68,12 @@ Validation: 80 DVIR tests, 58 SSO P0 tests and Android export pass. Recovery loo
 tests include account switches, wrong owner, malformed responses and off-shift
 Home without premature SSO launch. Existing unrelated typecheck errors remain.
 Replacement build and physical recovery-modal verification remain pending.
+
+Final recovery refinements: cold auth readiness rechecks the server-owned recovery
+after reconciliation, discarding results from superseded reads. After a recovered
+Post-Trip returns Home, the recovery host retires the old Suite handoff only once
+the server no longer lists that inspection; any next older obligation can surface
+immediately. This never runs the current-shift arrival handler. VC42/43 builds
+were canceled before installation to include these changes together in VC44.
+The full Suite SSO suite now passes 173 tests after locating the newer JSA branch
+at its expected sibling path; 80 DVIR and 266 shift-authority tests also pass.

@@ -39,8 +39,17 @@ test('recovery lookup rejects owner drift, malformed phase, unavailable state an
 });
 
 test('recovery host checks off-shift Home only after verified session readiness', async () => {
-  for (const [gate, path, expected] of [['pending', '/home', 0], ['ready', '/sso-authorize', 0], ['ready', '/home', 1]]) {
+  const recoveryHandoff = { purpose: 'recovery', shiftId: answer.recovery.shiftId };
+  for (const [gate, path, handoff, next, expected, cleared] of [
+    ['pending', '/home', null, null, 0, 0], ['ready', '/sso-authorize', null, null, 0, 0],
+    ['ready', '/home', null, null, 1, 0],
+    ['ready', '/home', { purpose: undefined }, null, 0, 0],
+    ['ready', '/home', recoveryHandoff, answer.recovery, 1, 0],
+    ['ready', '/home', recoveryHandoff, null, 1, 1],
+    ['ready', '/home', recoveryHandoff, { shiftId: '2026-09-02_070000', phase: 'post_trip' }, 1, 1],
+  ]) {
     let reads = 0;
+    let clears = 0;
     const effects: Array<() => unknown> = [];
     const mocks: Record<string, any> = {
       react: { createElement: () => null, useState: (x: unknown) => [x, () => {}],
@@ -50,11 +59,12 @@ test('recovery host checks off-shift Home only after verified session readiness'
       'expo-router': { usePathname: () => path },
       '@/core/context/AuthContext': { useAuth: () => ({ user: who, loading: false, shiftActive: false }) },
       '@/core/hooks/useSsoSessionGate': { useSsoSessionGate: () => gate },
-      '@/core/services/dvirGate/dvirRecovery': { resolveDvirRecovery: async () => { reads++; return null; } },
+      '@/core/services/dvirGate/dvirRecovery': { resolveDvirRecovery: async () => { reads++; return next; } },
       '@/core/services/dvirGate': { createSuiteDvirGate: () => assert.fail('must not launch during lookup') },
       '@/core/services/dvirGate/dvirGateService': {},
       '@/core/services/dvirGate/equipmentHandoffBinding': {
-        hydrateGovernedEquipmentHandoff: async () => null, subscribeGovernedHandoffChanged: () => () => {},
+        hydrateGovernedEquipmentHandoff: async () => handoff, subscribeGovernedHandoffChanged: () => () => {},
+        clearGovernedEquipmentHandoff: async () => { clears++; },
       },
     };
     const exports: any = {};
@@ -67,5 +77,6 @@ test('recovery host checks off-shift Home only after verified session readiness'
     effects.forEach(f => f());
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(reads, expected);
+    assert.equal(clears, cleared);
   }
 });
