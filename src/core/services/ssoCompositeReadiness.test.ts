@@ -57,6 +57,29 @@ it('off-shift recovery refresh is generation-owned and cannot fabricate an open 
   assert.equal(bridge.peek().binding, null);
 });
 
+it('cold recovery retries after verified auth and ignores an older failed lookup', async () => {
+  let failOld!: (error: Error) => void;
+  let reads = 0;
+  const publications: Array<{ gate: string; equipment: string }> = [];
+  const bridge = createCompositeReadinessBridge({ onPublish: p => publications.push(p), onRetryReconciliation: () => {},
+    readHandoff: async () => {
+      if (++reads === 1) return new Promise((_resolve, reject) => { failOld = reject; });
+      return { shiftId: '2026-09-01_070000', phase: 'post_trip', expiresAtMs: 2000, recoveryVerified: true };
+    }, nowMs: () => 1000 });
+  bridge.reset(1);
+  bridge.reportEquipmentRestoration(1, 'none');
+  bridge.reportRevalidation(1, 'ok');
+  bridge.reportReconciliation(1, 'verified');
+  assert.equal(bridge.peek().equipment, 'pending');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bridge.peek().equipment, 'open');
+  failOld(new Error('old lookup had no SDK identity'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bridge.peek().equipment, 'open');
+  assert.equal(publications.some(p => p.gate === 'ready' && p.equipment === 'none'), false);
+  assert.equal(bridge.peek().periodId, null);
+});
+
 describe('computeCompositeGate / shouldRetryReconciliation (pure)', () => {
   it('ready requires BOTH revalidation ok AND reconciliation verified', () => {
     const base = {

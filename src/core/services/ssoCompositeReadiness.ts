@@ -142,6 +142,14 @@ export function createCompositeReadinessBridge(deps: {
       s = { ...s, reconRetriedAfterReval: true, recon: 'verifying' };
       deps.onRetryReconciliation();
     }
+    // A recovery lookup made while SDK reconciliation was pending may have
+    // failed. Refresh after auth becomes ready and hold Equipment meanwhile;
+    // otherwise a cold off-shift launch could emit a premature denial.
+    if (computeCompositeGate(s) === 'ready' && publishedGate !== 'ready'
+        && (s.restoration === 'open' || s.restoration === 'none')) {
+      s = { ...s, equipment: 'pending', binding: null };
+      refreshEquipment();
+    }
     publish();
   }
 
@@ -159,10 +167,10 @@ export function createCompositeReadinessBridge(deps: {
   function refreshEquipment() {
     const gen = s.generation;
     const p = deps.readHandoff().then((handoff) => {
-      if (gen !== s.generation) return;
+      if (gen !== s.generation || handoffInflight !== p) return;
       applyEquipment(handoff);
     }).catch(() => {
-      if (gen !== s.generation) return;
+      if (gen !== s.generation || handoffInflight !== p) return;
       applyEquipment(null);
     }).finally(() => {
       if (handoffInflight === p) handoffInflight = null;
