@@ -36,6 +36,12 @@ MikeS24's retained Post-Trip route instead. This is a separate retained-route
 issue and was not counted as successful Pre-Trip authorization. No inspection
 was submitted during these tests. eQuipment VC18 changes tests only.
 
+The user confirmed that lingering Post-Trip DVIR and JSA obligations must be
+completed, not discarded by logout/sign-out. Any retained-route repair must
+preserve those obligations and their owning account/period, and make the owner
+explicit when blocking a different account. Do not clear inspection caches as
+a shortcut. JSA is currently disabled in company settings and was not exercised.
+
 ## Validation and delivery
 
 - Production loader exercised with mocked storage/auth/network: 3 tests pass.
@@ -43,7 +49,16 @@ was submitted during these tests. eQuipment VC18 changes tests only.
 - Authentication core: 133 pass; SSO P0: 56 pass (overlapping coverage).
 - Android Expo export passed.
 - Suite VC38 build: 2db330e8-cfbe-4f6a-af34-acf61f37096b.
-- Physical-device verification of VC38 is pending build completion.
+- VC38 finished successfully, built from 68f5b3d. Installed over VC37 on the
+  ZFold without clearing data or signing in again. MikeS24's server period
+  2026-09-12_020000 restored immediately; the UI changed from Start Shift to
+  the running shift, and the log confirmed server restoration.
+- ZFold VC38 -> Tickets -> Pre-Trip succeeded: equipment_issued after a 111 ms
+  token refresh; eQuipment displayed MikeS24, Truck 102 / Trailer T30, Pre-Trip,
+  and Begin inspection. No report was submitted.
+- The completed Pre-Trip receipt from the S24 was not recognized on the ZFold:
+  a separate cross-device receipt synchronization issue remains. This result
+  verifies authorization/routing, not end-to-end inspection completion.
 
 Device evidence and before/after server snapshots are saved outside the repository
 under C:/dev/output/dashboard-audit-20260912. Do not commit raw device logs or
