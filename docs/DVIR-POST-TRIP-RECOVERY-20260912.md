@@ -116,3 +116,22 @@ dvir-ledgers-final-vc45-vc23-installed.json in the local audit evidence director
 The removed arrival checkbox is in this installed APK; a new shift was not
 started merely to reopen that form. Historical recovery-modal device testing
 remains unexercised because neither account has a pending historical inspection.
+# VC45 cold-summary splash correction
+
+Mike reported both phones still showed a white WB splash after installation.
+The earlier uiautomator XML exposed the underlying completed summary but did
+not prove the native splash had been dismissed. Actual screenshots reproduced
+the overlay. Direct cold /day-summary bypasses index/Home splash dismissal.
+The summary now dismisses the native splash in its root onLayout callback.
+81 DVIR tests and Android export pass; replacement build/device cold screenshot
+verification remain pending. This change does not alter auth or shift authority.
+
+Recovered both phones by opening Home, then reopened the summary warm. Actual
+screenshots confirm both Home screens and both correct DVIR summaries visible:
+zfold-home-recovered.png, s24-home-recovered.png, zfold-summary-visible.png,
+s24-summary-visible.png in the audit evidence directory. No app data was cleared.
+
+Also observed daySummary invoice queries return Firestore 403. The prior claim
+that the absent job card conclusively meant an empty day was too strong: an
+unavailable query is currently rendered as empty. This needs authenticated data
+access and truthful error rendering during the dashboard/data-access follow-up.

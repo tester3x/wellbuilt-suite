@@ -17,6 +17,7 @@ import {
   BackHandler,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/core/context/AuthContext';
@@ -524,7 +525,7 @@ export default function DaySummaryScreen() {
     : '';
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={s.container} onLayout={() => { void SplashScreen.hideAsync().catch(() => {}); }}>
       <ScrollView contentContainerStyle={s.scrollContent}>
         {/* Header */}
         <View style={s.header}>
