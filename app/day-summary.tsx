@@ -44,6 +44,7 @@ import {
 } from '@/core/services/dvirGate';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadVehicleInfo } from '@/core/services/driverProfile';
+import { getSuiteDvirStorage } from '@/core/services/dvirGate/createSuiteDvirGate';
 
 function formatTime12h(iso: string | null): string {
   if (!iso) return '--:--';
@@ -180,11 +181,7 @@ export default function DaySummaryScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const kv = {
-          getItem: (k: string) => AsyncStorage.getItem(k),
-          setItem: (k: string, v: string) => AsyncStorage.setItem(k, v),
-          removeItem: (k: string) => AsyncStorage.removeItem(k),
-        };
+        const kv = getSuiteDvirStorage();
         const shiftId = await getCurrentShiftId();
         let loaded: ShiftDvirSummary | null = null;
         if (shiftId) {

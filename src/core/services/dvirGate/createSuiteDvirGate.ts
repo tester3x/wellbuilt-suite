@@ -38,6 +38,9 @@ const rawKv: DvirReceiptKv = {
 };
 const kv = createOwnedDvirKv(rawKv, getDvirOwner, sha256Hex);
 
+/** Readers must use the same account-scoped storage as receipt/finalization writers. */
+export function getSuiteDvirStorage(): DvirReceiptKv { return kv; }
+
 async function sha256Hex(input: string): Promise<string> {
   const digest = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,

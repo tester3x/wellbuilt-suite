@@ -77,3 +77,28 @@ immediately. This never runs the current-shift arrival handler. VC42/43 builds
 were canceled before installation to include these changes together in VC44.
 The full Suite SSO suite now passes 173 tests after locating the newer JSA branch
 at its expected sibling path; 80 DVIR and 266 shift-authority tests also pass.
+# VC44 phone verification and summary follow-up
+
+VC44 (e5d75f06ddb1468b02c95876e697c1e718affe93, EAS
+8064b312-c1d9-415e-8da5-94320d0f899e) installed with app data preserved on both
+RFGL23VJCED and R5CX15HEGQB. ZFold cold Home opened successfully.
+
+Mike signed Post-Trip in Equipment22 but View Paper DVIR triggered the separate
+Equipment report-route auth bug before Return to Suite. Repeating the same
+Suite arrival/handoff with odometer 5943 recovered his already-signed report;
+no new inspection or signature was performed. At 16:09 local Equipment consumed
+the successful return without another PKCE request. Firebase confirmed ZFold
+2026-09-12_110729 pre/post complete, pending false, openPeriodId null, authority
+version 10. S24 remained closed at version 7; historical completions unchanged.
+
+The physical Shift Complete modal exposed an unscoped DVIR summary reader.
+Finalization now writes account-scoped receipts/summaries, but day-summary still
+read raw AsyncStorage and incorrectly showed Not available. It now uses the same
+owned storage as the writer. Regression reproduces the raw-read failure and
+verifies both phases load for the owning account and stay hidden from another.
+81 DVIR tests pass. This change and the arrival checkbox removal are after VC44;
+replacement Suite build and on-device summary verification remain pending.
+
+The same screen's shift-time/statistics fields were unavailable and its JSA area
+showed pending. Those display/data paths need separate follow-up; they do not
+override the verified closed work-period authority or signed DVIR ledger.
