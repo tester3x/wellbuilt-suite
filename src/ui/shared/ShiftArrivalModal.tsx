@@ -1,5 +1,6 @@
 // ShiftArrivalModal — branded end-of-shift modal shown when driver arrives at yard.
-// Captures end odometer, shows total miles, return drive time, post-trip checklist.
+// Captures end odometer, total miles, return drive time and paperwork confirmation.
+// Post-Trip completion is verified by the governed end-shift flow, not a checkbox.
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -53,7 +54,6 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
   const [endOdometer, setEndOdometer] = useState('');
   const [startOdometer, setStartOdometer] = useState('');
   const [totalMiles, setTotalMiles] = useState('');
-  const [postTripDone, setPostTripDone] = useState(false);
   const [paperworkDone, setPaperworkDone] = useState(false);
   // Busy = end-of-shift work in flight. Modal stays open with a spinner
   // and disabled buttons so the driver doesn't double-tap thinking the
@@ -64,7 +64,6 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
   // Reset + load start odometer on open
   useEffect(() => {
     if (!visible) return;
-    setPostTripDone(false);
     setPaperworkDone(false);
     setEndOdometer('');
     setTotalMiles('');
@@ -87,7 +86,7 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
   }, [endOdometer, startOdometer]);
 
   const hasOdometer = endOdometer.trim().length > 0;
-  const allChecked = postTripDone && paperworkDone && hasOdometer;
+  const allChecked = paperworkDone && hasOdometer;
   const returnDrive = formatReturnDrive(returnStartTime);
 
   const handleConfirm = useCallback(async () => {
@@ -167,13 +166,8 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
               ) : null}
             </View>
 
-            {/* Post-trip checklist */}
+            {/* Arrival checklist; actual Post-Trip follows through onConfirm. */}
             <Text style={[s.sectionLabel, { marginTop: 16 }]}>END OF SHIFT</Text>
-            <CheckItem
-              label="Post-trip vehicle inspection completed"
-              checked={postTripDone}
-              onToggle={() => setPostTripDone(v => !v)}
-            />
             <CheckItem
               label="All paperwork completed"
               checked={paperworkDone}
