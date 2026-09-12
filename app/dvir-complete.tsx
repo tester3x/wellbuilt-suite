@@ -8,10 +8,12 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useRootNavigationState } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { useAuth } from '@/core/context/AuthContext';
 import { createSuiteDvirGate, makeDvirSsoGetter } from '@/core/services/dvirGate';
 import { colors } from '@/core/theme';
+import { useSsoSessionGate } from '@/core/hooks/useSsoSessionGate';
 
 export default function DvirCompleteScreen() {
   const router = useRouter();
@@ -20,13 +22,21 @@ export default function DvirCompleteScreen() {
     phase?: string | string[];
     shiftId?: string | string[];
   }>();
-  const { user, confirmArrival, shiftActive } = useAuth();
+  const { user, confirmArrival, shiftActive, loading } = useAuth();
+  const sessionGate = useSsoSessionGate();
+  const navigation = useRootNavigationState();
   const ran = useRef(false);
   const [status, setStatus] = useState<'working' | 'ok' | 'error'>('working');
   const [message, setMessage] = useState('Recording DVIR completion…');
 
   useEffect(() => {
-    if (ran.current) return;
+    if (ran.current || loading || !navigation?.key || sessionGate === 'pending') return;
+    void SplashScreen.hideAsync().catch(() => {});
+    if (!user || sessionGate !== 'ready') {
+      setStatus('error');
+      setMessage('Your inspection is saved in eQuipment. Restore your Suite sign-in to finish this return.');
+      return;
+    }
     ran.current = true;
 
     (async () => {
@@ -103,7 +113,8 @@ export default function DvirCompleteScreen() {
         setTimeout(() => router.replace('/home'), 2000);
       }
     })();
-  }, [params.receipt, params.phase, params.shiftId, user, shiftActive, confirmArrival, router]);
+  }, [params.receipt, params.phase, params.shiftId, user, shiftActive, confirmArrival, router,
+    loading, navigation?.key, sessionGate]);
 
   return (
     <View style={styles.container}>

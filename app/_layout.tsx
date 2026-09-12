@@ -24,6 +24,7 @@ import {
   notifySsoInboxSession,
 } from '@/core/services/ssoAuthorizeInbox';
 import { getSsoSessionGate } from '@/core/services/ssoSessionGate';
+import { useSsoSessionGate } from '@/core/hooks/useSsoSessionGate';
 import { dispatchSsoUrl } from '@/core/services/ssoRuntime';
 import { isSsoAuthorizeUrl } from '@/core/services/ssoRouteAdapter';
 import { respondSsoTerminalError } from '@/core/services/ssoTerminalResponder';
@@ -71,12 +72,14 @@ function SsoAuthorizeListener() {
  * when a pending Post-Trip gate is satisfied.
  */
 function DvirReceiptListener() {
-  const { user, confirmArrival, shiftActive } = useAuth();
+  const { user, confirmArrival, shiftActive, loading } = useAuth();
+  const sessionGate = useSsoSessionGate();
   const handled = useRef<Set<string>>(new Set());
   const shiftActiveRef = useRef(shiftActive);
   shiftActiveRef.current = shiftActive;
 
   useEffect(() => {
+    if (loading || !user || sessionGate !== 'ready') return;
     const gate = createSuiteDvirGate({
       getSso: makeDvirSsoGetter(user),
       isShiftActive: () => shiftActiveRef.current,
@@ -123,7 +126,10 @@ function DvirReceiptListener() {
     const route = async (url: string | null | undefined) => {
       if (!url) return;
       if (isSsoAuthorizeUrl(url)) return;
-      void handleUrl(url);
+      void handleUrl(url).catch((error) => {
+        handled.current.delete(url);
+        console.warn('[DvirReceipt] return remains retryable:', error);
+      });
     };
 
     const sub = Linking.addEventListener('url', (e) => {
@@ -134,7 +140,7 @@ function DvirReceiptListener() {
     });
 
     return () => sub.remove();
-  }, [user, confirmArrival]);
+  }, [user, confirmArrival, loading, sessionGate]);
 
   return null;
 }
