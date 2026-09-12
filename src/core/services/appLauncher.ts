@@ -8,7 +8,7 @@ const SSO_APPS_KEY = 'ssoLaunchedApps';
  * Track which apps were SSO'd into this session.
  * On logout, WB S only deep-link-cascades to these apps.
  */
-async function trackSSOApp(scheme: string): Promise<void> {
+export async function trackSSOApp(scheme: string): Promise<void> {
   try {
     const existing = await SecureStore.getItemAsync(SSO_APPS_KEY);
     const apps: string[] = existing ? JSON.parse(existing) : [];

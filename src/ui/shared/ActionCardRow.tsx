@@ -445,6 +445,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
                       name: 'WellBuilt eQuipment',
                       scheme: 'wbequipment',
                       androidPackage: 'com.wellbuilt.equipment',
+                      startHost: 'app-start',
                     }),
                   confirmLeave: async (phase) => {
                     const notice = equipmentHandoffNotice(phase);
