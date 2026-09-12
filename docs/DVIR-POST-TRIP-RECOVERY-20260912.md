@@ -102,3 +102,17 @@ replacement Suite build and on-device summary verification remain pending.
 The same screen's shift-time/statistics fields were unavailable and its JSA area
 showed pending. Those display/data paths need separate follow-up; they do not
 override the verified closed work-period authority or signed DVIR ledger.
+# VC45 installed verification
+
+Suite VC45, source b1d22149b7ad397eba2fe9006e0f8bd2e93144b0, EAS
+ef684333-5039-4dcd-927a-ee7952282cd6, installed on both phones with data preserved.
+Both package versions verified as Suite45/Equipment23. Reopened physical summaries:
+ZFold DVIR Completed, Pre-Trip 2:59 PM / Post-Trip 3:58 PM; S24 DVIR Completed,
+Pre-Trip 2:01 AM / Post-Trip 1:57 PM. No extra inspection/signature was created.
+Firebase readback confirms both work periods closed (ZFold authority 10, S24 7),
+both current inspection phases completed, no pending Post-Trips on either account.
+Evidence: zfold-vc45-summary.xml, s24-vc45-summary.xml and
+dvir-ledgers-final-vc45-vc23-installed.json in the local audit evidence directory.
+The removed arrival checkbox is in this installed APK; a new shift was not
+started merely to reopen that form. Historical recovery-modal device testing
+remains unexercised because neither account has a pending historical inspection.
