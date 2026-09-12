@@ -9,6 +9,8 @@
 //   suite         → Everything + WB S hub + future Billing/Payroll/Dispatch
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getOwnedIdToken } from './firebaseAuthBoundary';
+import { getFirebaseApp } from './firebaseApp';
 
 const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
 const CACHE_KEY_PREFIX = 'wellbuilt-company-config-';
@@ -109,10 +111,17 @@ interface CachedConfig {
 }
 
 async function fetchTimeout(url: string): Promise<Response> {
+  // Company documents are private after security containment. Use the
+  // boundary-owned SDK session; a cache must not be required to read them.
+  const token = await getOwnedIdToken(getFirebaseApp());
+  if (!token) throw new Error('company_config_session_required');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
   } finally {
     clearTimeout(timer);
   }
