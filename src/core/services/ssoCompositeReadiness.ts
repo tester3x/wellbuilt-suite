@@ -197,14 +197,14 @@ export function createCompositeReadinessBridge(deps: {
         binding: null,
         equipment: restoration === 'pending' ? 'pending' : s.equipment,
       };
-      if (restoration === 'open') {
+      if (restoration === 'open' || restoration === 'none') {
         refreshEquipment();
         return;
       }
       applyEquipment(null);
     },
     reconsiderEquipmentHandoff() {
-      if (s.restoration !== 'open') return;
+      if (s.restoration !== 'open' && s.restoration !== 'none') return;
       refreshEquipment();
     },
     peek: () => s,

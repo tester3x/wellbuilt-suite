@@ -37,6 +37,26 @@ function harness() {
   return { inbox, bridge, dispatched, terminalErrors, retries, deliver };
 }
 
+it('off-shift recovery refresh is generation-owned and cannot fabricate an open period', async () => {
+  let recovery = false;
+  const bridge = createCompositeReadinessBridge({ onPublish: () => {}, onRetryReconciliation: () => {},
+    readHandoff: async () => recovery ? { shiftId: '2026-09-01_070000', phase: 'post_trip', expiresAtMs: 2000, recoveryVerified: true } : null,
+    nowMs: () => 1000 });
+  bridge.reset(1);
+  bridge.reportEquipmentRestoration(1, 'none');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bridge.peek().equipment, 'none');
+  recovery = true;
+  bridge.reconsiderEquipmentHandoff();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bridge.peek().equipment, 'open');
+  assert.equal(bridge.peek().periodId, null);
+  assert.equal(bridge.peek().restoration, 'none');
+  assert.equal(computeCompositeGate(bridge.peek()), 'pending');
+  bridge.reset(2);
+  assert.equal(bridge.peek().binding, null);
+});
+
 describe('computeCompositeGate / shouldRetryReconciliation (pure)', () => {
   it('ready requires BOTH revalidation ok AND reconciliation verified', () => {
     const base = {

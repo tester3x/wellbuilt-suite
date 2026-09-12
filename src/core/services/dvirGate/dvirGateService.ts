@@ -140,11 +140,12 @@ export async function launchEquipmentPhase(
   deps: DvirGateDeps,
   phase: DvirReceiptPhase,
   shiftId: string,
+  recovery = false,
 ): Promise<{ launched: boolean; error?: string }> {
   const returnUrl = SUITE_DVIR_RETURN_URL;
   // Governed path: metadata only. Authentication is PKCE to WB-S, never
   // hash/name/passcode in the launch URI (security gate).
-  await rememberGovernedEquipmentHandoff(shiftId, phase);
+  await rememberGovernedEquipmentHandoff(shiftId, phase, Date.now(), returnUrl, recovery ? 'recovery' : undefined);
   const requestDiag = buildHandoffRequestDiag({
     phase,
     shiftId,

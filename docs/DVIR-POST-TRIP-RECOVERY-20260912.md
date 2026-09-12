@@ -49,3 +49,22 @@ ZFold shows its active shift. Firebase confirms S24 closed at authority version 
 and ZFold still on 2026-09-12_110729 at version 9. The actual signed Pre-Trip
 return to a cold Suite remains pending, so this does not yet establish end-to-end
 completion of the handoff fixes.
+
+The driver completed Mikezfold's current Pre-Trip with Equipment VC21 after Suite
+was force-stopped. The return reached Suite VC41 and Firebase contains that exact
+period's Pre-Trip, no Post-Trip, with authority unchanged at version 9. Equipment
+still attempted internal reauthorization after consumption; its follow-up fixes
+that mounted-route transition and waits for explicit Return to Suite on reports.
+
+The next Suite update checks authenticated Home for server-owned unfinished
+Post-Trips outside the active period, including off-shift recovery. Its modal
+identifies the original shift and explains that close-out does not clock in or
+reopen it. Optional reason/notes are separate feedback, never inspection evidence.
+Recovery handoffs require an authenticated server lookup for the current identity
+generation and Post-Trip-only server issuance; normal Pre-Trip/shift checks remain.
+JSA remains disabled; this implementation covers DVIR recovery only.
+
+Validation: 80 DVIR tests, 58 SSO P0 tests and Android export pass. Recovery lookup
+tests include account switches, wrong owner, malformed responses and off-shift
+Home without premature SSO launch. Existing unrelated typecheck errors remain.
+Replacement build and physical recovery-modal verification remain pending.

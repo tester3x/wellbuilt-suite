@@ -16,6 +16,7 @@ import { allSkins, defaultSkinId } from '@/ui/skins';
 import { startConnectivityMonitor, stopConnectivityMonitor } from '@/core/services/connectivity';
 import { createSuiteDvirGate, makeDvirSsoGetter } from '@/core/services/dvirGate';
 import DvirHandoffHost from '@/ui/shared/DvirHandoffHost';
+import DvirRecoveryHost from '@/ui/shared/DvirRecoveryHost';
 import SsoHandoffOverlay from '@/core/components/SsoHandoffOverlay';
 import {
   acceptSsoAuthorizeUrl,
@@ -189,6 +190,7 @@ export default function RootLayout() {
                   covering Home when the authorize intent re-fronts Suite,
                   which is what removes the cold double-Home artifact. */}
               <SsoHandoffOverlay />
+              <DvirRecoveryHost />
             </View>
           </FirstLaunchProvider>
         </AuthProvider>

@@ -9,6 +9,15 @@ const handoff = {
 };
 
 describe('computeEquipmentRelease', () => {
+  it('server-verified recovery releases only Post-Trip while off shift', () => {
+    const args = { restoration: 'none' as const, periodId: null, nowMs: 1000,
+      handoff: { ...handoff, phase: 'post_trip' as const, recoveryVerified: true } };
+    assert.equal(computeEquipmentRelease(args).release, 'open');
+    assert.equal(computeEquipmentRelease({ ...args, handoff: { ...args.handoff, recoveryVerified: false } }).release, 'none');
+    assert.equal(computeEquipmentRelease({ ...args, handoff: { ...args.handoff, phase: 'pre_trip' } }).release, 'none');
+    assert.equal(computeEquipmentRelease({ ...args, nowMs: 3000 }).release, 'none');
+    assert.equal(computeEquipmentRelease({ ...args, restoration: 'failed' }).release, 'failed');
+  });
   it('holds while restoration is pending — cached flags cannot release', () => {
     const r = computeEquipmentRelease({
       restoration: 'pending',

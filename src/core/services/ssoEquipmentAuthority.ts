@@ -21,6 +21,8 @@ export type EquipmentHandoffView = {
   shiftId: string;
   phase: SsoDvirPhase;
   expiresAtMs: number;
+  /** Set only after an authenticated server recovery lookup for this owner. */
+  recoveryVerified?: boolean;
 };
 
 export type EquipmentAuthorityState = {
@@ -47,6 +49,12 @@ export function computeEquipmentRelease(args: {
   handoff: EquipmentHandoffView | null;
   nowMs: number;
 }): { release: EquipmentRelease; binding: SsoShiftBinding | null } {
+  if (args.handoff?.recoveryVerified === true && args.handoff.phase === 'post_trip'
+      && args.nowMs <= args.handoff.expiresAtMs && args.restoration !== 'pending'
+      && args.restoration !== 'failed') {
+    const binding: SsoShiftBinding = { shiftId: args.handoff.shiftId, phase: 'post_trip' };
+    return isSsoShiftBinding(binding) ? { release: 'open', binding } : { release: 'failed', binding: null };
+  }
   if (args.restoration === 'pending') {
     return { release: 'pending', binding: null };
   }

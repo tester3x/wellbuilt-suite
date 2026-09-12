@@ -32,6 +32,7 @@ export type GovernedEquipmentHandoffRecord = {
   stage: GovernedHandoffStage;
   /** Nonsecret correlation for logs (not a credential). */
   correlationId: string;
+  purpose?: 'recovery';
 };
 
 export type SecureKv = {
@@ -119,6 +120,7 @@ export async function rememberGovernedEquipmentHandoff(
   phase: SsoDvirPhase,
   nowMs: number = Date.now(),
   returnHost: string = 'wellbuilt-suite://dvir-complete',
+  purpose?: 'recovery',
 ): Promise<GovernedEquipmentHandoffRecord | null> {
   if (!shiftId || (phase !== 'pre_trip' && phase !== 'post_trip')) {
     await clearGovernedEquipmentHandoff('invalid_input');
@@ -133,6 +135,7 @@ export async function rememberGovernedEquipmentHandoff(
     expiresAtMs: nowMs + GOVERNED_HANDOFF_TTL_MS,
     stage: 'launched',
     correlationId: newCorrelationId(nowMs),
+    ...(purpose ? { purpose } : {}),
   };
   const store = await kv();
   // Atomic replace of any older attempt

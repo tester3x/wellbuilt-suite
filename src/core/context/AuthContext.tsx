@@ -342,6 +342,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
         const rec = await hydrateGovernedEquipmentHandoff();
         if (!rec) return null;
+        if (rec.purpose === 'recovery') {
+          const { resolveDvirRecovery } = await import('../services/dvirGate/dvirRecovery');
+          const recovery = await resolveDvirRecovery();
+          if (!recovery || recovery.shiftId !== rec.shiftId || rec.phase !== 'post_trip') return null;
+          return { shiftId: rec.shiftId, phase: rec.phase, expiresAtMs: rec.expiresAtMs, recoveryVerified: true };
+        }
         return { shiftId: rec.shiftId, phase: rec.phase, expiresAtMs: rec.expiresAtMs };
       },
     }),
