@@ -35,3 +35,17 @@ Equipment VC20 replayed its original Pre-Trip launch after successful Post-Trip
 return, stealing foreground from the pending Suite close. Foregrounding Suite
 allowed the already-authorized close to complete; no inspection was repeated.
 Equipment's replay correction is committed separately and awaits VC21 device tests.
+
+VC41 build ea92b319-a131-4506-a233-bb5b696d50db finished with source
+ace08ad3d2da945abbb3d3d4e9b520a92942b1a9. Completion handling and recovery now
+wait for verified SSO session readiness and root navigation; failed receipt
+handling can retry instead of permanently marking the URL handled too early.
+Validation: 77 DVIR tests, 56 SSO P0 tests and Android export pass. Existing
+unrelated TypeScript failures remain.
+
+Installed VC41 with retained app data on both phones alongside Equipment VC21.
+Both survived force-stop followed by a cold Home deep link. S24 shows Start Shift;
+ZFold shows its active shift. Firebase confirms S24 closed at authority version 7
+and ZFold still on 2026-09-12_110729 at version 9. The actual signed Pre-Trip
+return to a cold Suite remains pending, so this does not yet establish end-to-end
+completion of the handoff fixes.
