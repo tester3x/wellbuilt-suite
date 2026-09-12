@@ -500,6 +500,7 @@ export async function consumePendingEndShiftIfReady(
 ): Promise<{ resume: true; odometerMiles?: number; shiftId: string } | { resume: false }> {
   const pending = await getPendingEndShift(deps.kv);
   if (!pending) return { resume: false };
+  if (pending.shiftId !== await deps.getCurrentShiftId()) return { resume: false };
   if (!(await isPostTripCompleteForShift(deps, pending.shiftId))) {
     return { resume: false };
   }

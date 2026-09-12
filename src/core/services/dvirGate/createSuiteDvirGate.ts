@@ -16,7 +16,9 @@ import {
   consumePendingEndShiftIfReady,
   clearDvirRoutingAfterFinalization,
 } from './dvirGateService';
-import { getPendingEndShift, receiptKey, type DvirReceiptKv } from './dvirReceiptStore';
+import { getPendingEndShift, receiptKey, hasValidPhase, type DvirReceiptKv } from './dvirReceiptStore';
+import { createOwnedDvirKv } from './ownedDvirKv';
+import { getDvirOwner, hydrateFirebaseDvirReceipts } from './firebaseDvirCompletion';
 import {
   buildShiftDvirSummaryFromStore,
   hydrateShiftDvirSummaryIfMissing,
@@ -29,11 +31,12 @@ import {
   requestEquipmentHandoffConfirm,
 } from './equipmentHandoffConfirm';
 
-const kv: DvirReceiptKv = {
+const rawKv: DvirReceiptKv = {
   getItem: (k) => AsyncStorage.getItem(k),
   setItem: (k, v) => AsyncStorage.setItem(k, v),
   removeItem: (k) => AsyncStorage.removeItem(k),
 };
+const kv = createOwnedDvirKv(rawKv, getDvirOwner, sha256Hex);
 
 async function sha256Hex(input: string): Promise<string> {
   const digest = await Crypto.digestStringAsync(
@@ -78,6 +81,12 @@ export function createSuiteDvirGate(opts?: {
   /** Cold-upgrade: assemble from receipts only when summary is missing. */
   hydrateShiftDvirSummaryIfMissing: (shiftId: string) => Promise<ShiftDvirSummary | null>;
 } {
+  const refresh = async (shiftId: string) => hydrateFirebaseDvirReceipts(shiftId, kv, sha256Hex);
+  const phaseComplete = async (shiftId: string, phase: 'pre_trip' | 'post_trip') => {
+    if (await hasValidPhase(kv, shiftId, phase)) return true;
+    await refresh(shiftId);
+    return hasValidPhase(kv, shiftId, phase);
+  };
   const deps: DvirGateDeps = {
     kv,
     sha256Hex,
@@ -105,14 +114,24 @@ export function createSuiteDvirGate(opts?: {
 
   return {
     ...deps,
-    ensurePreTripGate: (o) => ensurePreTripGate(deps, o),
-    ensurePostTripGate: (o) => ensurePostTripGate(deps, o),
+    ensurePreTripGate: async (o) => {
+      const id = o?.shiftId ?? await getCurrentShiftId();
+      if (id && (!opts?.isShiftActive || await opts.isShiftActive())) await phaseComplete(id, 'pre_trip');
+      return ensurePreTripGate(deps, o);
+    },
+    ensurePostTripGate: async (o) => {
+      const id = o?.shiftId ?? await getCurrentShiftId();
+      if (id && (!opts?.isShiftActive || await opts.isShiftActive())) await phaseComplete(id, 'post_trip');
+      return ensurePostTripGate(deps, o);
+    },
     ingestDvirCompletionUrl: (url) => ingestDvirCompletionUrl(deps, url),
-    isPreTripComplete: (shiftId) => isPreTripCompleteForShift(deps, shiftId),
-    isPostTripComplete: (shiftId) => isPostTripCompleteForShift(deps, shiftId),
+    isPreTripComplete: (shiftId) => phaseComplete(shiftId, 'pre_trip'),
+    isPostTripComplete: (shiftId) => phaseComplete(shiftId, 'post_trip'),
     launchPhase: (phase, shiftId) => launchEquipmentPhase(deps, phase, shiftId),
     peekPendingEndShift: () => getPendingEndShift(kv),
     readPreTripEvidence: async (shiftId: string) => {
+      try { await phaseComplete(shiftId, 'pre_trip'); }
+      catch { return { rawPresent: true, receiptShiftId: null, receiptPhaseIsPreTrip: false, parseError: true }; }
       // A thrown storage error propagates to the caller (→ unverifiable).
       const raw = await kv.getItem(receiptKey(shiftId, 'pre_trip'));
       if (raw == null) {
