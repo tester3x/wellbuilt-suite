@@ -135,3 +135,13 @@ Also observed daySummary invoice queries return Firestore 403. The prior claim
 that the absent job card conclusively meant an empty day was too strong: an
 unavailable query is currently rendered as empty. This needs authenticated data
 access and truthful error rendering during the dashboard/data-access follow-up.
+# VC46 cold startup physically verified
+
+Suite VC46 source 2537e05812ba62ce0c19dc67aedae3de858e177e, EAS build
+026ab313-8b73-43c0-b864-679ebf82b91d, installed on both phones with data preserved.
+Force-stopped Suite on each, then launched wellbuilt-suite://day-summary directly.
+Actual screenshots zfold-vc46-cold-summary.png and s24-vc46-cold-summary.png show
+the visible Shift Complete screen with correct DVIR phase times and no native
+splash overlay. Android package metadata confirms versionCode 46 on both.
+Equipment remains versionCode 23. No shift or inspection was created by this test.
+The cold-summary splash defect is physically verified fixed on both devices.
