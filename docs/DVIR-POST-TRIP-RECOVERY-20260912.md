@@ -23,3 +23,15 @@ hides the native splash when entering these routes directly. The actual route
 regressions pass in the 76-test DVIR suite; 266 shift-authority tests also passed.
 Android export passed. Replacement VC40 build 7c912b9c-8591-4911-a4c2-45afd03993d1
 is running; cold-link device validation remains pending.
+
+VC40 finished at 18:49 UTC and is now installed on both phones. Cold Home links
+survive on both; ZFold additionally passed an explicit force-stop/cold-link check.
+Fresh Home screenshots show MikeS24 off shift after its completed Post-Trip closed
+period 2026-09-12_020000 (authority version 7), while Mikezfold remains on
+2026-09-12_110729 (version 9). The entered ending odometer was corrected to 5943
+at Mike's request. This is not a claim that 5943 is the shift's total distance.
+
+Equipment VC20 replayed its original Pre-Trip launch after successful Post-Trip
+return, stealing foreground from the pending Suite close. Foregrounding Suite
+allowed the already-authorized close to complete; no inspection was repeated.
+Equipment's replay correction is committed separately and awaits VC21 device tests.
