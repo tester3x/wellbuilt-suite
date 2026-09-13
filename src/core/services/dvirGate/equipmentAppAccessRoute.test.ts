@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-async function run(gate = 'ready', wrongOwner = false) {
+async function run(gate = 'ready', wrongOwner = false, alreadyCompleted = false) {
+  const routes: string[] = []; const writes: string[] = [];
   const opened: string[] = []; const requests: any[] = []; const effects: Array<() => void> = [];
   const identity = { uid: 'u', kind: 'driver', driverId: wrongOwner ? 'other' : 'd', companyId: 'c' };
   const exports: any = {};
@@ -12,7 +13,8 @@ async function run(gate = 'ready', wrongOwner = false) {
       useRef: (current: any) => ({ current }), useState: (value: any) => [value, () => {}] },
     'react-native': { Linking: { openURL: async (url: string) => { opened.push(url); } } },
     'expo-splash-screen': { hideAsync: async () => {} },
-    'expo-router': { router: { replace: () => {} }, useLocalSearchParams: () => ({ state: 'S'.repeat(43), codeChallenge: 'C'.repeat(43) }) },
+    'expo-router': { router: { replace: (path: string) => routes.push(path) }, useLocalSearchParams: () => ({ state: 'S'.repeat(43), codeChallenge: 'C'.repeat(43) }) },
+    '@react-native-async-storage/async-storage': { default: { getItem: async () => JSON.stringify(alreadyCompleted ? ['S'.repeat(43)] : []), setItem: async (_key: string, value: string) => { writes.push(value); } } },
     'firebase/functions': { getFunctions: () => ({}), httpsCallable: () => async (data: any) => {
       requests.push(data); return { data: { version: 1, code: 'A'.repeat(43) } }; } },
     '@/core/context/AuthContext': { useAuth: () => ({ loading: false, isAuthenticated: true, user: { passcodeHash: 'd', companyId: 'c' } }) },
@@ -23,10 +25,10 @@ async function run(gate = 'ready', wrongOwner = false) {
   };
   runInNewContext(ts.transpileModule(readFileSync('app/equipment-access.tsx', 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React },
-  }).outputText, { exports, require: (id: string) => { if (!(id in mocks)) throw new Error(id); return mocks[id]; } });
+  }).outputText, { exports, setInterval: () => 1, clearInterval: () => {}, require: (id: string) => { if (!(id in mocks)) throw new Error(id); return mocks[id]; } });
   exports.default(); effects.forEach(fn => fn());
   await new Promise(resolve => setImmediate(resolve));
-  return { opened, requests };
+  return { opened, requests, routes, writes };
 }
 test('general Equipment route waits for verified Suite readiness and matching owner', async () => {
   assert.equal((await run('pending')).requests.length, 0);
@@ -37,4 +39,12 @@ test('general Equipment route issues no shift binding and sends only code/state 
   assert.deepEqual(JSON.parse(JSON.stringify(r.requests)), [{ version: 1, codeChallenge: 'C'.repeat(43) }]);
   const url = new URL(r.opened[0]); assert.equal(url.host, 'app-callback');
   assert.deepEqual([...url.searchParams.keys()].sort(), ['code', 'state']);
+  assert.deepEqual(r.routes, ['/home']);
+  assert.deepEqual(JSON.parse(r.writes[0]), ['S'.repeat(43)]);
+});
+test('re-delivered completed Equipment intent returns home without issuing or reopening', async () => {
+  const r = await run('ready', false, true);
+  assert.equal(r.requests.length, 0);
+  assert.equal(r.opened.length, 0);
+  assert.deepEqual(r.routes, ['/home']);
 });
