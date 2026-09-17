@@ -202,9 +202,8 @@ const LOGOUT_ASYNCSTORAGE_KEYS: readonly string[] = [
   // Per-shift odometer cache (set in ShiftStartModal). Per-shift state,
   // not driver-survival state — wipe on logout.
   'wellbuilt-shift-start-odometer',
-  // Mirror of SecureStore 'shiftStartTime' written by AppSwitcher.tsx
-  // for the floating-badge timer. The SecureStore copy is cleared above;
-  // the AsyncStorage copy was previously surviving logout.
+  // Mirror of SecureStore 'shiftStartTime'. The SecureStore copy is cleared
+  // above; the AsyncStorage copy was previously surviving logout.
   'shiftStartTime',
 ];
 
