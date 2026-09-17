@@ -155,7 +155,7 @@ interface AuthContextType {
    */
   closeShiftDirect: () => Promise<EndShiftDirectCloseResult>;
   /** Register a new driver (goes to pending state) */
-  register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
+  register: (displayName: string, passcode: string, companyCode?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
   checkRegistration: () => Promise<'pending' | 'approved' | 'rejected' | 'none'>;
   /** Complete registration after admin approval */
@@ -1578,8 +1578,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [shiftActive, returningToYard, user]);
 
-  const register = useCallback(async (displayName: string, passcode: string, companyName?: string, legalName?: string) => {
-    const result = await submitRegistration({ displayName, passcode, companyName, legalName });
+  const register = useCallback(async (displayName: string, passcode: string, companyCode?: string, legalName?: string) => {
+    const result = await submitRegistration({ displayName, passcode, companyCode, legalName });
     return result;
   }, []);
 

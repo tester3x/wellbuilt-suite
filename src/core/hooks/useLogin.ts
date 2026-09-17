@@ -4,6 +4,7 @@
 // all state transitions, validation, Firebase calls, and navigation.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { BackHandler, Keyboard } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   getPendingRegistration,
@@ -11,6 +12,10 @@ import {
   clearPendingRegistration,
 } from '../services/driverAuth';
 import { useAuth } from '../context/AuthContext';
+import {
+  shouldInstallRegistrationBackHandler,
+  consumeRegistrationHardwareBack,
+} from '../utils/registrationBack';
 
 export type LoginMode =
   | 'checking'
@@ -50,8 +55,8 @@ export interface UseLoginReturn {
   setLegalName: (name: string) => void;
   passcode: string;
   setPasscode: (code: string) => void;
-  companyName: string;
-  setCompanyName: (name: string) => void;
+  companyCode: string;
+  setCompanyCode: (code: string) => void;
   showPasscode: boolean;
   setShowPasscode: (show: boolean) => void;
   error: string;
@@ -75,7 +80,7 @@ export function useLogin(): UseLoginReturn {
   const [passcode, setPasscode] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [legalName, setLegalName] = useState('');
-  const [companyName, setCompanyName] = useState('');
+  const [companyCode, setCompanyCode] = useState('');
   const [error, setError] = useState('');
   const [pendingName, setPendingName] = useState('');
   const [showPasscode, setShowPasscode] = useState(false);
@@ -214,6 +219,11 @@ export function useLogin(): UseLoginReturn {
       return;
     }
 
+    if (!companyCode.trim()) {
+      setError('Please enter your company join code');
+      return;
+    }
+
     setMode('registering');
     setError('');
 
@@ -221,7 +231,7 @@ export function useLogin(): UseLoginReturn {
       const result = await auth.register(
         displayName.trim(),
         passcode.trim(),
-        companyName.trim() || undefined,
+        companyCode.trim() || undefined,
         legalName.trim(),
       );
 
@@ -237,7 +247,7 @@ export function useLogin(): UseLoginReturn {
       setMode('register');
       setError('Connection error. Please try again.');
     }
-  }, [displayName, passcode, companyName, legalName, auth]);
+  }, [displayName, passcode, companyCode, legalName, auth]);
 
   const handleCompleteRegistration = useCallback(async () => {
     setMode('login');
@@ -249,7 +259,7 @@ export function useLogin(): UseLoginReturn {
     setPasscode('');
     setDisplayName('');
     setLegalName('');
-    setCompanyName('');
+    setCompanyCode('');
     setPendingName('');
     setMode('login');
   }, []);
@@ -263,7 +273,7 @@ export function useLogin(): UseLoginReturn {
   const handleSwitchToRegister = useCallback(() => {
     setError('');
     setPasscode('');
-    setCompanyName('');
+    setCompanyCode('');
     setShowPasscode(false);
     setMode('register');
   }, []);
@@ -271,13 +281,32 @@ export function useLogin(): UseLoginReturn {
   const handleSwitchToLogin = useCallback(() => {
     setError('');
     setPasscode('');
-    setCompanyName('');
+    setCompanyCode('');
     setShowPasscode(false);
     setMode('login');
   }, []);
 
+  // Android hardware Back from Register/Pending returns to Sign In (these are
+  // modes on this one route, not stack screens). From Register a first Back
+  // press dismisses the keyboard; the next returns to Sign In. Pending returns
+  // to Sign In without discarding the pending request (it resumes on next
+  // launch). Any other mode falls through to the OS.
+  useEffect(() => {
+    if (!shouldInstallRegistrationBackHandler(mode)) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () =>
+      consumeRegistrationHardwareBack({
+        mode,
+        keyboardVisible:
+          typeof Keyboard.isVisible === 'function' ? Keyboard.isVisible() : false,
+        dismissKeyboard: () => Keyboard.dismiss(),
+        returnToSignIn: handleSwitchToLogin,
+      }),
+    );
+    return () => sub.remove();
+  }, [mode, handleSwitchToLogin]);
+
   const canSubmit = mode === 'register'
-    ? !!(passcode.trim() && displayName.trim() && legalName.trim() && companyName.trim() && !passcodeError)
+    ? !!(passcode.trim() && displayName.trim() && legalName.trim() && companyCode.trim() && !passcodeError)
     : !!(passcode.trim() && displayName.trim() && !passcodeError);
 
   return {
@@ -288,8 +317,8 @@ export function useLogin(): UseLoginReturn {
     setLegalName,
     passcode,
     setPasscode,
-    companyName,
-    setCompanyName,
+    companyCode,
+    setCompanyCode,
     showPasscode,
     setShowPasscode,
     error,

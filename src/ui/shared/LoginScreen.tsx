@@ -17,7 +17,7 @@ export default function LoginScreen() {
 
   const {
     mode, displayName, setDisplayName, legalName, setLegalName, passcode, setPasscode,
-    companyName, setCompanyName,
+    companyCode, setCompanyCode,
     showPasscode, setShowPasscode, error, passcodeError, pendingName, canSubmit,
     handleLogin, handleRegister, handleCompleteRegistration,
     handleCancelRegistration, handleTryAgain, handleSwitchToRegister, handleSwitchToLogin,
@@ -124,9 +124,9 @@ export default function LoginScreen() {
                 <Text style={styles.inputLabel}>{t('login.companyLabel', 'Company')}</Text>
                 <View style={styles.inputWrap}>
                   <MaterialCommunityIcons name="domain" size={18} color={colors.text.muted} />
-                  <TextInput ref={companyRef} style={styles.input} value={companyName}
-                    onChangeText={setCompanyName} placeholder={t('login.companyPlaceholder', 'Your company name')}
-                    placeholderTextColor={colors.text.muted} autoCapitalize="words"
+                  <TextInput ref={companyRef} style={styles.input} value={companyCode}
+                    onChangeText={(value) => setCompanyCode(value.toUpperCase())} placeholder={t('login.companyPlaceholder', 'Company join code (e.g., ABCD-EFGH)')}
+                    placeholderTextColor={colors.text.muted} autoCapitalize="characters"
                     autoCorrect={false} returnKeyType="next"
                     blurOnSubmit={false} onSubmitEditing={() => passcodeRef.current?.focus()} />
                 </View>

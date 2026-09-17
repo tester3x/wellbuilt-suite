@@ -86,7 +86,7 @@ function classifyRegistrationError(error: unknown): string {
 export async function secureSubmitRegistration(params: {
   displayName: string;
   passcode: string;
-  companyName?: string;
+  companyCode?: string;
   legalName?: string;
   source?: string;
 }): Promise<{ success: boolean; pendingId?: string; error?: string }> {
@@ -94,7 +94,7 @@ export async function secureSubmitRegistration(params: {
     const result = await callCallable<{ pendingId?: string }>('requestDriverRegistration', {
       displayName: params.displayName,
       passcode: params.passcode,
-      companyName: params.companyName,
+      companyCode: params.companyCode,
       legalName: params.legalName,
       source: params.source || 'wbs',
     });

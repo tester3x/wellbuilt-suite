@@ -573,7 +573,7 @@ export const SUITE_PASSCODE_MIN_LEN = 6;
 export const submitRegistration = async (params: {
   passcode: string;
   displayName: string;
-  companyName?: string;
+  companyCode?: string;
   legalName?: string;
 }): Promise<{ success: boolean; pending?: boolean; pendingId?: string; error?: string }> => {
   if (params.passcode.length < SUITE_PASSCODE_MIN_LEN || params.passcode.length > 128) {
@@ -585,7 +585,7 @@ export const submitRegistration = async (params: {
     const secure = await secureSubmitRegistration({
       displayName: params.displayName,
       passcode: params.passcode,
-      companyName: params.companyName,
+      companyCode: params.companyCode,
       legalName: params.legalName,
       source: 'wbs',
     });
@@ -598,8 +598,8 @@ export const submitRegistration = async (params: {
     await SecureStore.setItemAsync('pendingSecureId', secure.pendingId);
     await SecureStore.setItemAsync('pendingDisplayName', params.displayName);
     await SecureStore.setItemAsync('pendingRegistrationTime', Date.now().toString());
-    if (params.companyName) {
-      await SecureStore.setItemAsync('pendingCompanyName', params.companyName);
+    if (params.companyCode) {
+      await SecureStore.setItemAsync('pendingCompanyCode', params.companyCode);
     }
     return { success: true, pending: true, pendingId: secure.pendingId };
   } catch (error: unknown) {
@@ -616,14 +616,14 @@ export const submitRegistration = async (params: {
 export const getPendingRegistration = async (): Promise<{
   passcodeHash: string;
   displayName: string;
-  companyName?: string;
+  companyCode?: string;
 } | null> => {
   const displayName = await SecureStore.getItemAsync('pendingDisplayName');
-  const companyName = await SecureStore.getItemAsync('pendingCompanyName');
+  const companyCode = await SecureStore.getItemAsync('pendingCompanyCode');
   const secureId = await SecureStore.getItemAsync('pendingSecureId');
 
   if (secureId && displayName) {
-    return { passcodeHash: '', displayName, companyName: companyName || undefined };
+    return { passcodeHash: '', displayName, companyCode: companyCode || undefined };
   }
   return null;
 };
@@ -660,6 +660,6 @@ export const clearPendingRegistration = async (): Promise<void> => {
   await SecureStore.deleteItemAsync("pendingPasscodeHash");
   await SecureStore.deleteItemAsync("pendingDisplayName");
   await SecureStore.deleteItemAsync("pendingRegistrationTime");
-  await SecureStore.deleteItemAsync("pendingCompanyName");
+  await SecureStore.deleteItemAsync("pendingCompanyCode");
   await SecureStore.deleteItemAsync("pendingSecureId");
 };
