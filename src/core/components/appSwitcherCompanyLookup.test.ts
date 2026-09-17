@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  FAIL_CLOSED_TIER,
+  applyAppSwitcherTierLookup,
+  createAppSwitcherTierSession,
   filterAppsForTier,
   isAppAvailableForTier,
   loadAppSwitcherCompanyFields,
@@ -120,10 +123,10 @@ describe('loadAppSwitcherCompanyFields', () => {
     assert.deepEqual(calls, ['public_companies/x']);
   });
 
-  it('neither document → none, keep default tier', async () => {
+  it('neither document → none, fail closed to free', async () => {
     const result = await loadAppSwitcherCompanyFields('missing', reader({}));
     assert.deepEqual(result, { source: 'none', tier: null });
-    assert.equal(resolveAppSwitcherTier(result), null);
+    assert.equal(resolveAppSwitcherTier(result), FAIL_CLOSED_TIER);
   });
 });
 
@@ -142,14 +145,141 @@ describe('app availability by tier', () => {
   });
 });
 
+describe('fail-closed tier apply', () => {
+  it('initial/loading reset is free', async () => {
+    const applied: string[] = [];
+    await applyAppSwitcherTierLookup({
+      companyId: null,
+      generation: 1,
+      isCurrent: () => true,
+      read: reader({}),
+      setTier: (t) => applied.push(t),
+    });
+    assert.deepEqual(applied, [FAIL_CLOSED_TIER]);
+  });
+
+  it('missing company ID remains free and does not read', async () => {
+    const calls: string[] = [];
+    const applied: string[] = [];
+    await applyAppSwitcherTierLookup({
+      companyId: '',
+      generation: 1,
+      isCurrent: () => true,
+      read: reader({}, calls),
+      setTier: (t) => applied.push(t),
+    });
+    assert.deepEqual(applied, [FAIL_CLOSED_TIER]);
+    assert.deepEqual(calls, []);
+  });
+
+  it('neither document remains free', async () => {
+    const applied: string[] = [];
+    await applyAppSwitcherTierLookup({
+      companyId: 'missing',
+      generation: 1,
+      isCurrent: () => true,
+      read: reader({}),
+      setTier: (t) => applied.push(t),
+    });
+    assert.equal(applied[0], FAIL_CLOSED_TIER);
+    assert.equal(applied[applied.length - 1], FAIL_CLOSED_TIER);
+  });
+
+  it('public read failure remains free', async () => {
+    const applied: string[] = [];
+    const throwing: AppSwitcherCompanyReader = async () => {
+      throw new Error('unavailable');
+    };
+    await applyAppSwitcherTierLookup({
+      companyId: 'x',
+      generation: 1,
+      isCurrent: () => true,
+      read: throwing,
+      setTier: (t) => applied.push(t),
+    });
+    assert.equal(applied[0], FAIL_CLOSED_TIER);
+    assert.equal(applied[applied.length - 1], FAIL_CLOSED_TIER);
+  });
+
+  it('malformed/unknown tier remains free', async () => {
+    const applied: string[] = [];
+    await applyAppSwitcherTierLookup({
+      companyId: 'odd',
+      generation: 1,
+      isCurrent: () => true,
+      read: reader({
+        'public_companies/odd': { exists: true, data: { tier: 'enterprise' } },
+      }),
+      setTier: (t) => applied.push(t),
+    });
+    assert.equal(applied[applied.length - 1], FAIL_CLOSED_TIER);
+    assert.equal(pickAppSwitcherTier({ tier: 'enterprise' }), null);
+  });
+
+  it('valid field and god tiers still update', async () => {
+    const applied: string[] = [];
+    await applyAppSwitcherTierLookup({
+      companyId: 'lg',
+      generation: 1,
+      isCurrent: () => true,
+      read: reader({ 'public_companies/lg': { exists: true, data: { tier: 'field' } } }),
+      setTier: (t) => applied.push(t),
+    });
+    assert.equal(applied[0], FAIL_CLOSED_TIER);
+    assert.equal(applied[applied.length - 1], 'field');
+
+    const appliedGod: string[] = [];
+    await applyAppSwitcherTierLookup({
+      companyId: 'lg',
+      generation: 1,
+      isCurrent: () => true,
+      read: reader({ 'public_companies/lg': { exists: true, data: { tier: 'god' } } }),
+      setTier: (t) => appliedGod.push(t),
+    });
+    assert.equal(appliedGod[appliedGod.length - 1], 'god');
+  });
+
+  it('stale result after scope change is suppressed', async () => {
+    const session = createAppSwitcherTierSession();
+    const gen1 = session.startLookup();
+    const applied: string[] = [];
+    let finish!: (snap: AppSwitcherCompanySnap) => void;
+    const pending = new Promise<AppSwitcherCompanySnap>((resolve) => {
+      finish = resolve;
+    });
+    const slow: AppSwitcherCompanyReader = async (collection) => {
+      if (collection === 'public_companies') return pending;
+      return { exists: false };
+    };
+    const running = applyAppSwitcherTierLookup({
+      companyId: 'old-co',
+      generation: gen1,
+      isCurrent: (g) => session.isCurrent(g),
+      read: slow,
+      setTier: (t) => applied.push(t),
+    });
+    assert.equal(applied[0], FAIL_CLOSED_TIER);
+    session.invalidate();
+    finish({ exists: true, data: { tier: 'god' } });
+    await running;
+    assert.deepEqual(applied, [FAIL_CLOSED_TIER]);
+  });
+});
+
 describe('AppSwitcher wiring', () => {
   const src = readFileSync(join(process.cwd(), 'src/core/components/AppSwitcher.tsx'), 'utf8');
   it('loads public_companies via the helper and does not getDoc companies first', () => {
-    assert.match(src, /loadAppSwitcherCompanyFields/);
-    assert.match(src, /resolveAppSwitcherTier/);
+    assert.match(src, /loadAppSwitcherCompanyFields|applyAppSwitcherTierLookup/);
+    assert.match(src, /resolveAppSwitcherTier|applyAppSwitcherTierLookup/);
     assert.doesNotMatch(src, /firestoreGetDoc\(firestoreDoc\(effectiveDb,\s*'companies'/);
   });
   it('does not cache a full company document', () => {
     assert.doesNotMatch(src, /AsyncStorage\.setItem\([^)]*company/i);
+  });
+  it('fail-closes initial tier and resets before lookup', () => {
+    assert.match(src, /useState<string>\(FAIL_CLOSED_TIER\)|useState<string>\('free'\)/);
+    assert.match(src, /createAppSwitcherTierSession|startLookup/);
+    assert.match(src, /applyAppSwitcherTierLookup/);
+    assert.match(src, /invalidate\(\)/);
   });
 });

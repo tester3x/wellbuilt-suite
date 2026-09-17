@@ -21,9 +21,10 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import {
+  FAIL_CLOSED_TIER,
   TIER_INCLUDES,
-  loadAppSwitcherCompanyFields,
-  resolveAppSwitcherTier,
+  applyAppSwitcherTierLookup,
+  createAppSwitcherTierSession,
 } from './appSwitcherCompanyLookup';
 // WB S: No Firestore client — uses props or fallback
 let collection: any, getDocs: any, firestoreDoc: any, firestoreGetDoc: any;
@@ -114,7 +115,8 @@ export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getI
   const screenRef = useRef({ w: screenW, h: screenH });
   screenRef.current = { w: screenW, h: screenH };
   const [apps, setApps] = useState<AppEntry[]>([]);
-  const [tier, setTier] = useState<string>('god'); // Default to god — Firestore overrides
+  const [tier, setTier] = useState<string>(FAIL_CLOSED_TIER);
+  const tierSessionRef = useRef(createAppSwitcherTierSession());
   const [isOpen, setIsOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -246,20 +248,26 @@ export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getI
   const effectiveDb = firestoreDb || db;
 
   useEffect(() => {
+    const session = tierSessionRef.current;
+    const generation = session.startLookup();
     (async () => {
-      try {
-        const companyId = await AsyncStorage.getItem('selectedCompanyId');
-        if (companyId && effectiveDb && firestoreGetDoc && firestoreDoc) {
-          const result = await loadAppSwitcherCompanyFields(companyId, async (collectionName, id) => {
-            const snap = await firestoreGetDoc(firestoreDoc(effectiveDb, collectionName, id));
-            const exists = typeof snap.exists === 'function' ? snap.exists() : !!snap.exists;
-            return { exists, data: exists ? snap.data() : undefined };
-          });
-          const nextTier = resolveAppSwitcherTier(result);
-          if (nextTier) setTier(nextTier);
-        }
-      } catch {}
+      const canRead = !!(effectiveDb && firestoreGetDoc && firestoreDoc);
+      const companyId = canRead ? await AsyncStorage.getItem('selectedCompanyId') : null;
+      await applyAppSwitcherTierLookup({
+        companyId,
+        generation,
+        isCurrent: (g) => session.isCurrent(g),
+        read: async (collectionName, id) => {
+          const snap = await firestoreGetDoc(firestoreDoc(effectiveDb, collectionName, id));
+          const exists = typeof snap.exists === 'function' ? snap.exists() : !!snap.exists;
+          return { exists, data: exists ? snap.data() : undefined };
+        },
+        setTier,
+      });
     })();
+    return () => {
+      session.invalidate();
+    };
   }, [effectiveDb]);
 
   // ── Load app registry from Firestore (or fallback) ─────────────────────
