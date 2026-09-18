@@ -17,7 +17,9 @@ import {
   projectFinancialLine,
   quantityColumnHeader,
   quantityDisplay,
+  moneyContribution,
   resolveEmployeeSplit,
+  selectConfiguredSplit,
   resolveFinancialQuantity,
   resolveFinancialRate,
   resolveFinancialTime,
@@ -107,6 +109,23 @@ test('Dashboard and WB-S resolve the same golden rate fixtures identically', () 
   assert.equal(a.state, 'resolved');
   assert.equal(b.state, 'resolved');
   if (a.state === 'resolved' && b.state === 'resolved') assert.equal(a.entry.rate, b.entry.rate);
+});
+
+test('selectConfiguredSplit is explicit-zero-safe and prefers employeeSplit', () => {
+  assert.equal(selectConfiguredSplit({ employeeSplit: 0, defaultSplit: 0.25 }), 0);
+  assert.equal(selectConfiguredSplit({ defaultSplit: 0 }), 0);
+  assert.equal(selectConfiguredSplit({ employeeSplit: 0.3, defaultSplit: 0.25 }), 0.3);
+  assert.equal(selectConfiguredSplit({ defaultSplit: 0.25 }), 0.25);
+  assert.equal(selectConfiguredSplit({}), undefined);
+  assert.equal(selectConfiguredSplit(null), undefined);
+  assert.equal(selectConfiguredSplit({ employeeSplit: 'bad', defaultSplit: 0.25 }), 'bad');
+  assert.equal(resolveEmployeeSplit(selectConfiguredSplit({ employeeSplit: 0 })).state, 'explicit_zero');
+  assert.equal(resolveEmployeeSplit(selectConfiguredSplit({})).state, 'unresolved');
+});
+
+test('moneyContribution never treats unresolved placeholders as billable zero', () => {
+  const guarded = moneyContribution(0, 'rate:no_match') + moneyContribution(240, null);
+  assert.equal(guarded, 240);
 });
 
 test('golden splits', () => {

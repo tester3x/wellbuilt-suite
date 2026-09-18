@@ -4,13 +4,20 @@
 import {
   hoursDisplay,
   mixedQuantitySummary,
+  moneyContribution,
+  moneyDisplay,
   projectFinancialLine,
   quantityDisplay,
   resolveEmployeeSplit,
   resolveFinancialRate,
+  selectConfiguredSplit,
 } from './financialCorrectnessCore';
 
-export { mixedQuantitySummary, hoursDisplay };
+export { mixedQuantitySummary, hoursDisplay, moneyDisplay };
+
+export function formatTimesheetMoney(amount: number | null | undefined, unresolved: string | null | undefined): string {
+  return moneyDisplay(amount ?? null, unresolved ?? null);
+}
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -358,7 +365,8 @@ export async function fetchPayConfig(companyId: string): Promise<PayConfig | nul
     }
 
     return {
-      employeeSplit: payConfig.employeeSplit ?? payConfig.defaultSplit,
+      employeeSplit: payConfig.employeeSplit,
+      defaultSplit: payConfig.defaultSplit,
       rateSheets: Object.keys(parsedSheets).length > 0 ? parsedSheets : undefined,
       frostZones: payConfig.frostZones || undefined,
     };
@@ -690,7 +698,7 @@ export function buildTimesheetSummary(
   periodEnd: Date,
   wellCountyMap?: Map<string, string>,
 ): TimesheetSummary {
-  const splitResolved = resolveEmployeeSplit(payConfig?.employeeSplit ?? payConfig?.defaultSplit);
+  const splitResolved = resolveEmployeeSplit(selectConfiguredSplit(payConfig));
   const rateSheets = payConfig?.rateSheets || {};
   const frostZones = payConfig?.frostZones;
   const splitForProject = splitResolved.state === 'unresolved' ? undefined : splitResolved.split;
@@ -759,7 +767,7 @@ export function buildTimesheetSummary(
       }
     }
 
-    const payable = line.eligible.eligible && line.amountBilled !== null;
+    const payable = line.eligible.eligible && line.employeeTake !== null;
     return {
       invoiceId: inv.id,
       invoiceNumber: inv.invoiceNumber,
@@ -794,8 +802,8 @@ export function buildTimesheetSummary(
     totalTons: payableRows.reduce((s, r) => s + (r.qtyUnit === 'ton' && r.qtyValue != null ? r.qtyValue : 0), 0),
     unresolvedCount: rows.filter(r => r.amountUnresolved).length,
     totalHours: Math.round(payableRows.reduce((s, r) => s + r.hours, 0) * 100) / 100,
-    totalGross: Math.round(payableRows.reduce((s, r) => s + r.gross, 0) * 100) / 100,
-    totalPay: Math.round(payableRows.reduce((s, r) => s + r.employeePay, 0) * 100) / 100,
+    totalGross: Math.round(payableRows.reduce((s, r) => s + moneyContribution(r.gross, r.amountUnresolved), 0) * 100) / 100,
+    totalPay: Math.round(payableRows.reduce((s, r) => s + moneyContribution(r.employeePay, r.amountUnresolved), 0) * 100) / 100,
     periodLabel,
     periodStart: formatShortDate(periodStart),
     periodEnd: formatShortDate(periodEnd),

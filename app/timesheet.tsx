@@ -31,6 +31,7 @@ import {
   fetchDriverInvoices,
   fetchPayConfig,
   buildTimesheetSummary,
+  formatTimesheetMoney,
   buildWellCountyMap,
   fetchInvoiceDetail,
   fetchTicketDetails,
@@ -375,9 +376,11 @@ function PayrollRow({ row, onTap }: {
   onTap: () => void;
 }) {
   const sColor = statusColor(row.status);
-  const rateLabel = row.rateMethod === 'per_bbl'
-    ? `${formatCurrency(row.rate)}/bbl`
-    : `${formatCurrency(row.rate)}/hr`;
+  const rateLabel = row.amountUnresolved
+    ? formatTimesheetMoney(row.rate, row.amountUnresolved)
+    : row.rateMethod === 'per_bbl'
+      ? `${formatCurrency(row.rate)}/bbl`
+      : `${formatCurrency(row.rate)}/hr`;
 
   return (
     <Pressable onPress={onTap} style={s.payrollRow}>
@@ -405,12 +408,12 @@ function PayrollRow({ row, onTap }: {
           {row.amountUnresolved ? (
             <>
               <Text style={s.miniDot}>·</Text>
-              <Text style={s.miniText}>UNRESOLVED</Text>
+              <Text style={s.miniText}>{formatTimesheetMoney(row.employeePay, row.amountUnresolved)}</Text>
             </>
           ) : null}
         </View>
         <View style={s.rowRight}>
-          <Text style={s.rowPay}>{row.amountUnresolved ? 'UNRESOLVED' : formatCurrency(row.employeePay)}</Text>
+          <Text style={s.rowPay}>{row.amountUnresolved ? formatTimesheetMoney(row.employeePay, row.amountUnresolved) : formatCurrency(row.employeePay)}</Text>
           <MaterialCommunityIcons name="chevron-right" size={16} color={colors.text.muted} />
         </View>
       </View>
