@@ -390,21 +390,27 @@ function PayrollRow({ row, onTap }: {
           <Text style={s.miniText}>{row.operator}</Text>
           <Text style={s.miniDot}>·</Text>
           <Text style={s.miniText}>{rateLabel}</Text>
-          {row.bbls > 0 && (
+          {row.qtyDisplay ? (
             <>
               <Text style={s.miniDot}>·</Text>
-              <Text style={s.miniText}>{Math.round(row.bbls)} BBL</Text>
+              <Text style={s.miniText}>{row.qtyDisplay}</Text>
             </>
-          )}
-          {row.hours > 0 && (
+          ) : null}
+          {row.hoursDisplay ? (
             <>
               <Text style={s.miniDot}>·</Text>
-              <Text style={s.miniText}>{row.hours.toFixed(1)}h</Text>
+              <Text style={s.miniText}>{row.hoursDisplay}</Text>
             </>
-          )}
+          ) : null}
+          {row.amountUnresolved ? (
+            <>
+              <Text style={s.miniDot}>·</Text>
+              <Text style={s.miniText}>UNRESOLVED</Text>
+            </>
+          ) : null}
         </View>
         <View style={s.rowRight}>
-          <Text style={s.rowPay}>{formatCurrency(row.employeePay)}</Text>
+          <Text style={s.rowPay}>{row.amountUnresolved ? 'UNRESOLVED' : formatCurrency(row.employeePay)}</Text>
           <MaterialCommunityIcons name="chevron-right" size={16} color={colors.text.muted} />
         </View>
       </View>
@@ -585,6 +591,11 @@ export default function TimesheetScreen() {
                   {openCount} job{openCount > 1 ? 's' : ''} still in progress
                 </Text>
               )}
+              {summary.unresolvedCount > 0 && (
+                <Text style={s.buildingNote}>
+                  {summary.unresolvedCount} line{summary.unresolvedCount > 1 ? 's' : ''} unresolved
+                </Text>
+              )}
             </View>
 
             {/* Stats Grid */}
@@ -597,8 +608,14 @@ export default function TimesheetScreen() {
               />
               <StatCard
                 icon="water"
-                label={t('daySummary.bbls')}
-                value={String(Math.round(summary.totalBBLs))}
+                label={summary.totalTons && !summary.totalBBLs ? 'Tons' : summary.totalBBLs && summary.totalTons ? 'Qty' : (summary.totalTons ? 'Tons' : t('daySummary.bbls'))}
+                value={
+                  summary.totalBBLs && summary.totalTons
+                    ? `${Math.round(summary.totalBBLs)} BBL / ${summary.totalTons} ton`
+                    : summary.totalTons
+                      ? `${summary.totalTons} ton`
+                      : String(Math.round(summary.totalBBLs))
+                }
                 color={colors.brand.primary}
               />
               <StatCard

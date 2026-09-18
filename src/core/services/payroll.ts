@@ -1,6 +1,16 @@
 // src/core/services/payroll.ts
 // Fetches invoice data for driver timesheet view via Firestore REST API.
-// Mirrors Dashboard payroll logic: fetches all company invoices, filters by driver client-side.
+// Financial eligibility, rates, quantity, and time use financialCorrectnessCore v1.
+import {
+  hoursDisplay,
+  mixedQuantitySummary,
+  projectFinancialLine,
+  quantityDisplay,
+  resolveEmployeeSplit,
+  resolveFinancialRate,
+} from './financialCorrectnessCore';
+
+export { mixedQuantitySummary, hoursDisplay };
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -15,13 +25,23 @@ export interface TimesheetInvoice {
   wellName: string;
   hauledTo: string;
   jobType: string;
-  totalBBL: number;
+  totalBBL?: number;
   totalHours: number;
   status: string;
   date: string; // MM/DD/YYYY or ISO
   createdAt: string;
   county?: string;
   companyId?: string;
+  bblsField?: number | null;
+  qtyField?: number | string | null;
+  qtyUnit?: string | null;
+  unit?: string | null;
+  tons?: number | null;
+  netWeight?: number | null;
+  allocatedHours?: number | null;
+  observedHours?: number | null;
+  actualDriveMinutes?: number | null;
+  allocationMethod?: string | null;
 }
 
 export interface RateEntry {
@@ -34,6 +54,7 @@ export interface RateEntry {
 
 export interface PayConfig {
   employeeSplit?: number;
+  defaultSplit?: number;
   rateSheets?: Record<string, RateEntry[]>; // per-operator rate sheets (matches Dashboard)
   frostZones?: Record<string, { startDate: string; endDate: string; maxBbls?: number }>;
 }
@@ -51,12 +72,24 @@ export interface TimesheetRow {
   gross: number;
   employeePay: number;
   status: string;
+  qtyUnit?: 'bbl' | 'ton' | null;
+  qtyValue?: number | null;
+  qtyDisplay?: string;
+  qtyState?: string;
+  observedHours?: number | null;
+  allocatedHours?: number | null;
+  hoursProvenance?: string;
+  hoursDisplay?: string;
+  amountUnresolved?: string | null;
+  payable?: boolean;
 }
 
 export interface TimesheetSummary {
   rows: TimesheetRow[];
   totalLoads: number;
   totalBBLs: number;
+  totalTons: number;
+  unresolvedCount: number;
   totalHours: number;
   totalGross: number;
   totalPay: number;
@@ -253,13 +286,11 @@ export async function fetchDriverInvoices(
         ? rawInvoiceNum
         : ticketNum || firstTicket || wellName || docId.slice(0, 8);
 
-      // BBLs: try totalBBL first, then fall back to bbls/qty from ticket fields
-      let totalBBL = parseFirestoreValue(f.totalBBL) || 0;
-      if (!totalBBL) {
-        totalBBL = parseFloat(parseFirestoreValue(f.bbls) || '0')
-          || parseFloat(parseFirestoreValue(f.qty) || '0')
-          || 0;
-      }
+      const rawTotalBBL = parseFirestoreValue(f.totalBBL);
+      const rawBbls = parseFirestoreValue(f.bbls);
+      const rawQty = parseFirestoreValue(f.qty);
+      const rawTons = parseFirestoreValue(f.tons);
+      const rawNet = parseFirestoreValue(f.netWeight);
 
       invoices.push({
         id: docId,
@@ -268,14 +299,24 @@ export async function fetchDriverInvoices(
         operator: parseFirestoreValue(f.operator) || '',
         wellName,
         hauledTo: parseFirestoreValue(f.hauledTo) || '',
-        jobType: parseFirestoreValue(f.commodityType) || parseFirestoreValue(f.jobType) || 'Production Water',
-        totalBBL,
+        jobType: parseFirestoreValue(f.commodityType) || parseFirestoreValue(f.jobType) || '',
+        totalBBL: typeof rawTotalBBL === 'number' ? rawTotalBBL : undefined,
         totalHours: parseFirestoreValue(f.totalHours) || 0,
         status,
         date: dateStr,
         createdAt,
         county: parseFirestoreValue(f.county) || '',
         companyId: invoiceCompanyId,
+        bblsField: typeof rawBbls === 'number' ? rawBbls : (rawBbls != null ? parseFloat(String(rawBbls)) : null),
+        qtyField: rawQty,
+        qtyUnit: parseFirestoreValue(f.qtyUnit) || null,
+        unit: parseFirestoreValue(f.unit) || null,
+        tons: typeof rawTons === 'number' ? rawTons : null,
+        netWeight: typeof rawNet === 'number' ? rawNet : null,
+        allocatedHours: typeof parseFirestoreValue(f.allocatedHours) === 'number' ? parseFirestoreValue(f.allocatedHours) : null,
+        observedHours: typeof parseFirestoreValue(f.observedHours) === 'number' ? parseFirestoreValue(f.observedHours) : null,
+        actualDriveMinutes: typeof parseFirestoreValue(f.actualDriveMinutes) === 'number' ? parseFirestoreValue(f.actualDriveMinutes) : null,
+        allocationMethod: parseFirestoreValue(f.splitTimeAllocation) || parseFirestoreValue(f.allocationMethod) || null,
       });
     }
 
@@ -317,7 +358,7 @@ export async function fetchPayConfig(companyId: string): Promise<PayConfig | nul
     }
 
     return {
-      employeeSplit: payConfig.employeeSplit ?? payConfig.defaultSplit ?? 0.25,
+      employeeSplit: payConfig.employeeSplit ?? payConfig.defaultSplit,
       rateSheets: Object.keys(parsedSheets).length > 0 ? parsedSheets : undefined,
       frostZones: payConfig.frostZones || undefined,
     };
@@ -347,40 +388,12 @@ function isInFrostZone(isoDate: string, zone: { startDate: string; endDate: stri
   return isoDate >= zone.startDate && (!zone.endDate || isoDate <= zone.endDate);
 }
 
-/** JOB_TYPE_ALIASES — maps common variants to canonical names */
-const JOB_TYPE_ALIASES: Record<string, string[]> = {
-  'Production Water': ['PW', 'Prod Water', 'Production'],
-  'Flowback': ['FB', 'Flow Back'],
-  'Frac Water': ['Frac', 'Fresh Water'],
-  'Skim Oil': ['Skim', 'Oil Skim'],
-  'Service Work': ['Service', 'Maintenance'],
-};
-
 function lookupRate(rateSheets: Record<string, RateEntry[]>, operator: string, jobType: string): RateEntry | null {
-  // Find the operator's rate sheet (case-insensitive)
-  const operatorKey = Object.keys(rateSheets).find(k =>
-    k.toLowerCase() === operator.toLowerCase()
-  );
-  const rateSheet = operatorKey ? rateSheets[operatorKey] : null;
-  if (!rateSheet || !rateSheet.length) return null;
-
-  const direct = rateSheet.find(r =>
-    r.jobType.toLowerCase() === jobType.toLowerCase()
-  );
-  if (direct) return direct;
-
-  for (const [canonical, aliases] of Object.entries(JOB_TYPE_ALIASES)) {
-    if (aliases.some(a => a.toLowerCase() === jobType.toLowerCase()) ||
-        canonical.toLowerCase() === jobType.toLowerCase()) {
-      const match = rateSheet.find(r =>
-        r.jobType.toLowerCase() === canonical.toLowerCase() ||
-        aliases.some(a => a.toLowerCase() === r.jobType.toLowerCase())
-      );
-      if (match) return match;
-    }
+  const resolved = resolveFinancialRate(rateSheets, operator, jobType);
+  if (resolved.state === 'resolved' || resolved.state === 'explicit_zero') {
+    return resolved.entry as RateEntry;
   }
-
-  return rateSheet[0] || null;
+  return null;
 }
 
 function getEffectiveRate(
@@ -677,37 +690,63 @@ export function buildTimesheetSummary(
   periodEnd: Date,
   wellCountyMap?: Map<string, string>,
 ): TimesheetSummary {
-  const split = payConfig?.employeeSplit ?? 0.25;
+  const splitResolved = resolveEmployeeSplit(payConfig?.employeeSplit ?? payConfig?.defaultSplit);
   const rateSheets = payConfig?.rateSheets || {};
   const frostZones = payConfig?.frostZones;
+  const splitForProject = splitResolved.state === 'unresolved' ? undefined : splitResolved.split;
 
   const rows: TimesheetRow[] = invoices.map(inv => {
-    const rateEntry = lookupRate(rateSheets, inv.operator, inv.jobType);
+    const observedHours = inv.observedHours
+      ?? (typeof inv.actualDriveMinutes === 'number' ? inv.actualDriveMinutes / 60 : undefined);
+    const line = projectFinancialLine({
+      status: inv.status,
+      operator: inv.operator,
+      jobType: inv.jobType,
+      quantity: {
+        totalBBL: inv.totalBBL,
+        bbls: inv.bblsField ?? undefined,
+        qty: inv.qtyField ?? undefined,
+        qtyUnit: inv.qtyUnit,
+        unit: inv.unit,
+        tons: inv.tons ?? undefined,
+        netWeight: inv.netWeight ?? undefined,
+      },
+      time: {
+        totalHours: inv.totalHours,
+        allocatedHours: inv.allocatedHours ?? undefined,
+        observedHours,
+        allocationMethod: inv.allocationMethod,
+      },
+      rateSheets,
+      defaultSplit: splitForProject,
+    });
+
     let rate = 0;
     let rateMethod = 'per_bbl';
-
-    if (rateEntry) {
-      rateMethod = rateEntry.method;
-      // Look up county from NDIC well data if not on invoice
+    let gross = line.amountBilled ?? 0;
+    let employeePay = line.employeeTake ?? 0;
+    if (line.rate.state === 'resolved' || line.rate.state === 'explicit_zero') {
+      rateMethod = line.rate.entry.method;
       const county = inv.county
         || wellCountyMap?.get(inv.wellName?.toLowerCase() || '')
         || '';
       rate = getEffectiveRate(
-        rateEntry,
+        line.rate.entry as RateEntry,
         inv.date || inv.createdAt,
         county,
         frostZones,
-        inv.totalBBL,
+        line.qtyForBblColumn ?? undefined,
       );
+      if (line.amountBilled !== null && line.rate.entry.method === 'per_bbl' && line.qtyForBblColumn != null && rate !== line.rate.entry.rate) {
+        gross = Math.round(line.qtyForBblColumn * rate * 100) / 100;
+        if (splitResolved.state !== 'unresolved') {
+          employeePay = Math.round(gross * splitResolved.split * 100) / 100;
+        }
+      } else {
+        rate = line.rate.entry.rate;
+      }
     }
 
-    const gross = rateMethod === 'per_bbl'
-      ? rate * inv.totalBBL
-      : rate * inv.totalHours;
-
-    const employeePay = Math.round(gross * split * 100) / 100;
-
-    // Format date for display
     let displayDate = '';
     if (inv.date) {
       displayDate = inv.date;
@@ -720,29 +759,43 @@ export function buildTimesheetSummary(
       }
     }
 
+    const payable = line.eligible.eligible && line.amountBilled !== null;
     return {
       invoiceId: inv.id,
       invoiceNumber: inv.invoiceNumber,
       date: displayDate,
       operator: inv.operator,
       jobType: inv.jobType,
-      bbls: inv.totalBBL,
-      hours: inv.totalHours,
-      rate,
+      bbls: line.qtyForBblColumn ?? 0,
+      hours: line.hoursForMoney ?? 0,
+      rate: payable ? rate : 0,
       rateMethod,
-      gross: Math.round(gross * 100) / 100,
-      employeePay,
+      gross: payable ? Math.round(gross * 100) / 100 : 0,
+      employeePay: payable ? employeePay : 0,
       status: inv.status,
+      qtyUnit: line.quantity.state === 'unresolved' ? null : line.quantity.unit,
+      qtyValue: line.quantity.state === 'unresolved' ? null : line.quantity.value,
+      qtyDisplay: quantityDisplay(line.quantity),
+      qtyState: line.quantity.state,
+      observedHours: line.time.observedHours,
+      allocatedHours: line.time.allocatedHours,
+      hoursProvenance: line.time.label,
+      hoursDisplay: hoursDisplay(line.time),
+      amountUnresolved: payable ? null : (line.amountReason || `ineligible:${line.eligible.reason}`),
+      payable,
     };
   });
 
+  const payableRows = rows.filter(r => r.payable);
   return {
     rows,
-    totalLoads: rows.length,
-    totalBBLs: rows.reduce((s, r) => s + r.bbls, 0),
-    totalHours: Math.round(rows.reduce((s, r) => s + r.hours, 0) * 100) / 100,
-    totalGross: Math.round(rows.reduce((s, r) => s + r.gross, 0) * 100) / 100,
-    totalPay: Math.round(rows.reduce((s, r) => s + r.employeePay, 0) * 100) / 100,
+    totalLoads: payableRows.length,
+    totalBBLs: payableRows.reduce((s, r) => s + (r.qtyUnit === 'bbl' && r.qtyValue != null ? r.qtyValue : 0), 0),
+    totalTons: payableRows.reduce((s, r) => s + (r.qtyUnit === 'ton' && r.qtyValue != null ? r.qtyValue : 0), 0),
+    unresolvedCount: rows.filter(r => r.amountUnresolved).length,
+    totalHours: Math.round(payableRows.reduce((s, r) => s + r.hours, 0) * 100) / 100,
+    totalGross: Math.round(payableRows.reduce((s, r) => s + r.gross, 0) * 100) / 100,
+    totalPay: Math.round(payableRows.reduce((s, r) => s + r.employeePay, 0) * 100) / 100,
     periodLabel,
     periodStart: formatShortDate(periodStart),
     periodEnd: formatShortDate(periodEnd),
