@@ -257,14 +257,16 @@ export async function claimEnforcedExplicitStart(deps: {
 export async function recordEnforcedDepartReturn(deps: {
   client?: ShiftAuthorityClient;
   periodId?: string | null;
+  attemptId: string;
   gate?: GenerationGate;
 }): Promise<{ ok: boolean; reason?: string; recorded?: boolean }> {
   if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
   const client = deps.client ?? defaultShiftAuthorityClient();
   const periodId = deps.periodId ?? (await getCurrentShiftId());
   if (!periodId) return { ok: false, reason: 'no_period' };
+  if (!deps.attemptId) return { ok: false, reason: 'no_attempt' };
   try {
-    const result = await client.recordDepartReturn(periodId);
+    const result = await client.recordDepartReturn(periodId, deps.attemptId);
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
     shiftAuthorityDiag('departReturn.outcome', {
       recorded: result.recorded ? 1 : 0,
@@ -282,14 +284,16 @@ export async function recordEnforcedDepartReturn(deps: {
 export async function recordEnforcedReturnAbandoned(deps: {
   client?: ShiftAuthorityClient;
   periodId?: string | null;
+  attemptId: string;
   gate?: GenerationGate;
 }): Promise<{ ok: boolean; reason?: string; recorded?: boolean }> {
   if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
   const client = deps.client ?? defaultShiftAuthorityClient();
   const periodId = deps.periodId ?? (await getCurrentShiftId());
   if (!periodId) return { ok: false, reason: 'no_period' };
+  if (!deps.attemptId) return { ok: false, reason: 'no_attempt' };
   try {
-    const result = await client.recordReturnAbandoned(periodId);
+    const result = await client.recordReturnAbandoned(periodId, deps.attemptId);
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
     shiftAuthorityDiag('returnAbandoned.outcome', {
       recorded: result.recorded ? 1 : 0,

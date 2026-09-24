@@ -136,8 +136,32 @@ test('wiring: abandonReturn enforced path uses the governed callable, not a dire
 test('wiring: shiftAuthorityClient forbids identity in payloads (source)', () => {
   const client = src('src/core/services/workPeriodAuthority/shiftAuthorityClient.ts');
   assert.ok(client.includes("call(CLAIM_DRIVER_SHIFT, { periodId, originLocalDate })"));
-  assert.ok(client.includes("call(RECORD_DEPART_RETURN, { periodId })"));
+  assert.ok(client.includes("call(RECORD_DEPART_RETURN, { periodId, attemptId })"));
+  assert.ok(client.includes("call(RECORD_RETURN_ABANDONED, { periodId, attemptId })"));
   assert.ok(client.includes("call(RESOLVE_ACTIVE_DRIVER_SHIFT, {})"));
   assert.ok(!client.includes('driverId:'));
   assert.ok(!client.includes('companyId:'));
+});
+
+test('wiring: return attempt id is minted, persisted, and threaded to both governed calls', () => {
+  const auth = src('src/core/context/AuthContext.tsx');
+  // startReturn mints/reuses a persisted attempt id and passes it to depart.
+  const start = auth.slice(auth.indexOf('const startReturn = useCallback'), auth.indexOf('const abandonReturn = useCallback'));
+  assert.ok(start.includes('mintReturnAttemptId'));
+  assert.ok(start.includes("SecureStore.setItemAsync('returnAttemptId'"));
+  assert.ok(start.includes('recordEnforcedDepartReturn({ periodId, attemptId })'));
+  // abandonReturn reads the SAME id and passes it to the abandonment.
+  const abandon = auth.slice(auth.indexOf('const abandonReturn = useCallback'), auth.indexOf('const confirmArrival = useCallback'));
+  assert.ok(abandon.includes("SecureStore.getItemAsync('returnAttemptId')"));
+  assert.ok(abandon.includes('recordEnforcedReturnAbandoned({ periodId, attemptId })'));
+  // The id is cleared on abandon (and, elsewhere, on arrival/logout/login-reset).
+  assert.ok(abandon.includes("SecureStore.deleteItemAsync('returnAttemptId')"));
+  assert.ok((auth.match(/deleteItemAsync\('returnAttemptId'\)/g) || []).length >= 4);
+});
+
+test('wiring: enforced return wrappers require an attemptId', () => {
+  const life = src('src/core/services/workPeriodAuthority/explicitShiftLifecycle.ts');
+  assert.ok(life.includes('attemptId: string'));
+  assert.ok(life.includes('client.recordDepartReturn(periodId, deps.attemptId)'));
+  assert.ok(life.includes('client.recordReturnAbandoned(periodId, deps.attemptId)'));
 });

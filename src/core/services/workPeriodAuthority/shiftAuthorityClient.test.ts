@@ -134,10 +134,11 @@ test('client requires session and exact payload keys; no identity fields', async
     { requireSession: async () => true },
   );
 
+  const ATTEMPT = 'ret-2026-08-10_090000-abc123';
   await client.resolve();
   await client.claim('2026-08-10_090000', '2026-08-10');
-  await client.recordDepartReturn('2026-08-10_090000');
-  await client.recordReturnAbandoned('2026-08-10_090000');
+  await client.recordDepartReturn('2026-08-10_090000', ATTEMPT);
+  await client.recordReturnAbandoned('2026-08-10_090000', ATTEMPT);
   await client.close('2026-08-10_090000', 42);
 
   assert.equal(calls[0].name, RESOLVE_ACTIVE_DRIVER_SHIFT);
@@ -147,10 +148,28 @@ test('client requires session and exact payload keys; no identity fields', async
   assert.ok(!('companyId' in calls[1].payload));
   assert.ok(!('date' in calls[1].payload));
   assert.ok(!('type' in calls[1].payload));
-  assert.deepEqual(Object.keys(calls[2].payload), ['periodId']);
+  // depart_return / return_abandoned carry ONLY periodId + attemptId — still no
+  // driver/company selector, just the per-attempt idempotency scope.
+  assert.deepEqual(Object.keys(calls[2].payload).sort(), ['attemptId', 'periodId']);
+  assert.equal(calls[2].payload.attemptId, ATTEMPT);
   assert.equal(calls[3].name, RECORD_RETURN_ABANDONED);
-  assert.deepEqual(Object.keys(calls[3].payload), ['periodId']);
+  assert.deepEqual(Object.keys(calls[3].payload).sort(), ['attemptId', 'periodId']);
+  assert.equal(calls[3].payload.attemptId, ATTEMPT);
   assert.deepEqual(Object.keys(calls[4].payload).sort(), ['odometerMiles', 'periodId']);
+});
+
+test('client rejects a malformed attempt id before calling the transport', async () => {
+  let called = false;
+  const client = createShiftAuthorityClient(
+    async () => { called = true; return { protocolVersion: 1, periodId: '2026-08-10_090000', recorded: true }; },
+    { requireSession: async () => true },
+  );
+  await assert.rejects(() => client.recordReturnAbandoned('2026-08-10_090000', 'bad id'), (e: unknown) => {
+    assert.ok(e instanceof ShiftAuthorityError);
+    assert.equal((e as ShiftAuthorityError).failure, 'malformed_attempt');
+    return true;
+  });
+  assert.equal(called, false);
 });
 
 test('client fails closed without SDK session', async () => {

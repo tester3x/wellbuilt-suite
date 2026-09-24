@@ -10,6 +10,7 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getFirebaseApp, FIREBASE_REGION } from '../firebaseApp';
 import { getOwnedVerifiedIdentity } from '../firebaseAuthBoundary';
+import { isReturnAttemptId } from './returnAttempt';
 
 export const SHIFT_AUTHORITY_PROTOCOL_VERSION = 1 as const;
 
@@ -76,6 +77,7 @@ export type ShiftAuthorityFailureClass =
   | 'period_date_mismatch'
   | 'implausible_origin_local_date'
   | 'invalid_odometer_miles'
+  | 'malformed_attempt'
   | 'malformed_response'
   | 'transport'
   | 'unknown';
@@ -319,8 +321,8 @@ export async function isCallableReadyDriverSession(forceRefresh = false): Promis
 export type ShiftAuthorityClient = {
   resolve: () => Promise<ResolveActiveResult>;
   claim: (periodId: string, originLocalDate: string) => Promise<ClaimActiveResult>;
-  recordDepartReturn: (periodId: string) => Promise<DepartReturnResult>;
-  recordReturnAbandoned: (periodId: string) => Promise<ReturnAbandonedResult>;
+  recordDepartReturn: (periodId: string, attemptId: string) => Promise<DepartReturnResult>;
+  recordReturnAbandoned: (periodId: string, attemptId: string) => Promise<ReturnAbandonedResult>;
   close: (periodId: string, odometerMiles?: number) => Promise<CloseActiveResult>;
 };
 
@@ -364,18 +366,24 @@ export function createShiftAuthorityClient(
       const raw = await call(CLAIM_DRIVER_SHIFT, { periodId, originLocalDate });
       return validateClaimResponse(raw);
     },
-    async recordDepartReturn(periodId) {
+    async recordDepartReturn(periodId, attemptId) {
       if (!PERIOD_ID_RE.test(periodId)) {
         throw new ShiftAuthorityError('period_mismatch', 'malformed_period');
       }
-      const raw = await call(RECORD_DEPART_RETURN, { periodId });
+      if (!isReturnAttemptId(attemptId)) {
+        throw new ShiftAuthorityError('malformed_attempt', 'malformed_attempt');
+      }
+      const raw = await call(RECORD_DEPART_RETURN, { periodId, attemptId });
       return validateDepartReturnResponse(raw);
     },
-    async recordReturnAbandoned(periodId) {
+    async recordReturnAbandoned(periodId, attemptId) {
       if (!PERIOD_ID_RE.test(periodId)) {
         throw new ShiftAuthorityError('period_mismatch', 'malformed_period');
       }
-      const raw = await call(RECORD_RETURN_ABANDONED, { periodId });
+      if (!isReturnAttemptId(attemptId)) {
+        throw new ShiftAuthorityError('malformed_attempt', 'malformed_attempt');
+      }
+      const raw = await call(RECORD_RETURN_ABANDONED, { periodId, attemptId });
       return validateReturnAbandonedResponse(raw);
     },
     async close(periodId, odometerMiles) {

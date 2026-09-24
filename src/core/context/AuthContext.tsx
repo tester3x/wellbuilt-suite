@@ -20,6 +20,7 @@ import {
 } from '../services/driverAuth';
 import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, setCurrentShiftBinding, clearCurrentShiftId, getCurrentShiftId, observeEnforcementSafety } from '../services/shiftTracking';
 import { shouldDivertFromReturn } from '../services/returnDivert';
+import { mintReturnAttemptId, isReturnAttemptId } from '../services/workPeriodAuthority/returnAttempt';
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { clearSSOLaunchedApps } from '../services/appLauncher';
@@ -477,6 +478,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // SSO app-switcher tracking is always reset on fresh identity login.
       await clearSSOLaunchedApps();
       await SecureStore.deleteItemAsync('returnDepartTime');
+      await SecureStore.deleteItemAsync('returnAttemptId');
       setReturningToYard(false);
       setReturnDepartTime(null);
 
@@ -799,9 +801,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
       const enforcement = parseSuiteEnforcement(cfg ?? undefined);
 
+      // Stable identity for THIS return attempt. Reuse a persisted id if a prior
+      // start failed mid-flight (idempotent retry of the same attempt); mint a
+      // fresh one otherwise, so a SECOND return in the same shift is a distinct
+      // attempt. Persist before the server call so a retry reuses it.
+      const periodForAttempt = (await getCurrentShiftId()) || 'wbs';
+      let attemptId = await SecureStore.getItemAsync('returnAttemptId').catch(() => null);
+      if (!attemptId || !isReturnAttemptId(attemptId)) {
+        attemptId = mintReturnAttemptId(periodForAttempt);
+        await SecureStore.setItemAsync('returnAttemptId', attemptId);
+      }
+
       if (isEnforcedExplicitShift(enforcement)) {
         const periodId = await getCurrentShiftId();
-        const result = await recordEnforcedDepartReturn({ periodId });
+        const result = await recordEnforcedDepartReturn({ periodId, attemptId });
         if (!result.ok) {
           console.warn('[AuthContext] recordDepartReturn failed — not entering return state:', result.reason);
           return;
@@ -859,9 +872,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
     const enforcement = parseSuiteEnforcement(cfg ?? undefined);
 
+    // The abandonment must carry the SAME attempt id the return started with, so
+    // it links to that exact attempt and dedupes per attempt (a second return in
+    // this shift gets its own abandonment). SecureStore is the source of truth so
+    // this is correct after an app restart.
+    const attemptId = await SecureStore.getItemAsync('returnAttemptId').catch(() => null);
+
     if (isEnforcedExplicitShift(enforcement)) {
       const periodId = await getCurrentShiftId();
-      const result = await recordEnforcedReturnAbandoned({ periodId });
+      if (!attemptId || !isReturnAttemptId(attemptId)) {
+        console.warn('[AuthContext] no return attempt id on record — keeping return state');
+        return;
+      }
+      const result = await recordEnforcedReturnAbandoned({ periodId, attemptId });
       if (!result.ok) {
         console.warn('[AuthContext] recordReturnAbandoned failed — keeping return state:', result.reason);
         return;
@@ -877,6 +900,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         { enforcedExplicit: false, allowDirectWrite: true },
       ).catch(() => {});
     }
+    await SecureStore.deleteItemAsync('returnAttemptId').catch(() => {});
     await SecureStore.deleteItemAsync('returnDepartTime').catch(() => {});
     setReturningToYard(false);
     setReturnDepartTime(null);
@@ -974,6 +998,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       SecureStore.setItemAsync('shiftEnded', 'true'),
       SecureStore.deleteItemAsync('shiftStarted'),
       SecureStore.deleteItemAsync('returnDepartTime'),
+      SecureStore.deleteItemAsync('returnAttemptId'),
     ]).catch(() => {});
     console.log('[AuthContext] Arrived at yard, shift ended for:', user.displayName);
     // No cascade here — day summary screen handles logout via logoutWithCascade
@@ -1058,6 +1083,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
+    await SecureStore.deleteItemAsync('returnAttemptId');
     await SecureStore.deleteItemAsync('activePackageId');
     clearCurrentShiftId().catch(() => {});
     // Match logout()'s cleanup: wipe per-shift / per-session AsyncStorage.
@@ -1175,6 +1201,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('shiftStarted');
     await SecureStore.deleteItemAsync('shiftEnded');
     await SecureStore.deleteItemAsync('returnDepartTime');
+    await SecureStore.deleteItemAsync('returnAttemptId');
     await SecureStore.deleteItemAsync('activePackageId');
     clearCurrentShiftId().catch(() => {});
     // Wipe per-shift / per-session AsyncStorage state so the next login
