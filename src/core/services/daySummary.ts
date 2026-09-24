@@ -176,8 +176,14 @@ function parseFirestoreValue(val: any): any {
 /**
  * Fetch today's closed invoices for a specific driver via Firestore REST.
  */
+// 2026-09-24: join by STABLE driver identity (driverId), not the display name.
+// WB-T stamps invoice.driver with the canonical driver name (e.g. "Mike ZFold7
+// Burger") while WB-S passes the login alias (e.g. "Mikezfold"); the old
+// `driver == displayName` join silently returned zero loads for a full shift of
+// real closed invoices. Invoices carry driverId (== WB-S user.driverId, the
+// same id the JSA query already keys on).
 export async function fetchTodayInvoices(
-  displayName: string,
+  driverId: string,
   companyId?: string,
 ): Promise<DaySummaryInvoice[]> {
   const now = new Date();
@@ -204,9 +210,9 @@ export async function fetchTodayInvoices(
     },
     {
       fieldFilter: {
-        field: { fieldPath: 'driver' },
+        field: { fieldPath: 'driverId' },
         op: 'EQUAL',
-        value: { stringValue: displayName },
+        value: { stringValue: driverId },
       },
     },
   ];
@@ -236,7 +242,7 @@ export async function fetchTodayInvoices(
   };
 
   try {
-    console.log('[daySummary] Querying invoices for driver:', displayName, 'companyId:', companyId || '(none)', 'date:', startOfDay.slice(0, 10));
+    console.log('[daySummary] Querying invoices for driverId:', driverId, 'companyId:', companyId || '(none)', 'date:', startOfDay.slice(0, 10));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     const resp = await fetch(firestoreQueryUrl(), {

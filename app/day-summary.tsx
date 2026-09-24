@@ -230,7 +230,6 @@ export default function DaySummaryScreen() {
       return;
     }
     if (!user) return;
-    const driverName = user.legalName || user.displayName;
     const API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
     const BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
 
@@ -256,7 +255,10 @@ export default function DaySummaryScreen() {
     });
 
     // All 4 fetches in parallel — no sequential waits
-    const invoicesP = fetchTodayInvoices(driverName, user.companyId).catch(() => [] as any[]);
+    // Join by stable driverId (not the display name — WB-T stores the canonical
+    // driver name on invoices, WB-S has the login alias). driverName is still
+    // used for other UI below.
+    const invoicesP = fetchTodayInvoices(user.driverId, user.companyId).catch(() => [] as any[]);
     // Explicit shifts store login/depart_return/logout/odometer on the ORIGIN-day
     // document (frozen at claim), not "calendar today" after a cross-midnight close.
     const shiftP = (async () => {
