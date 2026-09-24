@@ -279,6 +279,31 @@ export async function recordEnforcedDepartReturn(deps: {
   }
 }
 
+export async function recordEnforcedReturnAbandoned(deps: {
+  client?: ShiftAuthorityClient;
+  periodId?: string | null;
+  gate?: GenerationGate;
+}): Promise<{ ok: boolean; reason?: string; recorded?: boolean }> {
+  if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
+  const client = deps.client ?? defaultShiftAuthorityClient();
+  const periodId = deps.periodId ?? (await getCurrentShiftId());
+  if (!periodId) return { ok: false, reason: 'no_period' };
+  try {
+    const result = await client.recordReturnAbandoned(periodId);
+    if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
+    shiftAuthorityDiag('returnAbandoned.outcome', {
+      recorded: result.recorded ? 1 : 0,
+      originPrefix: result.periodId.slice(0, 10),
+    });
+    return { ok: true, recorded: result.recorded };
+  } catch (err) {
+    if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
+    const reason = err instanceof Error ? err.message : 'abandon_failed';
+    shiftAuthorityDiag('returnAbandoned.error', { reason });
+    return { ok: false, reason };
+  }
+}
+
 export async function closeEnforcedExplicit(deps: {
   client?: ShiftAuthorityClient;
   periodId?: string | null;

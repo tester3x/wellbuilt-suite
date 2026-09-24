@@ -16,6 +16,7 @@ export const SHIFT_AUTHORITY_PROTOCOL_VERSION = 1 as const;
 export const RESOLVE_ACTIVE_DRIVER_SHIFT = 'resolveActiveDriverShift';
 export const CLAIM_DRIVER_SHIFT = 'claimDriverShift';
 export const RECORD_DEPART_RETURN = 'recordDepartReturn';
+export const RECORD_RETURN_ABANDONED = 'recordReturnAbandoned';
 export const CLOSE_DRIVER_SHIFT = 'closeDriverShift';
 
 export const SHIFT_AUTHORITY_TIMEOUT_MS = 15_000;
@@ -44,6 +45,12 @@ export type ClaimActiveResult = {
 };
 
 export type DepartReturnResult = {
+  protocolVersion: 1;
+  periodId: string;
+  recorded: boolean;
+};
+
+export type ReturnAbandonedResult = {
   protocolVersion: 1;
   periodId: string;
   recorded: boolean;
@@ -234,6 +241,19 @@ export function validateDepartReturnResponse(raw: unknown): DepartReturnResult {
   return { protocolVersion: 1, periodId, recorded: raw.recorded };
 }
 
+export function validateReturnAbandonedResponse(raw: unknown): ReturnAbandonedResult {
+  if (!isRecord(raw)) throw new ShiftAuthorityError('malformed_response', 'abandon_not_object');
+  requireProtocol(raw);
+  const periodId = raw.periodId;
+  if (typeof periodId !== 'string' || !PERIOD_ID_RE.test(periodId)) {
+    throw new ShiftAuthorityError('malformed_response', 'abandon_bad_period');
+  }
+  if (typeof raw.recorded !== 'boolean') {
+    throw new ShiftAuthorityError('malformed_response', 'abandon_missing_recorded');
+  }
+  return { protocolVersion: 1, periodId, recorded: raw.recorded };
+}
+
 export function validateCloseResponse(raw: unknown): CloseActiveResult {
   if (!isRecord(raw)) throw new ShiftAuthorityError('malformed_response', 'close_not_object');
   requireProtocol(raw);
@@ -300,6 +320,7 @@ export type ShiftAuthorityClient = {
   resolve: () => Promise<ResolveActiveResult>;
   claim: (periodId: string, originLocalDate: string) => Promise<ClaimActiveResult>;
   recordDepartReturn: (periodId: string) => Promise<DepartReturnResult>;
+  recordReturnAbandoned: (periodId: string) => Promise<ReturnAbandonedResult>;
   close: (periodId: string, odometerMiles?: number) => Promise<CloseActiveResult>;
 };
 
@@ -349,6 +370,13 @@ export function createShiftAuthorityClient(
       }
       const raw = await call(RECORD_DEPART_RETURN, { periodId });
       return validateDepartReturnResponse(raw);
+    },
+    async recordReturnAbandoned(periodId) {
+      if (!PERIOD_ID_RE.test(periodId)) {
+        throw new ShiftAuthorityError('period_mismatch', 'malformed_period');
+      }
+      const raw = await call(RECORD_RETURN_ABANDONED, { periodId });
+      return validateReturnAbandonedResponse(raw);
     },
     async close(periodId, odometerMiles) {
       if (!PERIOD_ID_RE.test(periodId)) {

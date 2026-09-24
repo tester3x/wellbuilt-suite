@@ -5,6 +5,7 @@ import {
   validateResolveResponse,
   validateClaimResponse,
   validateDepartReturnResponse,
+  validateReturnAbandonedResponse,
   validateCloseResponse,
   normalizeOdometerMiles,
   mapHttpsError,
@@ -12,6 +13,7 @@ import {
   CLAIM_DRIVER_SHIFT,
   CLOSE_DRIVER_SHIFT,
   RECORD_DEPART_RETURN,
+  RECORD_RETURN_ABANDONED,
   RESOLVE_ACTIVE_DRIVER_SHIFT,
 } from './shiftAuthorityClient';
 
@@ -57,6 +59,17 @@ test('departReturn recorded false is success shape', () => {
     recorded: false,
   });
   assert.equal(r.recorded, false);
+});
+
+test('returnAbandoned recorded flag is success shape; malformed rejected', () => {
+  const r = validateReturnAbandonedResponse({
+    protocolVersion: 1,
+    periodId: '2026-09-24_143000',
+    recorded: true,
+  });
+  assert.equal(r.recorded, true);
+  assert.throws(() => validateReturnAbandonedResponse({ protocolVersion: 1, periodId: 'bad', recorded: true }));
+  assert.throws(() => validateReturnAbandonedResponse({ protocolVersion: 2, periodId: '2026-09-24_143000', recorded: true }));
 });
 
 test('close alreadyClosed true is success shape', () => {
@@ -105,6 +118,9 @@ test('client requires session and exact payload keys; no identity fields', async
       if (name === RECORD_DEPART_RETURN) {
         return { protocolVersion: 1, periodId: payload.periodId, recorded: true };
       }
+      if (name === RECORD_RETURN_ABANDONED) {
+        return { protocolVersion: 1, periodId: payload.periodId, recorded: true };
+      }
       if (name === CLOSE_DRIVER_SHIFT) {
         return {
           protocolVersion: 1,
@@ -121,6 +137,7 @@ test('client requires session and exact payload keys; no identity fields', async
   await client.resolve();
   await client.claim('2026-08-10_090000', '2026-08-10');
   await client.recordDepartReturn('2026-08-10_090000');
+  await client.recordReturnAbandoned('2026-08-10_090000');
   await client.close('2026-08-10_090000', 42);
 
   assert.equal(calls[0].name, RESOLVE_ACTIVE_DRIVER_SHIFT);
@@ -131,7 +148,9 @@ test('client requires session and exact payload keys; no identity fields', async
   assert.ok(!('date' in calls[1].payload));
   assert.ok(!('type' in calls[1].payload));
   assert.deepEqual(Object.keys(calls[2].payload), ['periodId']);
-  assert.deepEqual(Object.keys(calls[3].payload).sort(), ['odometerMiles', 'periodId']);
+  assert.equal(calls[3].name, RECORD_RETURN_ABANDONED);
+  assert.deepEqual(Object.keys(calls[3].payload), ['periodId']);
+  assert.deepEqual(Object.keys(calls[4].payload).sort(), ['odometerMiles', 'periodId']);
 });
 
 test('client fails closed without SDK session', async () => {

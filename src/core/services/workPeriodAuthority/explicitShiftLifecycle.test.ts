@@ -109,6 +109,30 @@ test('wiring: lifecycle module exports claim/close/depart/resolve helpers', () =
   assert.ok(life.includes('resolveEnforcedExplicit'));
 });
 
+test('wiring: lifecycle exports recordEnforcedReturnAbandoned over client.recordReturnAbandoned', () => {
+  const life = src('src/core/services/workPeriodAuthority/explicitShiftLifecycle.ts');
+  assert.ok(life.includes('export async function recordEnforcedReturnAbandoned'));
+  assert.ok(life.includes('client.recordReturnAbandoned'));
+});
+
+test('wiring: abandonReturn enforced path uses the governed callable, not a direct write', () => {
+  const auth = src('src/core/context/AuthContext.tsx');
+  const abandon = auth.slice(
+    auth.indexOf('const abandonReturn = useCallback'),
+    auth.indexOf('const confirmArrival = useCallback'),
+  );
+  assert.ok(abandon.length > 100);
+  assert.ok(abandon.includes('recordEnforcedReturnAbandoned'));
+  // Enforced branch must NOT direct-write return_abandoned (would be denied for
+  // enforced companies); and on server failure it must NOT clear local state.
+  const enforced = abandon.slice(
+    abandon.indexOf('if (isEnforcedExplicitShift'),
+    abandon.indexOf('} else {'),
+  );
+  assert.ok(!/recordShiftEvent\(\s*'return_abandoned'/.test(enforced));
+  assert.ok(enforced.includes('keeping return state') || enforced.includes('return;'));
+});
+
 test('wiring: shiftAuthorityClient forbids identity in payloads (source)', () => {
   const client = src('src/core/services/workPeriodAuthority/shiftAuthorityClient.ts');
   assert.ok(client.includes("call(CLAIM_DRIVER_SHIFT, { periodId, originLocalDate })"));

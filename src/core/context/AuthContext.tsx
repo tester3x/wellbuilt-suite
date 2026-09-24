@@ -839,21 +839,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Durable cancellation marker linked to the return attempt: append a
     // return_abandoned event so history shows the return was diverted (the
     // depart_return stays; this records it was abandoned, NOT that the driver
-    // arrived). The shift stays OPEN (isOpenShiftLastEvent counts
-    // return_abandoned). Best-effort + non-blocking. NOTE: under an ENFORCED
-    // explicit shift, driver_shifts direct writes are governed server-side, so
-    // this client write may be denied — a server callable
-    // (recordEnforcedReturnAbandoned) is required for guaranteed
-    // server-authoritative durability there (not yet built).
-    recordShiftEvent(
-      'return_abandoned',
-      user.driverId,
-      user.legalName || user.displayName,
-      user.companyId,
-      'wbs',
-      undefined,
-      { allowDirectWrite: true },
-    ).catch(() => {});
+    // arrived). The shift stays OPEN (the server's open period is untouched;
+    // isOpenShiftLastEvent counts return_abandoned as an open-shift event).
+    //
+    // Under an ENFORCED explicit shift, driver_shifts direct writes are
+    // governed server-side and a client write would be DENIED, so we route
+    // through the governed callable (recordEnforcedReturnAbandoned). If that
+    // fails we do NOT clear the local returning state — mirroring depart-return,
+    // the app must not show a divert the server never recorded, so the yard card
+    // stays and the driver (or another device) still resolves the authoritative
+    // "returning" state. On a non-enforced shift the direct write is permitted.
+    const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { recordEnforcedReturnAbandoned }] =
+      await Promise.all([
+        import('../services/companyConfig'),
+        import('../services/workPeriodAuthority/suiteShiftAuthority'),
+        import('../services/workPeriodAuthority/postLoginShiftRestoration'),
+        import('../services/workPeriodAuthority/explicitShiftLifecycle'),
+      ]);
+    const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+    const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+
+    if (isEnforcedExplicitShift(enforcement)) {
+      const periodId = await getCurrentShiftId();
+      const result = await recordEnforcedReturnAbandoned({ periodId });
+      if (!result.ok) {
+        console.warn('[AuthContext] recordReturnAbandoned failed — keeping return state:', result.reason);
+        return;
+      }
+    } else {
+      recordShiftEvent(
+        'return_abandoned',
+        user.driverId,
+        user.legalName || user.displayName,
+        user.companyId,
+        'wbs',
+        undefined,
+        { enforcedExplicit: false, allowDirectWrite: true },
+      ).catch(() => {});
+    }
     await SecureStore.deleteItemAsync('returnDepartTime').catch(() => {});
     setReturningToYard(false);
     setReturnDepartTime(null);
