@@ -12,6 +12,7 @@ import {
   Animated,
   Linking,
   Platform,
+  Alert,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, radius, typography } from '@/core/theme';
@@ -35,7 +36,22 @@ function formatElapsed(startIso: string): string {
 }
 
 export default function EnRouteYardCard({ returnStartTime, onArrived }: EnRouteYardCardProps) {
-  const { user } = useAuth();
+  const { user, abandonReturn } = useAuth();
+
+  // Divert: a new job came in while heading to the yard. Exit the return
+  // WITHOUT marking arrival or ending the shift (abandonReturn keeps the shift
+  // open and leaves the depart_return leg in history). Confirm to avoid a
+  // mis-tap discarding the return.
+  const handleDivert = useCallback(() => {
+    Alert.alert(
+      'Back to work?',
+      'Cancel the drive to The Yard and keep your shift open for a new job. This does not mark you arrived or end your shift.',
+      [
+        { text: 'Keep returning', style: 'cancel' },
+        { text: 'Back to work', onPress: () => { void abandonReturn(); } },
+      ],
+    );
+  }, [abandonReturn]);
   const [elapsed, setElapsed] = useState('0:00');
   const [yardLocation, setYardLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [pulse] = useState(() => new Animated.Value(1));
@@ -111,6 +127,12 @@ export default function EnRouteYardCard({ returnStartTime, onArrived }: EnRouteY
       <Pressable onPress={onArrived} style={s.arrivedButton}>
         <MaterialCommunityIcons name="map-marker-check" size={18} color="#000" />
         <Text style={s.arrivedText}>Mark Arrived</Text>
+      </Pressable>
+
+      {/* Back to work — divert when a new job arrives (no arrival, no close) */}
+      <Pressable onPress={handleDivert} style={s.divertButton}>
+        <MaterialCommunityIcons name="briefcase-arrow-left-right-outline" size={16} color="#F59E0B" />
+        <Text style={s.divertText}>Back to Work (new job)</Text>
       </Pressable>
     </View>
   );
@@ -195,6 +217,22 @@ const s = StyleSheet.create({
   arrivedText: {
     color: '#000',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  divertButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.5)',
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  divertText: {
+    color: '#F59E0B',
+    fontSize: 13,
     fontWeight: '700',
   },
 });

@@ -19,6 +19,7 @@ import {
   firebasePatch,
 } from '../services/driverAuth';
 import { recordShiftEvent, checkShiftOnResume, saveYardLocation, sendShiftStartToChat, mintShiftId, setCurrentShiftId, setCurrentShiftBinding, clearCurrentShiftId, getCurrentShiftId, observeEnforcementSafety } from '../services/shiftTracking';
+import { shouldDivertFromReturn } from '../services/returnDivert';
 import { loadDriverProfile, loadVehicleInfo } from '../services/driverProfile';
 import * as Location from 'expo-location';
 import { clearSSOLaunchedApps } from '../services/appLauncher';
@@ -85,6 +86,11 @@ interface AuthContextType {
    * so the UI can keep the modal open for retry.
    */
   confirmArrival: (odometerMiles?: number) => Promise<boolean>;
+  /** Divert: exit "En Route — The Yard" when a new job is accepted, WITHOUT
+   *  recording an arrival or closing the shift. The depart_return event stays
+   *  in history (the attempt is preserved); the server shift period remains
+   *  open. */
+  abandonReturn: () => Promise<void>;
   /** Register a new driver (goes to pending state) */
   register: (displayName: string, passcode: string, companyName?: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
@@ -820,6 +826,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user, shiftActive, returningToYard]);
 
+  // Divert from the return-to-yard drive when a new job is accepted. This is
+  // NOT an arrival and NOT a shift close: recordEnforcedDepartReturn only
+  // appended a depart_return event (the server period stays OPEN), so exiting
+  // the returning state needs no server revert. The depart_return event remains
+  // in the shift history, preserving the return attempt; daySummary only counts
+  // a returning leg when a depart_return is immediately followed by a logout,
+  // so a diverted (superseded) depart_return is never counted as yard time.
+  const abandonReturn = useCallback(async () => {
+    if (!shouldDivertFromReturn({ hasUser: !!user, returningToYard })) return; // nothing to abandon
+    await SecureStore.deleteItemAsync('returnDepartTime').catch(() => {});
+    setReturningToYard(false);
+    setReturnDepartTime(null);
+    console.log('[AuthContext] Return-to-yard diverted to new work for:', user.displayName);
+  }, [user, returningToYard]);
+
   const confirmArrival = useCallback(async (odometerMiles?: number): Promise<boolean> => {
     if (!user) return false;
     // Caller gate: arrival ends an OPEN shift (active, or returning-to-yard). If
@@ -1238,6 +1259,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logoutWithCascade,
       startReturn,
       confirmArrival,
+      abandonReturn,
       register,
       checkRegistration,
       completeReg,
