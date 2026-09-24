@@ -834,7 +834,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // a returning leg when a depart_return is immediately followed by a logout,
   // so a diverted (superseded) depart_return is never counted as yard time.
   const abandonReturn = useCallback(async () => {
+    if (!user) return;
     if (!shouldDivertFromReturn({ hasUser: !!user, returningToYard })) return; // nothing to abandon
+    // Durable cancellation marker linked to the return attempt: append a
+    // return_abandoned event so history shows the return was diverted (the
+    // depart_return stays; this records it was abandoned, NOT that the driver
+    // arrived). The shift stays OPEN (isOpenShiftLastEvent counts
+    // return_abandoned). Best-effort + non-blocking. NOTE: under an ENFORCED
+    // explicit shift, driver_shifts direct writes are governed server-side, so
+    // this client write may be denied — a server callable
+    // (recordEnforcedReturnAbandoned) is required for guaranteed
+    // server-authoritative durability there (not yet built).
+    recordShiftEvent(
+      'return_abandoned',
+      user.driverId,
+      user.legalName || user.displayName,
+      user.companyId,
+      'wbs',
+      undefined,
+      { allowDirectWrite: true },
+    ).catch(() => {});
     await SecureStore.deleteItemAsync('returnDepartTime').catch(() => {});
     setReturningToYard(false);
     setReturnDepartTime(null);

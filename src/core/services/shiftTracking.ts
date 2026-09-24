@@ -16,6 +16,7 @@
 
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isOpenShiftLastEvent } from './shiftEventPolicy';
 
 const SHIFT_ID_KEY = 'wellbuilt-current-shift-id';
 /** Origin local date (YYYY-MM-DD) for the server-returned binding — not calendar today. */
@@ -96,7 +97,9 @@ async function fetchSafe(url: string, options?: RequestInit): Promise<Response> 
 }
 
 export interface ShiftEvent {
-  type: 'login' | 'logout' | 'depart_return';
+  // 'return_abandoned' = driver diverted to a new job while returning to the
+  // yard; the shift stays OPEN (see isOpenShiftLastEvent). Never an arrival.
+  type: 'login' | 'logout' | 'depart_return' | 'return_abandoned';
   timestamp: string;   // ISO 8601
   lat: number;
   lng: number;
@@ -428,7 +431,7 @@ async function readLastEventType(path: string): Promise<string | null | 'UNKNOWN
  * If a caller mistakenly routes enforced lifecycle here, refuse the write.
  */
 export async function recordShiftEvent(
-  type: 'login' | 'logout' | 'depart_return',
+  type: 'login' | 'logout' | 'depart_return' | 'return_abandoned',
   driverId: string,
   displayName: string,
   companyId?: string,
@@ -467,7 +470,7 @@ export async function recordShiftEvent(
     // error so a transient GET never skips a real logout and leaves a shift open.
     if (type !== 'login') {
       const lastType = await readLastEventType(path);
-      const openShift = lastType === 'login' || lastType === 'depart_return';
+      const openShift = isOpenShiftLastEvent(lastType);
       if (lastType !== 'UNKNOWN' && !openShift) {
         console.warn(`[shiftTracking] Skipping illegal ${type} append — last event = ${lastType ?? 'none'} (no open shift).`);
         console.log(JSON.stringify({
