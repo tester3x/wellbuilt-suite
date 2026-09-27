@@ -573,7 +573,7 @@ export const SUITE_PASSCODE_MIN_LEN = 6;
 export const submitRegistration = async (params: {
   passcode: string;
   displayName: string;
-  companyName?: string;
+  companyCode: string;
   legalName?: string;
 }): Promise<{ success: boolean; pending?: boolean; pendingId?: string; error?: string }> => {
   if (params.passcode.length < SUITE_PASSCODE_MIN_LEN || params.passcode.length > 128) {
@@ -585,7 +585,7 @@ export const submitRegistration = async (params: {
     const secure = await secureSubmitRegistration({
       displayName: params.displayName,
       passcode: params.passcode,
-      companyName: params.companyName,
+      companyCode: params.companyCode,
       legalName: params.legalName,
       source: 'wbs',
     });
@@ -598,9 +598,9 @@ export const submitRegistration = async (params: {
     await SecureStore.setItemAsync('pendingSecureId', secure.pendingId);
     await SecureStore.setItemAsync('pendingDisplayName', params.displayName);
     await SecureStore.setItemAsync('pendingRegistrationTime', Date.now().toString());
-    if (params.companyName) {
-      await SecureStore.setItemAsync('pendingCompanyName', params.companyName);
-    }
+    // The server resolves company identity from the join code. Do not cache
+    // that code as a company name or retain a prior registration's name.
+    await SecureStore.deleteItemAsync('pendingCompanyName');
     return { success: true, pending: true, pendingId: secure.pendingId };
   } catch (error: unknown) {
     const msg = typeof (error as { message?: unknown })?.message === 'string'
