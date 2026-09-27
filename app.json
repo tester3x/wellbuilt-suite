@@ -71,7 +71,8 @@
           "wikipedia",
           "dbapi-1",
           "myradar"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
