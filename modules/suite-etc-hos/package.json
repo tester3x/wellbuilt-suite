@@ -1,0 +1,9 @@
+{
+  "name": "suite-etc-hos",
+  "version": "0.1.0",
+  "main": "index.js",
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  }
+}

@@ -240,7 +240,8 @@
         }
       ],
       "expo-localization",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./modules/suite-etc-hos/app.plugin.js"
     ],
     "extra": {
       "router": {},

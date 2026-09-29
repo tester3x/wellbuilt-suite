@@ -4,6 +4,7 @@
 // (same system as WB M — drivers/approved/{passcodeHash}).
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -74,7 +75,7 @@ interface AuthContextType {
    * Returns ok:false when claim/authority refuses (caller must not launch Pre-Trip).
    * Always returns an explicit { ok } object — never void/undefined success.
    */
-  startShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string }>;
+  startShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string; etc?: { hos: string; gps: string; driverText: string; blocksShift: false } }>;
   /** The active package for this shift (set at shift start) */
   activePackageId: string | null;
   /** Full logout — clears SecureStore session. If shift is active, ends it first. */
@@ -130,6 +131,8 @@ function sessionToUser(session: DriverSession): AuthUser {
  * Intentionally NOT included:
  *   - 'wellbuilt-last-odometer' — pre-fills the next shift's start odometer.
  *     Belongs to the device + driver pairing, survives logout by design.
+ *   - '@wb/suite-etc-start/v1' — durable ETC start receipt. A later session
+ *     reconciles that same request and must not mint another HOS start.
  */
 const LOGOUT_ASYNCSTORAGE_KEYS: readonly string[] = [
   // Pre-shift JSA preview breadcrumb. The Preview-JSA-from-Start-Shift
@@ -192,6 +195,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log(JSON.stringify({ tag: '[shiftAuthority]', event: 'generation.bump', reason, gen: n }));
     return n;
   }, []);
+
+  // Passive ETC reconcile: an existing receipt only. Never creates a start.
+  useEffect(() => {
+    if (!user?.driverId) return;
+    const driverId = user.driverId;
+    const companyId = user.companyId ?? null;
+    const gen = authorityGenRef.current.current();
+    let cancelled = false;
+    const reconcile = () => {
+      if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
+      void import('../services/etcStart/attachEtcHandoff')
+        .then(async ({ reconcileEtcOnResume }) => {
+          if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
+          const { createEtcPort, productionEtcKv } = await import('../services/etcStart/etcProduction');
+          const { noteEtcActivityState, isEtcActivityVisible } = await import('../services/etcStart/etcActivityGate');
+          noteEtcActivityState(AppState.currentState);
+          if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
+          await reconcileEtcOnResume({
+            companyId,
+            driverId,
+            nowMs: Date.now(),
+            activityVisible: isEtcActivityVisible(),
+            kv: productionEtcKv(),
+            port: createEtcPort(isEtcActivityVisible()),
+          });
+        })
+        .catch((err) => {
+          console.warn('[AuthContext] ETC resume reconcile failed open:', err);
+        });
+    };
+    reconcile();
+    const sub = AppState.addEventListener('change', (state) => {
+      void import('../services/etcStart/etcActivityGate').then(({ noteEtcActivityState }) => {
+        noteEtcActivityState(state);
+        if (state === 'active') reconcile();
+      }).catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, [user?.driverId, user?.companyId]);
   /**
    * The identity the last reconciliation was started for.
    *
@@ -679,8 +724,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           },
         });
         console.log('[AuthContext] Shift claimed for:', user.displayName, 'package:', pkg || 'none');
-        return { ok: true };
+        const { mayEmitEtcStart, etcHandoffThatCannotFailShift, attachEtcHandoff } =
+          await import('../services/etcStart/attachEtcHandoff');
+        let etc: { hos: string; gps: string; driverText: string; blocksShift: false } | undefined;
+        if (mayEmitEtcStart({
+          branch: 'enforced',
+          claimOk: claim.ok,
+          generationCurrent: authorityGenRef.current.isCurrent(gen),
+        })) {
+          try {
+            const { createEtcPort, productionEtcKv } = await import('../services/etcStart/etcProduction');
+            const visible = AppState.currentState === 'active';
+            etc = await etcHandoffThatCannotFailShift(() => attachEtcHandoff({
+              claim,
+              generationCurrent: true,
+              isCurrent: () => authorityGenRef.current.isCurrent(gen),
+              companyId: user.companyId ?? null,
+              driverId: user.driverId,
+              nowMs: Date.now(),
+              activityVisible: visible,
+              kv: productionEtcKv(),
+              port: createEtcPort(visible),
+            }));
+          } catch (etcErr) {
+            console.warn('[startShift] ETC handoff did not change the Suite shift:', etcErr);
+            etc = {
+              hos: 'unknown',
+              gps: 'unknown',
+              driverText: 'ETC hours of service: not confirmed.',
+              blocksShift: false,
+            };
+          }
+        }
+        if (!authorityGenRef.current.isCurrent(gen)) {
+          return { ok: false, reason: 'stale_generation' };
+        }
+        return { ok: true, etc };
       }
+
+      // Legacy / inert does not emit an ETC start. A local mint can still
+      // return ok:true after a binding-write failure, so this branch stays
+      // out of the handoff.
 
       // ── Legacy / inert: local mint + direct REST login (unchanged) ──
       const [{ decidePreMintShiftGate }, { fetchShiftDayDoc }] = await Promise.all([

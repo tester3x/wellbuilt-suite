@@ -22,6 +22,7 @@ import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
+import { subscribeEtcNotice } from '@/core/services/etcStart/etcNoticeStore';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -87,6 +88,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [showEndModal, setShowEndModal] = useState(false);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
   const [startConfirmBusy, setStartConfirmBusy] = useState(false);
+  const [etcNotice, setEtcNotice] = useState<string | null>(null);
+  useEffect(() => subscribeEtcNotice(setEtcNotice), []);
   const canOpenChecklist = mayOpenStartShiftChecklist(shiftAuthorityUi);
   const claimBusy = startShiftBusy || startConfirmBusy;
   // (Pre-shift JSA preview breadcrumb + banner removed 2026-05-01. The
@@ -237,6 +240,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           returnStartTime={returnStartTime}
           onArrived={() => setShowArrivalModal(true)}
         />
+        {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
 
         {/* ── Arrival Confirmation Modal ── */}
         <ShiftArrivalModal
@@ -316,6 +320,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.equipmentSub')}</Text>
         </Pressable>
       </View>
+      {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
 
       {/* JSA Required banner + JsaChoiceModal both removed (4/24/2026).
           The per-job-close JSA gate in WB T owns the prompt; shift-start
@@ -345,6 +350,12 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 }
 
 const s = StyleSheet.create({
+  etcNotice: {
+    color: colors.text.muted,
+    fontSize: 12,
+    marginTop: 6,
+    paddingHorizontal: 4,
+  },
   jsaBanner: {
     flexDirection: 'row',
     alignItems: 'center',
