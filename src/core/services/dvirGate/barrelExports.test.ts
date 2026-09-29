@@ -1,7 +1,7 @@
 /**
  * Barrel re-exports for dvirGate. makeDvirSsoGetter remains exported for
  * non-governed legacy inventory but must NOT appear on governed DVIR launch
- * callsites (Start Shift / Post-Trip / Tickets gate).
+ * callsites (Start Shift / Post-Trip). Tickets card launch is not a DVIR gate.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

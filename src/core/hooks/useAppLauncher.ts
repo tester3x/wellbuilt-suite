@@ -7,10 +7,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { loadVehicleInfo } from '../services/driverProfile';
 import { getCurrentShiftId } from '../services/shiftTracking';
-import {
-  createSuiteDvirGate,
-  isTicketsLaunch,
-} from '../services/dvirGate';
+import { createSuiteDvirGate } from '../services/dvirGate';
 import {
   isCredentialFreeLaunchTarget,
   credentialFreeAudience,
@@ -40,17 +37,9 @@ export function useAppLauncher() {
 
   // Auto-inject SSO params when launching WB ecosystem apps
   // so the target app can skip its login screen.
-  // Tickets: Pre-Trip gate only while a shift is active. Off-shift opens
-  // WB-T normally (never redirect to a stale Post-Trip / Pre-Trip DVIR).
+  // WB-T is not intercepted for DVIR here. Pre-Trip stays on a successful
+  // shift start, and Post-Trip stays on return-to-yard, both in ActionCardRow.
   const launchWB = useCallback(async (options: WBAppLaunchOptions) => {
-    if (isTicketsLaunch(options.scheme, (options as { id?: string }).id)) {
-      if (shiftActive) {
-        const gate = await dvirGate.ensurePreTripGate({ alertOnBlock: true });
-        if (!gate.allowed) return;
-      }
-      // Off-shift: no DVIR redirect — fall through to normal Tickets launch.
-    }
-
     // Credential-free launch: WB-T and WB-M. Each mints its own PKCE
     // attempt. WB-T's audience and start host stay exactly as before.
     // JSA and eQuipment still receive the legacy params.
@@ -103,7 +92,7 @@ export function useAppLauncher() {
     }
 
     return launchWBApp({ ...options, sso });
-  }, [user, activePackageId, shiftStartTime, shiftActive, dvirGate]);
+  }, [user, activePackageId, shiftStartTime, shiftActive]);
 
   return {
     canLaunchApp: checkCanLaunch,

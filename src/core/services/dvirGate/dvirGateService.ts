@@ -1,5 +1,6 @@
 /**
- * Suite DVIR gate: Pre-Trip before Tickets, Post-Trip before end-shift/logout.
+ * Suite DVIR gate: Pre-Trip after a successful shift start, Post-Trip before
+ * end-shift/logout. Tickets launch does not call this gate.
  * Offline-first: only Suite-local durable receipts unlock gates.
  *
  * Pure core — no react-native imports (Node-testable). Platform open/alert
