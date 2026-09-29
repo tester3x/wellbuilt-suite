@@ -6,10 +6,41 @@ plugins {
 group = 'com.wellbuilt.suite'
 version = '0.1.0'
 
+// Production fallback when generated/suite-etc.properties is absent.
+// The field-test certificate is never embedded in this file.
+def suiteEtcPropsFile = new File(projectDir, 'generated/suite-etc.properties')
+def suiteEtcProfile = 'production'
+def suiteEtcAuthority = 'com.wellbuilt.electronictimecard.suitehos'
+def suiteEtcPackage = ''
+def suiteEtcCert = ''
+if (suiteEtcPropsFile.exists()) {
+  def suiteEtcProps = new Properties()
+  suiteEtcPropsFile.withInputStream { suiteEtcProps.load(it) }
+  suiteEtcProfile = suiteEtcProps.getProperty('profile', suiteEtcProfile) ?: suiteEtcProfile
+  suiteEtcAuthority = suiteEtcProps.getProperty('authority', suiteEtcAuthority) ?: suiteEtcAuthority
+  suiteEtcPackage = suiteEtcProps.getProperty('package', '') ?: ''
+  suiteEtcCert = suiteEtcProps.getProperty('cert', '') ?: ''
+}
+def suiteEtcFieldTest = System.getenv('SUITE_ETC_FIELD_TEST') == '1'
+if (suiteEtcFieldTest && suiteEtcProfile != 'field-test') {
+  throw new GradleException('SUITE_ETC_FIELD_TEST=1 requires generated profile field-test. Run node scripts/sync-suite-etc-profile.cjs first.')
+}
+if (!suiteEtcFieldTest && suiteEtcProfile == 'field-test') {
+  throw new GradleException('Generated ETC profile is field-test but SUITE_ETC_FIELD_TEST is not 1.')
+}
+
 android {
   namespace "expo.modules.suiteetchos"
+  buildFeatures {
+    buildConfig true
+  }
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
+    buildConfigField "String", "SUITE_ETC_PROFILE", "\"${suiteEtcProfile}\""
+    buildConfigField "String", "SUITE_ETC_AUTHORITY", "\"${suiteEtcAuthority}\""
+    buildConfigField "String", "SUITE_ETC_PACKAGE", "\"${suiteEtcPackage}\""
+    buildConfigField "String", "SUITE_ETC_CERT_SHA256", "\"${suiteEtcCert}\""
+    buildConfigField "boolean", "SUITE_ETC_DISPATCH_ENABLED", "false"
   }
 }

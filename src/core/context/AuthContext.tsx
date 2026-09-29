@@ -208,7 +208,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void import('../services/etcStart/attachEtcHandoff')
         .then(async ({ reconcileEtcOnResume }) => {
           if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
-          const { createEtcPort, productionEtcKv } = await import('../services/etcStart/etcProduction');
+          const { createEtcPort, productionEtcKv, shippedEtcIdentity } = await import('../services/etcStart/etcProduction');
           const { noteEtcActivityState, isEtcActivityVisible } = await import('../services/etcStart/etcActivityGate');
           noteEtcActivityState(AppState.currentState);
           if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
@@ -217,6 +217,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             driverId,
             nowMs: Date.now(),
             activityVisible: isEtcActivityVisible(),
+            identity: shippedEtcIdentity(),
             kv: productionEtcKv(),
             port: createEtcPort(isEtcActivityVisible()),
           });
@@ -733,6 +734,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let settled: { ok: true; etc: { hos: string; gps: string; driverText: string; blocksShift: false } } | { ok: false; reason: string };
         try {
           const { settleEnforcedShiftClaim } = await import('../services/etcStart/enforcedStartBoundary');
+          const { shippedEtcIdentity } = await import('../services/etcStart/etcProduction');
           const result = await settleEnforcedShiftClaim({
             claim,
             binding: acceptedBinding,
@@ -740,6 +742,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             companyId: user.companyId ?? null,
             driverId: user.driverId,
             activityVisible: AppState.currentState === 'active',
+            identity: shippedEtcIdentity(),
           });
           if (!result.ok) settled = { ok: false, reason: result.reason };
           else settled = { ok: true, etc: result.etc };

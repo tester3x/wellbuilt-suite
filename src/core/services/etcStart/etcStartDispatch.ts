@@ -28,6 +28,7 @@ export type EtcPortFailure =
   | 'timeout'
   | 'bridge_error'
   | 'signing_unverified'
+  | 'dispatch_disabled'
   | 'native_unavailable'
   | 'package_mismatch'
   | 'pending_intent_creator_mismatch'

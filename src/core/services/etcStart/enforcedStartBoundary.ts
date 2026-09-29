@@ -5,6 +5,7 @@
  */
 import type { EtcHandoffResult, EtcPort } from './etcStartDispatch';
 import type { EtcKv } from './etcStartOutbox';
+import type { EtcReleaseIdentity } from './etcReleaseIdentity';
 
 export interface AcceptedShiftBinding {
   periodId: string;
@@ -41,6 +42,7 @@ export interface EtcRuntime {
     activityVisible: boolean;
     kv: EtcKv;
     port: EtcPort;
+    identity?: EtcReleaseIdentity;
   }): Promise<EtcHandoffResult>;
   createEtcPort(activityVisible: boolean): EtcPort;
   productionEtcKv(): EtcKv;
@@ -92,6 +94,7 @@ export async function settleEnforcedShiftClaim(input: {
   nowMs?: number;
   kv?: EtcKv;
   port?: EtcPort;
+  identity?: EtcReleaseIdentity;
   loadEtc?: () => Promise<EtcRuntime>;
 }): Promise<SettledEnforcedStart> {
   if (!input.claim.ok) {
@@ -130,6 +133,7 @@ export async function settleEnforcedShiftClaim(input: {
         activityVisible: input.activityVisible,
         kv,
         port,
+        identity: input.identity,
       }));
       etc = {
         hos: handoff.hos,

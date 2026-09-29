@@ -11,21 +11,17 @@ import org.json.JSONObject
 import java.security.MessageDigest
 
 /**
- * Binder bridge to ETC's suitehos provider.
+ * Binder bridge to the configured ETC suitehos provider.
  *
- * Dispatch is impossible until the caller passes a non-blank expected
- * package and SHA-256 signing certificate. Those values are not baked
- * into this module. Bundle wire keys match ETC: String `payload` in both
- * directions, and Parcelable `startIntent` for unfinished observation.
+ * SUITE_ETC_DISPATCH_ENABLED is compiled false. Authority, package, and
+ * certificate come from BuildConfig. A configured fingerprint does not
+ * place a call. Wire keys are String payload and Parcelable startIntent.
  */
 class SuiteEtcHosModule : Module() {
-  private val authority = "com.wellbuilt.electronictimecard.suitehos"
-
   override fun definition() = ModuleDefinition {
     Name("SuiteEtcHos")
 
     // Async so a stalled binder call cannot freeze the Start Shift UI.
-    // The JS adapter times that call out and records the outcome as unknown.
     AsyncFunction("callProvider") { method: String, payload: String, expectedPackage: String, expectedCertSha256: String, activityVisible: Boolean ->
       callProvider(method, payload, expectedPackage, expectedCertSha256, activityVisible)
     }
@@ -38,17 +34,29 @@ class SuiteEtcHosModule : Module() {
     expectedCertSha256: String,
     activityVisible: Boolean,
   ): String {
-    if (expectedPackage.isBlank() || !expectedCertSha256.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+    if (!BuildConfig.SUITE_ETC_DISPATCH_ENABLED) {
+      return fail("dispatch_disabled")
+    }
+    val authority = BuildConfig.SUITE_ETC_AUTHORITY
+    val configuredPackage = BuildConfig.SUITE_ETC_PACKAGE
+    val configuredCert = BuildConfig.SUITE_ETC_CERT_SHA256
+    if (authority.isBlank() || configuredPackage.isBlank() || !configuredCert.matches(Regex("^[0-9a-fA-F]{64}$"))) {
       return fail("signing_unverified")
     }
+    if (expectedPackage.isNotBlank() && expectedPackage != configuredPackage) {
+      return fail("package_mismatch")
+    }
+    if (expectedCertSha256.isNotBlank() && !expectedCertSha256.equals(configuredCert, ignoreCase = true)) {
+      return fail("package_mismatch")
+    }
     val context = appContext.reactContext ?: return fail("native_unavailable")
-    if (!signatureMatches(context.packageManager, expectedPackage, expectedCertSha256)) {
+    if (!signatureMatches(context.packageManager, configuredPackage, configuredCert)) {
       return fail("package_mismatch")
     }
     if (method == "prepareStart" && !activityVisible) {
       return fail("activity_not_visible")
     }
-    val result = try {
+    val called = try {
       val extras = Bundle()
       extras.putString("payload", payload)
       context.contentResolver.call(
@@ -64,7 +72,7 @@ class SuiteEtcHosModule : Module() {
     } catch (_: Exception) {
       return fail("bridge_error")
     }
-    val payloadJson = result.getString("payload")
+    val payloadJson = called.getString("payload")
     if (payloadJson.isNullOrEmpty()) return fail("malformed_response")
     val parsed = try {
       JSONObject(payloadJson)
@@ -75,15 +83,17 @@ class SuiteEtcHosModule : Module() {
     body.put("ok", true)
     body.put("response", parsed)
     if (method == "prepareStart") {
-      val pending = readPendingIntent(result)
+      val pending = readPendingIntent(called)
       if (pending == null) {
         body.put("startIntent", "absent")
         body.put("pendingIntentCreatorPackage", JSONObject.NULL)
       } else {
         val creator = pending.creatorPackage
         body.put("pendingIntentCreatorPackage", creator ?: JSONObject.NULL)
-        val trusted = creator == expectedPackage && activityVisible
-        if (!trusted) {
+        if (creator != configuredPackage) {
+          return fail("pending_intent_creator_mismatch")
+        }
+        if (!activityVisible) {
           body.put("startIntent", "present")
         } else {
           try {
@@ -112,15 +122,15 @@ class SuiteEtcHosModule : Module() {
 
   private fun signatureMatches(
     packageManager: PackageManager,
-    expectedPackage: String,
-    expectedCertSha256: String,
+    configuredPackage: String,
+    configuredCert: String,
   ): Boolean {
     return try {
       val info = if (Build.VERSION.SDK_INT >= 28) {
-        packageManager.getPackageInfo(expectedPackage, PackageManager.GET_SIGNING_CERTIFICATES)
+        packageManager.getPackageInfo(configuredPackage, PackageManager.GET_SIGNING_CERTIFICATES)
       } else {
         @Suppress("DEPRECATION")
-        packageManager.getPackageInfo(expectedPackage, PackageManager.GET_SIGNATURES)
+        packageManager.getPackageInfo(configuredPackage, PackageManager.GET_SIGNATURES)
       }
       val signatures = if (Build.VERSION.SDK_INT >= 28) {
         info.signingInfo?.apkContentsSigners ?: return false
@@ -130,7 +140,7 @@ class SuiteEtcHosModule : Module() {
       }
       if (signatures.size != 1) return false
       val digest = MessageDigest.getInstance("SHA-256").digest(signatures[0].toByteArray())
-      digest.joinToString("") { "%02x".format(it) }.equals(expectedCertSha256, ignoreCase = true)
+      digest.joinToString("") { "%02x".format(it) }.equals(configuredCert, ignoreCase = true)
     } catch (_: Exception) {
       false
     }
