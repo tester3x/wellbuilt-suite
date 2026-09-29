@@ -15,6 +15,12 @@
       },
       "autoIncrement": true
     },
+    "etc-preview": {
+      "extends": "preview",
+      "env": {
+        "SUITE_ETC_FIELD_TEST": "1"
+      }
+    },
     "production": {
       "autoIncrement": true
     }
