@@ -15,9 +15,8 @@ import java.security.MessageDigest
  *
  * Dispatch is impossible until the caller passes a non-blank expected
  * package and SHA-256 signing certificate. Those values are not baked
- * into this module. The provider authority is the receiver checkpoint.
- * Bundle keys `request`, `result`, and `pendingIntent` are the Suite-side
- * names until ETC confirms them.
+ * into this module. Bundle wire keys match ETC: String `payload` in both
+ * directions, and Parcelable `startIntent` for unfinished observation.
  */
 class SuiteEtcHosModule : Module() {
   private val authority = "com.wellbuilt.electronictimecard.suitehos"
@@ -49,41 +48,65 @@ class SuiteEtcHosModule : Module() {
     if (method == "prepareStart" && !activityVisible) {
       return fail("activity_not_visible")
     }
-    return try {
+    val result = try {
       val extras = Bundle()
-      extras.putString("request", payload)
-      val result = context.contentResolver.call(
+      extras.putString("payload", payload)
+      context.contentResolver.call(
         Uri.parse("content://$authority"),
         method,
         null,
         extras,
       ) ?: return fail("absent")
-      val body = JSONObject()
-      body.put("ok", true)
-      val resultJson = result.getString("result")
-      body.put("response", if (resultJson.isNullOrEmpty()) JSONObject.NULL else JSONObject(resultJson))
-      if (method == "prepareStart") {
-        val pending = readPendingIntent(result)
-        val creator = pending?.creatorPackage
-        body.put("pendingIntentCreatorPackage", creator ?: JSONObject.NULL)
-        val trusted = pending != null && creator == expectedPackage && activityVisible
-        if (trusted) pending.send()
-        body.put("pendingIntentSent", trusted)
-      }
-      body.toString()
     } catch (security: SecurityException) {
-      fail("permission_denied")
+      return fail("permission_denied")
+    } catch (bad: IllegalArgumentException) {
+      return fail("illegal_argument")
     } catch (_: Exception) {
-      fail("bridge_error")
+      return fail("bridge_error")
     }
+    val payloadJson = result.getString("payload")
+    if (payloadJson.isNullOrEmpty()) return fail("malformed_response")
+    val parsed = try {
+      JSONObject(payloadJson)
+    } catch (_: Exception) {
+      return fail("malformed_response")
+    }
+    val body = JSONObject()
+    body.put("ok", true)
+    body.put("response", parsed)
+    if (method == "prepareStart") {
+      val pending = readPendingIntent(result)
+      if (pending == null) {
+        body.put("startIntent", "absent")
+        body.put("pendingIntentCreatorPackage", JSONObject.NULL)
+      } else {
+        val creator = pending.creatorPackage
+        body.put("pendingIntentCreatorPackage", creator ?: JSONObject.NULL)
+        val trusted = creator == expectedPackage && activityVisible
+        if (!trusted) {
+          body.put("startIntent", "present")
+        } else {
+          try {
+            pending.send()
+            body.put("startIntent", "sent")
+          } catch (_: Exception) {
+            return fail("token_send_failed")
+          }
+        }
+      }
+    } else {
+      body.put("startIntent", "absent")
+      body.put("pendingIntentCreatorPackage", JSONObject.NULL)
+    }
+    return body.toString()
   }
 
   private fun readPendingIntent(bundle: Bundle): PendingIntent? {
     return if (Build.VERSION.SDK_INT >= 33) {
-      bundle.getParcelable("pendingIntent", PendingIntent::class.java)
+      bundle.getParcelable("startIntent", PendingIntent::class.java)
     } else {
       @Suppress("DEPRECATION")
-      bundle.getParcelable("pendingIntent")
+      bundle.getParcelable("startIntent")
     }
   }
 

@@ -1,19 +1,19 @@
 /**
  * Suite → ETC start-of-shift handoff contract.
  *
- * Checkpoint from the ETC receiver (not re-verified against that repo here):
+ * Receiver wire contract from ETC SuiteHosProvider (source, not a device proof):
  * authority `com.wellbuilt.electronictimecard.suitehos`; methods capabilities,
- * prepareStart, getStartStatus, cancelStart. The request is one JSON object
- * in a Bundle string. The extra key name was not specified; this module uses
- * `request` outbound and `result` inbound until the contract confirms them.
- * ETC's release allowlist is intentionally empty, and Suite does not embed
- * an ETC package name or signing certificate.
+ * prepareStart, getStartStatus, cancelStart. The request and response JSON
+ * are Bundle strings under `payload`. The optional observation token is a
+ * Parcelable PendingIntent under `startIntent`. ETC's release allowlist is
+ * empty, and Suite does not embed a verified package or signing certificate.
+ * ETC's source application id is visibility-only and is not a signer.
  */
 
 export const ETC_PROVIDER_AUTHORITY = 'com.wellbuilt.electronictimecard.suitehos';
-export const ETC_REQUEST_BUNDLE_KEY = 'request';
-export const ETC_RESULT_BUNDLE_KEY = 'result';
-export const ETC_PENDING_INTENT_BUNDLE_KEY = 'pendingIntent';
+export const ETC_REQUEST_BUNDLE_KEY = 'payload';
+export const ETC_RESULT_BUNDLE_KEY = 'payload';
+export const ETC_START_INTENT_BUNDLE_KEY = 'startIntent';
 export const ETC_PROTOCOL_VERSION = 1;
 export const ETC_START_ACTION = 'start_hos' as const;
 export const ETC_MAX_PAYLOAD_BYTES = 8192;
@@ -145,6 +145,38 @@ export function parseEtcProviderResponse(raw: unknown): EtcProviderResponse | nu
   }
   if (typeof body.observedAtMs === 'number' && Number.isFinite(body.observedAtMs)) {
     response.observedAtMs = body.observedAtMs;
+  }
+  return response;
+}
+
+/**
+ * Accept a provider status only when it echoes the stored request exactly.
+ * A changed company id or timestamp is not authoritative and must not replace
+ * the stored request.
+ */
+export function acceptEchoedEtcStatus(request: EtcStartRequest, raw: unknown): EtcProviderResponse | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const body = raw as Record<string, unknown>;
+  for (const key of REQUEST_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) return null;
+  }
+  if (body.protocolVersion !== request.protocolVersion) return null;
+  if (body.action !== request.action) return null;
+  if (body.requestId !== request.requestId) return null;
+  if (body.companyId !== request.companyId) return null;
+  if (body.driverId !== request.driverId) return null;
+  if (body.suiteShiftId !== request.suiteShiftId) return null;
+  if (body.requestedAtMs !== request.requestedAtMs) return null;
+  const state = oneOf(body.state, ETC_STATES);
+  const hos = oneOf(body.hos, ETC_HOS);
+  const gps = oneOf(body.gps, ETC_GPS);
+  if (!state || !hos || !gps) return null;
+  if (typeof body.observedAtMs !== 'number' || !Number.isFinite(body.observedAtMs)) return null;
+  const response: EtcProviderResponse = { state, hos, gps, observedAtMs: body.observedAtMs };
+  if (typeof body.etcShiftId === 'string' && body.etcShiftId) response.etcShiftId = body.etcShiftId;
+  if (typeof body.reason === 'string' && body.reason) response.reason = body.reason;
+  if (typeof body.gpsObservedAtMs === 'number' && Number.isFinite(body.gpsObservedAtMs)) {
+    response.gpsObservedAtMs = body.gpsObservedAtMs;
   }
   return response;
 }

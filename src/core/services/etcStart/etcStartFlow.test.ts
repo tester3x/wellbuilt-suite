@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -18,11 +19,16 @@ import { ETC_RELEASE_IDENTITY, isEtcDispatchConfigured } from './etcReleaseIdent
 import { resetEtcNoticeForTests, currentEtcNotice } from './etcNoticeStore';
 import {
   ETC_PROVIDER_AUTHORITY,
+  ETC_REQUEST_BUNDLE_KEY,
   ETC_REQUEST_MAX_AGE_MS,
+  ETC_RESULT_BUNDLE_KEY,
+  ETC_START_INTENT_BUNDLE_KEY,
   encodeEtcStartRequest,
   etcDriverText,
   type EtcMethod,
 } from './etcStartProtocol';
+import { settleEnforcedShiftClaim } from './enforcedStartBoundary';
+import { ensurePreTripGate } from '../dvirGate/dvirGateService';
 import { listEtcStartsForDriver, memoryEtcKv, type EtcKv } from './etcStartOutbox';
 import type { EtcPort, EtcPortResult } from './etcStartDispatch';
 
@@ -43,17 +49,36 @@ function port(handler: (method: EtcMethod, payload: string) => Promise<EtcPortRe
     available: true,
     async call(method, payload) {
       calls.push({ method, payload });
-      return handler(method, payload);
+      return echoStoredRequest(await handler(method, payload), payload);
     },
   };
   return { calls, impl };
 }
 
-function okResponse(over: Record<string, unknown> = {}): EtcPortResult {
+function echoStoredRequest(result: EtcPortResult, payload: string): EtcPortResult {
+  if (!result.ok) return result;
+  const startIntent = result.startIntent ?? 'absent';
+  if (result.response == null || typeof result.response !== 'object' || Array.isArray(result.response)) {
+    return { ...result, startIntent };
+  }
+  const body = result.response as Record<string, unknown>;
+  if ('requestId' in body) return { ...result, startIntent };
+  const echoed = JSON.parse(payload) as Record<string, unknown>;
+  return {
+    ...result,
+    startIntent,
+    response: { ...echoed, ...body },
+  };
+}
+
+function okResponse(
+  over: Record<string, unknown> = {},
+  startIntent: 'absent' | 'present' | 'sent' = 'absent',
+): EtcPortResult {
   return {
     ok: true,
-    pendingIntentCreatorPackage: verified.etcPackageName,
-    pendingIntentSent: true,
+    startIntent,
+    pendingIntentCreatorPackage: startIntent === 'absent' ? null : verified.etcPackageName,
     response: {
       state: 'prepared',
       hos: 'not_started',
@@ -98,6 +123,7 @@ test('release identity is unverified and dispatch stays disabled', () => {
   assert.equal(isEtcDispatchConfigured(ETC_RELEASE_IDENTITY), false);
   const src = readFileSync(join(HERE, 'etcReleaseIdentity.ts'), 'utf8');
   assert.equal(/\b[0-9a-f]{64}\b/i.test(src), false);
+  assert.equal(src.includes('com.wellbuilt.electronictimecard'), false);
 });
 
 test('request payload is the exact contract object and allows null companyId', () => {
@@ -121,6 +147,9 @@ test('request payload is the exact contract object and allows null companyId', (
   });
   assert.ok(encoded.length < 8192);
   assert.equal(ETC_PROVIDER_AUTHORITY, 'com.wellbuilt.electronictimecard.suitehos');
+  assert.equal(ETC_REQUEST_BUNDLE_KEY, 'payload');
+  assert.equal(ETC_RESULT_BUNDLE_KEY, 'payload');
+  assert.equal(ETC_START_INTENT_BUNDLE_KEY, 'startIntent');
 });
 
 test('server claim failure does not write or call ETC', async () => {
@@ -527,8 +556,8 @@ test('hidden Activity and a mismatched PendingIntent creator do not count as HOS
 
   const bridge = port(async () => ({
     ok: true,
+    startIntent: 'sent',
     pendingIntentCreatorPackage: 'not.the.etc.package',
-    pendingIntentSent: true,
     response: { state: 'completed', hos: 'started', gps: 'ready', observedAtMs: 9 },
   }));
   const forged = await start({ port: bridge.impl, newRequestId: () => 'forged' });
@@ -574,13 +603,291 @@ test('AuthContext emits only from the enforced success path', () => {
   const afterLegacy = auth.indexOf('const returnInFlight', legacy);
   const enforced = auth.slice(start, legacy);
   const legacyBody = auth.slice(legacy, afterLegacy);
-  assert.match(enforced, /mayEmitEtcStart\(\{[\s\S]*branch: 'enforced'/);
-  assert.match(enforced, /attachEtcHandoff\(/);
+  assert.match(enforced, /settleEnforcedShiftClaim\(/);
+  assert.ok(enforced.indexOf('if (!claim.ok)') < enforced.indexOf('settleEnforcedShiftClaim'));
+  assert.equal(enforced.includes('attachEtcHandoff'), false);
   assert.equal(legacyBody.includes('attachEtcHandoff'), false);
+  assert.equal(legacyBody.includes('settleEnforcedShiftClaim'), false);
   assert.equal(legacyBody.includes('mayEmitEtcStart'), false);
   const row = readFileSync(join(root, 'ui/shared/ActionCardRow.tsx'), 'utf8');
   const confirm = row.slice(row.indexOf('const handleStartConfirm'), row.indexOf('const handleReturnToYard'));
   const success = confirm.indexOf('if (!isExplicitStartShiftSuccess(result))');
   const pre = confirm.indexOf('ensurePreTripGate({ alertOnBlock: true })');
   assert.ok(success > -1 && pre > success);
+});
+
+test('wire keys are payload and startIntent, and visibility does not enable dispatch', () => {
+  const repo = join(HERE, '..', '..', '..', '..');
+  const kt = readFileSync(join(repo, 'modules/suite-etc-hos/android/src/main/java/expo/modules/suiteetchos/SuiteEtcHosModule.kt'), 'utf8');
+  assert.match(kt, /putString\("payload"/);
+  assert.match(kt, /getString\("payload"/);
+  assert.match(kt, /getParcelable\("startIntent"/);
+  assert.equal(kt.includes('"pendingIntent"'), false);
+  assert.equal(kt.includes('"request"'), false);
+  assert.equal(kt.includes('"result"'), false);
+  const require = createRequire(import.meta.url);
+  const { applyEtcPackageVisibility, ETC_SOURCE_APPLICATION_ID, ETC_PROVIDER_AUTHORITY: authority } = require(join(repo, 'modules/suite-etc-hos/etcVisibility.js'));
+  const manifest = applyEtcPackageVisibility({ queries: [{}] });
+  const queries = manifest.queries[0];
+  assert.equal(queries.provider.some((entry: { $: Record<string, string> }) => entry.$['android:authorities'] === authority), true);
+  assert.equal(queries.package.some((entry: { $: Record<string, string> }) => entry.$['android:name'] === ETC_SOURCE_APPLICATION_ID), true);
+  assert.equal(ETC_SOURCE_APPLICATION_ID, 'com.wellbuilt.electronictimecard');
+  assert.equal(isEtcDispatchConfigured(ETC_RELEASE_IDENTITY), false);
+});
+
+test('an echoed company id or timestamp mismatch is not an HOS start', async () => {
+  for (const mutate of [
+    (body: Record<string, unknown>) => ({ ...body, companyId: body.companyId === null ? 'other' : null }),
+    (body: Record<string, unknown>) => ({ ...body, requestedAtMs: Number(body.requestedAtMs) + 1 }),
+  ]) {
+    const kv = memory();
+    const bridge = port(async (_method, payload) => {
+      const echoed = JSON.parse(payload) as Record<string, unknown>;
+      return {
+        ok: true as const,
+        startIntent: 'absent' as const,
+        pendingIntentCreatorPackage: null,
+        response: {
+          ...mutate(echoed),
+          state: 'completed',
+          hos: 'started',
+          gps: 'ready',
+          observedAtMs: 4,
+        },
+      };
+    });
+    const first = await attachEtcHandoff({
+      claim: { ok: true, periodId: base.periodId },
+      generationCurrent: true,
+      companyId: null,
+      driverId: base.driverId,
+      nowMs: base.nowMs,
+      activityVisible: true,
+      kv,
+      port: bridge.impl,
+      identity: verified,
+      newRequestId: () => 'echo-req',
+    });
+    assert.equal(first.hos, 'unknown');
+    assert.equal(first.reason, 'echo_mismatch');
+    assert.equal(first.blocksShift, false);
+    assert.equal(first.driverText.includes('not confirmed'), true);
+    const again = await attachEtcHandoff({
+      claim: { ok: true, periodId: base.periodId },
+      generationCurrent: true,
+      companyId: null,
+      driverId: base.driverId,
+      nowMs: base.nowMs + 1000,
+      activityVisible: true,
+      kv,
+      port: bridge.impl,
+      identity: verified,
+      newRequestId: () => {
+        throw new Error('new id');
+      },
+    });
+    assert.equal(again.request?.requestId, 'echo-req');
+    assert.equal(again.request?.requestedAtMs, base.nowMs);
+    assert.equal(again.request?.companyId, null);
+    assert.deepEqual(bridge.calls.map((call) => call.method), ['prepareStart', 'getStartStatus']);
+    assert.equal(bridge.calls[0].payload, bridge.calls[1].payload);
+  }
+});
+
+test('completed ETC status is valid with or without a start token', async () => {
+  const without = await start({
+    port: port(async () => okResponse({
+      state: 'completed',
+      hos: 'started',
+      gps: 'ready',
+      observedAtMs: 3,
+    }, 'absent')).impl,
+    newRequestId: () => 'no-token',
+  });
+  assert.equal(without.result.hos, 'started');
+  assert.equal(without.result.state, 'completed');
+  assert.equal(without.result.blocksShift, false);
+
+  const withToken = await start({
+    port: port(async () => okResponse({
+      state: 'completed',
+      hos: 'already_active',
+      gps: 'ready',
+      observedAtMs: 4,
+    }, 'sent')).impl,
+    newRequestId: () => 'with-token',
+  });
+  assert.equal(withToken.result.hos, 'already_active');
+  assert.equal(withToken.result.state, 'completed');
+  assert.equal(withToken.result.blocksShift, false);
+});
+
+test('a sent token without a terminal result is not proof the service ran', async () => {
+  const kv = memory();
+  const bridge = port(async () => okResponse({
+    state: 'processing',
+    hos: 'not_started',
+    gps: 'starting',
+    observedAtMs: 6,
+  }, 'sent'));
+  const first = await attachEtcHandoff({
+    claim: { ok: true, periodId: base.periodId },
+    generationCurrent: true,
+    companyId: base.companyId,
+    driverId: base.driverId,
+    nowMs: base.nowMs,
+    activityVisible: true,
+    kv,
+    port: bridge.impl,
+    identity: verified,
+    newRequestId: () => 'observe-req',
+  });
+  assert.equal(first.reason, 'observation_unconfirmed');
+  assert.equal(first.hos, 'unknown');
+  assert.equal(first.driverText.includes('not confirmed'), true);
+  const second = await attachEtcHandoff({
+    claim: { ok: true, periodId: base.periodId },
+    generationCurrent: true,
+    companyId: base.companyId,
+    driverId: base.driverId,
+    nowMs: base.nowMs + 500,
+    activityVisible: true,
+    kv,
+    port: bridge.impl,
+    identity: verified,
+    newRequestId: () => {
+      throw new Error('new id');
+    },
+  });
+  assert.equal(second.request?.requestedAtMs, base.nowMs);
+  assert.deepEqual(bridge.calls.map((call) => call.method), ['prepareStart', 'getStartStatus']);
+  assert.equal(bridge.calls[0].payload, bridge.calls[1].payload);
+});
+
+test('a token that was not sent and a malformed or null response are unknown', async () => {
+  const unsent = await start({
+    port: port(async () => okResponse({
+      state: 'completed',
+      hos: 'started',
+      gps: 'ready',
+      observedAtMs: 8,
+    }, 'present')).impl,
+    newRequestId: () => 'unsent',
+  });
+  assert.equal(unsent.result.hos, 'unknown');
+  assert.equal(unsent.result.reason, 'start_intent_not_sent');
+  assert.equal(unsent.result.blocksShift, false);
+
+  for (const reason of ['malformed_response', 'absent', 'illegal_argument', 'token_send_failed'] as const) {
+    const kv = memory();
+    const bridge = port(async () => ({ ok: false as const, reason }));
+    const result = await attachEtcHandoff({
+      claim: { ok: true, periodId: `period-${reason}` },
+      generationCurrent: true,
+      companyId: base.companyId,
+      driverId: base.driverId,
+      nowMs: base.nowMs,
+      activityVisible: true,
+      kv,
+      port: bridge.impl,
+      identity: verified,
+      newRequestId: () => `id-${reason}`,
+    });
+    assert.equal(result.hos, 'unknown');
+    assert.equal(result.blocksShift, false);
+    assert.equal(result.driverText.includes('started'), false);
+    const stored = await listEtcStartsForDriver(kv, base.driverId, base.companyId);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].request.requestId, `id-${reason}`);
+    assert.equal(stored[0].request.requestedAtMs, base.nowMs);
+    assert.notEqual(stored[0].lastHos, 'started');
+  }
+
+  const nullBody = await start({
+    port: port(async () => ({
+      ok: true as const,
+      startIntent: 'absent' as const,
+      response: null,
+    })).impl,
+    newRequestId: () => 'null-body',
+  });
+  assert.equal(nullBody.result.hos, 'unknown');
+  assert.equal(nullBody.result.reason, 'echo_mismatch');
+  assert.equal(nullBody.result.blocksShift, false);
+});
+
+test('ETC import failure after an accepted claim keeps the Suite shift and Pre-Trip', async () => {
+  resetEtcNoticeForTests();
+  const binding = { periodId: '2026-09-29_153000', originLocalDate: '2026-09-29' };
+  const kv = memory();
+  let loads = 0;
+  const result = await settleEnforcedShiftClaim({
+    claim: { ok: true, periodId: binding.periodId, originLocalDate: binding.originLocalDate, claimed: true },
+    binding,
+    isCurrent: () => true,
+    companyId: null,
+    driverId: base.driverId,
+    activityVisible: true,
+    nowMs: base.nowMs,
+    kv,
+    loadEtc: async () => {
+      loads += 1;
+      throw new Error('cannot load ETC module');
+    },
+  });
+  assert.equal(loads, 1);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(isExplicitStartShiftSuccess(result), true);
+  assert.equal(result.etc.hos, 'unknown');
+  assert.equal(result.etc.blocksShift, false);
+  assert.equal(result.etc.driverText.includes('not confirmed'), true);
+  assert.equal(result.binding, binding);
+  assert.equal(binding.periodId, '2026-09-29_153000');
+  assert.equal((await listEtcStartsForDriver(kv, base.driverId, null)).length, 0);
+  assert.equal(currentEtcNotice(), result.etc.driverText);
+
+  const launched: string[] = [];
+  const gate = await ensurePreTripGate({
+    kv: {
+      getItem: async () => null,
+      setItem: async () => {},
+      removeItem: async () => {},
+    },
+    sha256Hex: async (value) => value,
+    getCurrentShiftId: async () => result.binding.periodId,
+    isShiftActive: () => true,
+    openUrl: async (url) => {
+      launched.push(url);
+    },
+    alert: () => {},
+  }, { alertOnBlock: true });
+  assert.equal(gate.shiftId, binding.periodId);
+  assert.equal(gate.launched, true);
+  assert.match(launched[0], /phase=pre_trip/);
+  assert.match(launched[0], new RegExp(binding.periodId));
+});
+
+test('a rejected claim returns failure and does not load or emit ETC', async () => {
+  const kv = memory();
+  let loads = 0;
+  const result = await settleEnforcedShiftClaim({
+    claim: { ok: false, reason: 'server_unverifiable:down' },
+    binding: null,
+    isCurrent: () => true,
+    companyId: base.companyId,
+    driverId: base.driverId,
+    activityVisible: true,
+    kv,
+    loadEtc: async () => {
+      loads += 1;
+      throw new Error('should not load');
+    },
+  });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.reason, 'server_unverifiable:down');
+  assert.equal(loads, 0);
+  assert.equal((await listEtcStartsForDriver(kv, base.driverId, base.companyId)).length, 0);
+  assert.equal(isExplicitStartShiftSuccess(result), false);
 });

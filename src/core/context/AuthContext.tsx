@@ -724,42 +724,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           },
         });
         console.log('[AuthContext] Shift claimed for:', user.displayName, 'package:', pkg || 'none');
-        const { mayEmitEtcStart, etcHandoffThatCannotFailShift, attachEtcHandoff } =
-          await import('../services/etcStart/attachEtcHandoff');
-        let etc: { hos: string; gps: string; driverText: string; blocksShift: false } | undefined;
-        if (mayEmitEtcStart({
-          branch: 'enforced',
-          claimOk: claim.ok,
-          generationCurrent: authorityGenRef.current.isCurrent(gen),
-        })) {
-          try {
-            const { createEtcPort, productionEtcKv } = await import('../services/etcStart/etcProduction');
-            const visible = AppState.currentState === 'active';
-            etc = await etcHandoffThatCannotFailShift(() => attachEtcHandoff({
-              claim,
-              generationCurrent: true,
-              isCurrent: () => authorityGenRef.current.isCurrent(gen),
-              companyId: user.companyId ?? null,
-              driverId: user.driverId,
-              nowMs: Date.now(),
-              activityVisible: visible,
-              kv: productionEtcKv(),
-              port: createEtcPort(visible),
-            }));
-          } catch (etcErr) {
-            console.warn('[startShift] ETC handoff did not change the Suite shift:', etcErr);
-            etc = {
-              hos: 'unknown',
-              gps: 'unknown',
-              driverText: 'ETC hours of service: not confirmed.',
-              blocksShift: false,
+        // Every ETC import stays inside this boundary. A module-load failure
+        // must not reach the outer startShift catch after the server accepted.
+        const acceptedBinding = {
+          periodId: claim.periodId,
+          originLocalDate: claim.originLocalDate,
+        };
+        let settled: { ok: true; etc: { hos: string; gps: string; driverText: string; blocksShift: false } } | { ok: false; reason: string };
+        try {
+          const { settleEnforcedShiftClaim } = await import('../services/etcStart/enforcedStartBoundary');
+          const result = await settleEnforcedShiftClaim({
+            claim,
+            binding: acceptedBinding,
+            isCurrent: () => authorityGenRef.current.isCurrent(gen),
+            companyId: user.companyId ?? null,
+            driverId: user.driverId,
+            activityVisible: AppState.currentState === 'active',
+          });
+          if (!result.ok) settled = { ok: false, reason: result.reason };
+          else settled = { ok: true, etc: result.etc };
+        } catch (etcErr) {
+          console.warn('[startShift] ETC module did not change the Suite shift:', etcErr);
+          if (!authorityGenRef.current.isCurrent(gen)) {
+            settled = { ok: false, reason: 'stale_generation' };
+          } else {
+            settled = {
+              ok: true,
+              etc: {
+                hos: 'unknown',
+                gps: 'unknown',
+                driverText: 'ETC hours of service: not confirmed.',
+                blocksShift: false,
+              },
             };
           }
         }
-        if (!authorityGenRef.current.isCurrent(gen)) {
-          return { ok: false, reason: 'stale_generation' };
-        }
-        return { ok: true, etc };
+        if (!settled.ok) return settled;
+        return { ok: true, etc: settled.etc };
       }
 
       // Legacy / inert does not emit an ETC start. A local mint can still

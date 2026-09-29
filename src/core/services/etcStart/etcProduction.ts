@@ -50,17 +50,20 @@ export function createEtcPort(activityVisible: boolean): EtcPort {
           ok?: boolean;
           reason?: string;
           response?: unknown;
+          startIntent?: string;
           pendingIntentCreatorPackage?: string | null;
-          pendingIntentSent?: boolean;
         };
         if (!parsed.ok) {
           return { ok: false, reason: (parsed.reason as EtcPortFailure) || 'bridge_error' };
         }
+        const startIntent = parsed.startIntent === 'sent' || parsed.startIntent === 'present'
+          ? parsed.startIntent
+          : 'absent';
         return {
           ok: true,
           response: parsed.response,
+          startIntent,
           pendingIntentCreatorPackage: parsed.pendingIntentCreatorPackage ?? null,
-          pendingIntentSent: parsed.pendingIntentSent,
         };
       } catch {
         return { ok: false, reason: 'bridge_error' };

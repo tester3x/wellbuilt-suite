@@ -10,15 +10,14 @@ import {
   type EtcGps,
   type EtcHos,
   type EtcMethod,
-  type EtcProviderResponse,
   type EtcStartRequest,
   type EtcState,
+  acceptEchoedEtcStatus,
   assertExactRequestShape,
   classifyEtcFreshness,
   encodeEtcStartRequest,
   etcDriverText,
   isTerminalEtcResult,
-  parseEtcProviderResponse,
 } from './etcStartProtocol';
 import { saveEtcStartObservation, type EtcKv, type StoredEtcStart } from './etcStartOutbox';
 
@@ -31,14 +30,17 @@ export type EtcPortFailure =
   | 'signing_unverified'
   | 'native_unavailable'
   | 'package_mismatch'
-  | 'pending_intent_creator_mismatch';
+  | 'pending_intent_creator_mismatch'
+  | 'illegal_argument'
+  | 'token_send_failed'
+  | 'malformed_response';
 
 export type EtcPortResult =
   | {
       ok: true;
       response: unknown;
+      startIntent: 'absent' | 'present' | 'sent';
       pendingIntentCreatorPackage?: string | null;
-      pendingIntentSent?: boolean;
     }
   | { ok: false; reason: EtcPortFailure };
 
@@ -92,23 +94,33 @@ function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-function trustedResponse(
+const UNKNOWN_PORT_REASONS = new Set<EtcPortFailure>([
+  'timeout',
+  'bridge_error',
+  'token_send_failed',
+  'malformed_response',
+  'absent',
+  'illegal_argument',
+  'permission_denied',
+  'untrusted',
+]);
+
+/**
+ * A startIntent is observation only. Absent is valid. Present-but-unsent or a
+ * creator mismatch is not success. Sent is not proof the service ran.
+ */
+function classifyStartIntent(
   method: EtcMethod,
   result: Extract<EtcPortResult, { ok: true }>,
   identity: EtcReleaseIdentity,
-): { response: EtcProviderResponse } | { reason: string } {
-  if (method === 'prepareStart') {
-    const creator = result.pendingIntentCreatorPackage ?? null;
-    if (!identity.etcPackageName || creator !== identity.etcPackageName) {
-      return { reason: 'pending_intent_creator_mismatch' };
-    }
-    if (result.pendingIntentSent === false) {
-      return { reason: 'pending_intent_not_sent' };
-    }
+): 'none' | 'accept' | { reason: string } {
+  if (method !== 'prepareStart' || result.startIntent === 'absent') return 'none';
+  const creator = result.pendingIntentCreatorPackage ?? null;
+  if (!identity.etcPackageName || creator !== identity.etcPackageName) {
+    return { reason: 'pending_intent_creator_mismatch' };
   }
-  const response = parseEtcProviderResponse(result.response);
-  if (!response) return { reason: 'malformed_response' };
-  return { response };
+  if (result.startIntent !== 'sent') return { reason: 'start_intent_not_sent' };
+  return 'accept';
 }
 
 export async function dispatchStoredEtcStart(input: {
@@ -171,9 +183,9 @@ export async function dispatchStoredEtcStart(input: {
   }
 
   if (!portResult.ok) {
-    const uncertain = portResult.reason === 'timeout' || portResult.reason === 'bridge_error';
+    const uncertain = UNKNOWN_PORT_REASONS.has(portResult.reason) || input.stored.dispatchUncertain;
     await saveEtcStartObservation(input.kv, request, {
-      dispatchUncertain: uncertain || input.stored.dispatchUncertain,
+      dispatchUncertain: uncertain,
       lastHos: input.stored.lastHos,
       lastState: input.stored.lastState,
       lastGps: input.stored.lastGps,
@@ -181,24 +193,40 @@ export async function dispatchStoredEtcStart(input: {
     return unknownHandoff(portResult.reason, request, method === 'getStartStatus' ? 'reconciled' : 'not_sent');
   }
 
-  const trusted = trustedResponse(method, portResult, input.identity);
-  if ('reason' in trusted) {
+  const intent = classifyStartIntent(method, portResult, input.identity);
+  if (typeof intent === 'object') {
     await saveEtcStartObservation(input.kv, request, {
       dispatchUncertain: true,
       lastHos: 'unknown',
       lastState: 'unknown',
       lastGps: 'unknown',
     });
-    return unknownHandoff(trusted.reason, request);
+    return unknownHandoff(intent.reason, request);
   }
 
-  const response = trusted.response;
+  const response = acceptEchoedEtcStatus(request, portResult.response);
+  if (!response) {
+    await saveEtcStartObservation(input.kv, request, {
+      dispatchUncertain: true,
+      lastHos: 'unknown',
+      lastState: 'unknown',
+      lastGps: 'unknown',
+    });
+    return unknownHandoff('echo_mismatch', request);
+  }
+
+  // A sent token only resumes observation. Until ETC reports a terminal HOS
+  // result, that send is not proof the service executed.
+  const observationUnproven = intent === 'accept' && !isTerminalEtcResult(response.hos, response.state);
   await saveEtcStartObservation(input.kv, request, {
-    dispatchUncertain: false,
-    lastHos: response.hos,
-    lastState: response.state,
-    lastGps: response.gps,
+    dispatchUncertain: observationUnproven,
+    lastHos: observationUnproven ? input.stored.lastHos : response.hos,
+    lastState: observationUnproven ? input.stored.lastState : response.state,
+    lastGps: observationUnproven ? input.stored.lastGps : response.gps,
   });
+  if (observationUnproven) {
+    return unknownHandoff('observation_unconfirmed', request);
+  }
   const handoff: EtcHandoffResult = {
     emitted: true,
     blocksShift: false,
