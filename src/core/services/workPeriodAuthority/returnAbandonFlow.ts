@@ -31,16 +31,19 @@
  *     exactly as `startReturn` and `applyRestoreAction` already do.
  *
  *  3. IDENTITY THEFT ACROSS THE LAST WINDOW. Generation checks still leave the
- *     width of one `await` between "current" and "deleted". The attempt-id
- *     clear is therefore a compare-and-delete: it removes the persisted id only
- *     while it is still the id THIS abandonment recorded. A newer return's
- *     freshly minted id can never be deleted by an older abandonment, whatever
- *     the interleaving, and losing that race aborts the rest of the commit.
+ *     width of one `await` between "current" and "deleted", and SecureStore has
+ *     no compare-and-swap, so a read-compare-then-delete written as separate
+ *     awaits still destroys a newer attempt persisted in one of the gaps. The
+ *     clear is therefore delegated to the serialized return-state store, which
+ *     decides ownership and clears BOTH keys inside one critical section that
+ *     no other Suite writer can interleave (see returnStateStore.ts). Losing
+ *     the ownership check aborts the rest of the commit.
  *
- * Failure stays visible: a refused or throwing callable keeps the returning
+ * Failure stays visible, and that includes STORAGE failure: a refused or
+ * throwing callable, or a keychain error during the clear, keeps the returning
  * state AND keeps the persisted attempt id, so the driver retries the SAME
- * attempt (server idempotency dedupes it) instead of silently showing a divert
- * the server never recorded.
+ * attempt (server idempotency dedupes it) instead of being shown a divert that
+ * was never durably recorded.
  */
 
 /**
@@ -102,14 +105,16 @@ export type ReturnAbandonPorts = {
   /** Legacy (non-enforced) direct write; fire-and-forget, as today. */
   recordLegacyAbandoned: () => void;
   /**
-   * Compare-and-delete the persisted attempt id: delete iff it still equals
-   * `expected`. Returns false when a newer return has replaced it — that id
-   * belongs to another session and MUST survive.
+   * Clear the whole return state (attempt id AND departure time) iff
+   * `attemptId` is still its persisted owner, as ONE serialized critical
+   * section. `not_owner` means a newer return owns the state and nothing was
+   * touched; `ok: false` means storage genuinely failed and nothing may be
+   * reported as durably cleared.
    */
-  clearAttemptIdIf: (expected: string) => Promise<boolean>;
-  /** Legacy path has no attempt id to compare against. */
-  clearAttemptIdUnconditional: () => Promise<void>;
-  clearDepartTime: () => Promise<void>;
+  clearOwnedReturnState: (attemptId: string) =>
+    Promise<{ ok: true; value: 'cleared' | 'not_owner' } | { ok: false; reason: string }>;
+  /** Legacy path has no attempt identity to own; clears both keys. */
+  clearAllReturnState: () => Promise<{ ok: true } | { ok: false; reason: string }>;
   /** setReturningToYard(false) + setReturnDepartTime(null). */
   clearReturnUi: () => void;
   isValidAttemptId: (v: unknown) => v is string;
@@ -188,7 +193,7 @@ export async function runReturnAbandon(ports: ReturnAbandonPorts): Promise<Retur
         return { ok: false, reason: result.reason || 'abandon_failed' };
       }
       const committed = await commitLocalClear(ports, attemptId);
-      if (!committed) return { ok: false, reason: 'stale_generation' };
+      if (!committed.ok) return committed;
       note(ports, 'abandon.outcome', { recorded: result.recorded ? 1 : 0 });
       return { ok: true, recorded: result.recorded };
     }
@@ -204,7 +209,7 @@ export async function runReturnAbandon(ports: ReturnAbandonPorts): Promise<Retur
     const committed = ports.isValidAttemptId(attemptId)
       ? await commitLocalClear(ports, attemptId)
       : await commitLocalClearLegacy(ports);
-    if (!committed) return { ok: false, reason: 'stale_generation' };
+    if (!committed.ok) return committed;
     note(ports, 'abandon.outcome', { recorded: 1, legacy: 1 });
     return { ok: true };
   } finally {
@@ -215,41 +220,57 @@ export async function runReturnAbandon(ports: ReturnAbandonPorts): Promise<Retur
 }
 
 /**
- * Commit phase for an abandonment that owns `attemptId`. Every durable write is
- * re-gated, and the attempt-id delete is compare-and-delete (hazard 3): if the
- * persisted id is no longer ours, a newer return owns it and we abort the rest
- * of the commit rather than clearing that session's yard card.
+ * Commit phase for an abandonment that owns `attemptId`.
+ *
+ * The clear is ONE serialized store call, so ownership and both deletes happen
+ * without another Suite writer interleaving (hazard 3). Three distinct outcomes,
+ * and only the first may clear the screen:
+ *
+ *   cleared    — we owned the state and it is durably gone.
+ *   not_owner  — a newer return owns it; nothing was touched, and the newer
+ *                session's yard card must stay up.
+ *   ok: false  — storage failed. Nothing is claimed as cleared, the attempt id
+ *                is still on record, and the driver keeps the return state so a
+ *                retry can finish the job.
  */
-async function commitLocalClear(ports: ReturnAbandonPorts, attemptId: string): Promise<boolean> {
+async function commitLocalClear(
+  ports: ReturnAbandonPorts,
+  attemptId: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (!ports.isCurrent()) {
     note(ports, 'abandon.stale_skip', { phase: 'before_commit' });
-    return false;
+    return { ok: false, reason: 'stale_generation' };
   }
-  const owned = await ports.clearAttemptIdIf(attemptId);
-  if (!owned) {
+  const cleared = await ports.clearOwnedReturnState(attemptId);
+  if (!cleared.ok) {
+    note(ports, 'abandon.storage_error', { phase: 'clear', reason: cleared.reason });
+    return { ok: false, reason: cleared.reason || 'return_state_clear_failed' };
+  }
+  if (cleared.value === 'not_owner') {
     note(ports, 'abandon.identity_superseded');
-    return false;
+    return { ok: false, reason: 'identity_superseded' };
   }
   if (!ports.isCurrent()) {
-    note(ports, 'abandon.stale_skip', { phase: 'after_attempt_clear' });
-    return false;
-  }
-  await ports.clearDepartTime();
-  if (!ports.isCurrent()) {
-    note(ports, 'abandon.stale_skip', { phase: 'after_depart_clear' });
-    return false;
+    // The state we owned is gone (correctly — it was ours), but a newer session
+    // now owns the screen, so it decides what the driver sees, not us.
+    note(ports, 'abandon.stale_skip', { phase: 'after_clear' });
+    return { ok: false, reason: 'stale_generation' };
   }
   ports.clearReturnUi();
-  return true;
+  return { ok: true };
 }
 
-/** Commit phase with no attempt identity to compare (legacy only). */
-async function commitLocalClearLegacy(ports: ReturnAbandonPorts): Promise<boolean> {
-  if (!ports.isCurrent()) return false;
-  await ports.clearAttemptIdUnconditional();
-  if (!ports.isCurrent()) return false;
-  await ports.clearDepartTime();
-  if (!ports.isCurrent()) return false;
+/** Commit phase with no attempt identity to own (legacy only). */
+async function commitLocalClearLegacy(
+  ports: ReturnAbandonPorts,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!ports.isCurrent()) return { ok: false, reason: 'stale_generation' };
+  const cleared = await ports.clearAllReturnState();
+  if (!cleared.ok) {
+    note(ports, 'abandon.storage_error', { phase: 'clear_legacy', reason: cleared.reason });
+    return { ok: false, reason: cleared.reason || 'return_state_clear_failed' };
+  }
+  if (!ports.isCurrent()) return { ok: false, reason: 'stale_generation' };
   ports.clearReturnUi();
-  return true;
+  return { ok: true };
 }

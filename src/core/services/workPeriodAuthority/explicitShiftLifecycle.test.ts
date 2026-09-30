@@ -162,15 +162,13 @@ test('wiring: abandonReturn is latched and generation-gated against a stale comm
   // One abandonment at a time, via a ref-held latch shared across renders.
   assert.ok(abandon.includes('latch: abandonLatchRef.current,'));
   assert.ok(auth.includes('const abandonLatchRef = useRef(createReturnAbandonLatch());'));
-  // Compare-and-delete: an older abandonment must never delete a newer return's
-  // persisted identity, so the delete is conditional on still owning it.
-  const clearIf = abandon.slice(
-    abandon.indexOf('clearAttemptIdIf:'),
-    abandon.indexOf('clearAttemptIdUnconditional:'),
-  );
-  assert.ok(clearIf.includes("SecureStore.getItemAsync('returnAttemptId')"));
-  assert.ok(/if \(current !== expected\) return false;/.test(clearIf));
-  assert.ok(clearIf.includes("SecureStore.deleteItemAsync('returnAttemptId')"));
+  // Ownership is decided inside the serialized store, not by a read-then-delete
+  // written here: SecureStore has no compare-and-swap, so separate awaits would
+  // still destroy a newer attempt persisted in the gap.
+  assert.ok(abandon.includes('clearOwnedReturnState: (expected) => returnStateStore.clearIfOwner(expected)'));
+  assert.ok(abandon.includes('clearAllReturnState: () => returnStateStore.clearAll()'));
+  // The abandonment must not reach SecureStore for these keys at all.
+  assert.ok(!/SecureStore\.\w+\(\s*'return(AttemptId|DepartTime)'/.test(abandon));
   // A session transition must never leave the latch held for the next session.
   for (const reason of ['provider_unmount', 'revalidation_hard_fail', 'login_identity', 'logout_cascade', 'logout']) {
     const at = auth.indexOf(`bumpAuthorityGeneration('${reason}')`);
@@ -201,9 +199,78 @@ test('wiring: the return-abandon race guards live in a pure, testable module', (
   assert.ok(/result = await ports\.recordAbandoned/.test(enforcedBranch));
   const afterRecord = enforcedBranch.slice(enforcedBranch.indexOf('result = await ports.recordAbandoned'));
   assert.ok(afterRecord.indexOf('if (!ports.isCurrent())') < afterRecord.indexOf('if (!result.ok)'));
-  // The commit deletes the attempt id only while it is still ours.
-  assert.ok(flow.includes('const owned = await ports.clearAttemptIdIf(attemptId);'));
-  assert.ok(flow.includes('if (!owned) {'));
+  // The commit is ONE owner-scoped store call, not a read-then-delete, and its
+  // three outcomes are distinguished: only 'cleared' may clear the screen.
+  assert.ok(flow.includes('const cleared = await ports.clearOwnedReturnState(attemptId);'));
+  assert.ok(flow.includes("if (cleared.value === 'not_owner') {"));
+  assert.ok(flow.includes('if (!cleared.ok) {'));
+  // A storage failure must be reported, never reported as a completed clear.
+  assert.ok(flow.includes("note(ports, 'abandon.storage_error'"));
+  const commit = flow.slice(flow.indexOf('async function commitLocalClear'));
+  assert.ok(
+    commit.indexOf('clearReturnUi') > commit.indexOf("cleared.value === 'not_owner'"),
+    'the UI is only cleared after ownership is confirmed',
+  );
+});
+
+test('wiring: return-state persistence is serialized, owner-scoped and truthful', () => {
+  const store = src('src/core/services/workPeriodAuthority/returnStateStore.ts');
+  // Pure: the interleavings must be executable in node:test.
+  assert.ok(!/from '(react|react-native|expo[-/][^']*)'/.test(store));
+  // One FIFO queue, and every operation runs through it — that is the whole
+  // ownership guarantee, since SecureStore offers no compare-and-swap.
+  assert.ok(store.includes('function createSerialQueue'));
+  for (const op of ['read()', 'reserveAttempt(mint)', 'markDeparted(attemptId, departTimeIso)',
+                    'clearIfOwner(attemptId)', 'clearAll()']) {
+    const at = store.indexOf(op + ' {');
+    assert.ok(at > 0, `missing store operation: ${op}`);
+    assert.ok(store.slice(at, at + 120).includes('return run('), `${op} does not hold the lock`);
+  }
+  // clearIfOwner re-decides ownership in the same section and clears both keys,
+  // departure time first so a partial failure stays retryable.
+  const clear = store.slice(store.indexOf('clearIfOwner(attemptId) {'), store.indexOf('clearAll() {'));
+  assert.ok(clear.includes('if (current !== attemptId)'));
+  assert.ok(
+    clear.indexOf('kv.remove(RETURN_DEPART_TIME_KEY)') < clear.indexOf('kv.remove(RETURN_ATTEMPT_KEY)'),
+    'departure time must be removed before the identity',
+  );
+  // Storage errors surface as reasons; nothing is swallowed with catch(() => {}).
+  assert.ok(store.includes('function failure('));
+  assert.ok(!/catch\s*\(\s*\)\s*=>\s*\{\s*\}/.test(store));
+  assert.ok(!/\.catch\(\(\) => \{\}\)/.test(store));
+
+  // Exactly one production store, because two would race each other.
+  const prod = src('src/core/services/workPeriodAuthority/returnStatePersistence.ts');
+  assert.ok(prod.includes('export const returnStateStore: ReturnStateStore = createReturnStateStore(secureStoreKv)'));
+  assert.equal((prod.match(/createReturnStateStore\(/g) || []).length, 1);
+});
+
+test('wiring: NO AuthContext writer touches the return-state keys outside the store', () => {
+  // The serialization guarantee holds only while every in-app writer goes
+  // through the shared store, so this is the precondition, asserted directly.
+  const auth = src('src/core/context/AuthContext.tsx');
+  assert.ok(!/SecureStore\.\w+Async\(\s*'returnAttemptId'/.test(auth));
+  assert.ok(!/SecureStore\.\w+Async\(\s*'returnDepartTime'/.test(auth));
+  assert.ok(auth.includes("import { returnStateStore } from '../services/workPeriodAuthority/returnStatePersistence'"));
+  // Every session transition and every return writer routes through it: mount
+  // restore, login reset, startReturn reserve + depart stamp, the abandonment's
+  // two ports, arrival, and both logout paths.
+  for (const call of [
+    'await returnStateStore.read()',
+    'await returnStateStore.reserveAttempt(',
+    'await returnStateStore.markDeparted(',
+    'returnStateStore.clearIfOwner(expected)',
+    'returnStateStore.clearAll()',
+  ]) {
+    assert.ok(auth.includes(call), `AuthContext does not use ${call}`);
+  }
+  assert.ok((auth.match(/returnStateStore\.clearAll\(\)/g) || []).length >= 4,
+    'login reset, arrival and both logout paths must clear through the store');
+  // startReturn must report a persistence failure rather than proceeding.
+  const start = auth.slice(auth.indexOf('const startReturn = useCallback'), auth.indexOf('const abandonReturn = useCallback'));
+  assert.ok(start.includes('if (!reserved.ok)'));
+  assert.ok(start.includes('if (!departed.ok)'));
+  assert.ok(start.includes("if (departed.value === 'not_owner')"));
 });
 
 test('wiring: shiftAuthorityClient forbids identity in payloads (source)', () => {
@@ -221,15 +288,20 @@ test('wiring: return attempt id is minted, persisted, and threaded to both gover
   // startReturn mints/reuses a persisted attempt id and passes it to depart.
   const start = auth.slice(auth.indexOf('const startReturn = useCallback'), auth.indexOf('const abandonReturn = useCallback'));
   assert.ok(start.includes('mintReturnAttemptId'));
-  assert.ok(start.includes("SecureStore.setItemAsync('returnAttemptId'"));
+  // Read-or-mint-and-persist happens inside the store's critical section, so two
+  // concurrent starts cannot mint two identities for one return.
+  assert.ok(start.includes('await returnStateStore.reserveAttempt(() => mintReturnAttemptId(periodForAttempt))'));
   assert.ok(start.includes('recordEnforcedDepartReturn({ periodId, attemptId })'));
-  // abandonReturn reads the SAME id and passes it to the abandonment.
+  // abandonReturn reads the SAME id, through the same store, and passes it on.
   const abandon = auth.slice(auth.indexOf('const abandonReturn = useCallback'), auth.indexOf('const confirmArrival = useCallback'));
-  assert.ok(abandon.includes("SecureStore.getItemAsync('returnAttemptId')"));
+  assert.ok(abandon.includes('await returnStateStore.read()'));
   assert.ok(abandon.includes('recordEnforcedReturnAbandoned({ periodId, attemptId })'));
-  // The id is cleared on abandon (and, elsewhere, on arrival/logout/login-reset).
-  assert.ok(abandon.includes("SecureStore.deleteItemAsync('returnAttemptId')"));
-  assert.ok((auth.match(/deleteItemAsync\('returnAttemptId'\)/g) || []).length >= 4);
+  // The identity is cleared only by the owner-scoped clear.
+  assert.ok(abandon.includes('returnStateStore.clearIfOwner(expected)'));
+  // And the attempt id is still required by both governed wrappers.
+  const life = src('src/core/services/workPeriodAuthority/explicitShiftLifecycle.ts');
+  assert.ok(life.includes('client.recordDepartReturn(periodId, deps.attemptId)'));
+  assert.ok(life.includes('client.recordReturnAbandoned(periodId, deps.attemptId)'));
 });
 
 test('wiring: enforced return wrappers require an attemptId', () => {
