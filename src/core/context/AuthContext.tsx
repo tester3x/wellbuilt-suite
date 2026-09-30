@@ -31,6 +31,28 @@ import { createGenerationClock } from '../services/workPeriodAuthority/shiftSess
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { runReturnAbandon, createReturnAbandonLatch } from '../services/workPeriodAuthority/returnAbandonFlow';
 
+/**
+ * Best-effort ETC hours-of-service outcome attached to a confirmed Start Shift.
+ * `blocksShift: false` is part of the contract: ETC never fails a Suite shift,
+ * and an unconfirmed handoff reports 'unknown' rather than fabricating hours.
+ */
+export type StartShiftEtcOutcome = {
+  hos: string;
+  gps: string;
+  driverText: string;
+  blocksShift: false;
+};
+
+/**
+ * Start Shift always resolves to an explicit { ok } object. `etc` is present
+ * only on the enforced path, where the ETC boundary produced an outcome.
+ */
+export type StartShiftResult = {
+  ok: boolean;
+  reason?: string;
+  etc?: StartShiftEtcOutcome;
+};
+
 export interface AuthUser {
   driverId: string;
   displayName: string;
@@ -76,7 +98,7 @@ interface AuthContextType {
    * Returns ok:false when claim/authority refuses (caller must not launch Pre-Trip).
    * Always returns an explicit { ok } object — never void/undefined success.
    */
-  startShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string; etc?: { hos: string; gps: string; driverText: string; blocksShift: false } }>;
+  startShift: (packageId?: string) => Promise<StartShiftResult>;
   /** The active package for this shift (set at shift start) */
   activePackageId: string | null;
   /** Full logout — clears SecureStore session. If shift is active, ends it first. */
@@ -640,7 +662,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: false, error: result.error || 'Invalid name or passcode' };
   }, [bumpAuthorityGeneration]);
 
-  const startShift = useCallback(async (packageId?: string): Promise<{ ok: boolean; reason?: string }> => {
+  const startShift = useCallback(async (packageId?: string): Promise<StartShiftResult> => {
     if (!user) return { ok: false, reason: 'no_user' };
     // Single-flight: first confirm owns the operation; later taps no-op.
     if (startShiftInFlightRef.current) {
@@ -741,7 +763,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           periodId: claim.periodId,
           originLocalDate: claim.originLocalDate,
         };
-        let settled: { ok: true; etc: { hos: string; gps: string; driverText: string; blocksShift: false } } | { ok: false; reason: string };
+        let settled: { ok: true; etc: StartShiftEtcOutcome } | { ok: false; reason: string };
         try {
           const { settleEnforcedShiftClaim } = await import('../services/etcStart/enforcedStartBoundary');
           const { shippedEtcIdentity } = await import('../services/etcStart/etcProduction');
