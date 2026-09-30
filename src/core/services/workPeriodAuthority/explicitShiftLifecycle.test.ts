@@ -123,14 +123,87 @@ test('wiring: abandonReturn enforced path uses the governed callable, not a dire
   );
   assert.ok(abandon.length > 100);
   assert.ok(abandon.includes('recordEnforcedReturnAbandoned'));
-  // Enforced branch must NOT direct-write return_abandoned (would be denied for
-  // enforced companies); and on server failure it must NOT clear local state.
-  const enforced = abandon.slice(
-    abandon.indexOf('if (isEnforcedExplicitShift'),
-    abandon.indexOf('} else {'),
+  // The enforced/legacy split now lives in runReturnAbandon (pure, so the race
+  // is executable — see returnAbandonFlow.test.ts). AuthContext supplies the
+  // ports, and each must land on the right writer: the governed callable for
+  // enforced companies, the direct write only for the legacy port.
+  assert.ok(/enforced:\s*isEnforcedExplicitShift\(enforcement\)/.test(abandon));
+  assert.ok(abandon.includes('recordAbandoned: ({ periodId, attemptId }) => recordEnforcedReturnAbandoned({ periodId, attemptId })'));
+  const governedPort = abandon.slice(
+    abandon.indexOf('recordAbandoned:'),
+    abandon.indexOf('recordLegacyAbandoned:'),
   );
-  assert.ok(!/recordShiftEvent\(\s*'return_abandoned'/.test(enforced));
-  assert.ok(enforced.includes('keeping return state') || enforced.includes('return;'));
+  assert.ok(governedPort.length > 20);
+  // A direct return_abandoned write must never hang off the governed port —
+  // enforced companies deny it server-side.
+  assert.ok(!/recordShiftEvent\(\s*'return_abandoned'/.test(governedPort));
+  // ...and the legacy port is the only place that direct write may appear.
+  const legacyPort = abandon.slice(abandon.indexOf('recordLegacyAbandoned:'));
+  assert.ok(/recordShiftEvent\(\s*\n?\s*'return_abandoned'/.test(legacyPort));
+  assert.equal((abandon.match(/recordShiftEvent\(/g) || []).length, 1, 'exactly one direct write');
+  // On a refused/failed abandonment the local return state must survive.
+  assert.ok(abandon.includes('keeping return state'));
+  assert.ok(/if \(!outcome\.ok\)/.test(abandon));
+});
+
+test('wiring: abandonReturn is latched and generation-gated against a stale commit', () => {
+  const auth = src('src/core/context/AuthContext.tsx');
+  const abandon = auth.slice(
+    auth.indexOf('const abandonReturn = useCallback'),
+    auth.indexOf('const confirmArrival = useCallback'),
+  );
+  // The guards must be delegated to the audited flow, not re-implemented here.
+  assert.ok(abandon.includes('await runReturnAbandon({'));
+  // Generation captured BEFORE the first await, and re-checked across each one.
+  assert.ok(abandon.includes('const gen = authorityGenRef.current.current();'));
+  assert.ok(abandon.includes('const isCurrent = () => authorityGenRef.current.isCurrent(gen);'));
+  assert.ok((abandon.match(/if \(!isCurrent\(\)\) return;/g) || []).length >= 2);
+  assert.ok(abandon.includes('isCurrent,'));
+  // One abandonment at a time, via a ref-held latch shared across renders.
+  assert.ok(abandon.includes('latch: abandonLatchRef.current,'));
+  assert.ok(auth.includes('const abandonLatchRef = useRef(createReturnAbandonLatch());'));
+  // Compare-and-delete: an older abandonment must never delete a newer return's
+  // persisted identity, so the delete is conditional on still owning it.
+  const clearIf = abandon.slice(
+    abandon.indexOf('clearAttemptIdIf:'),
+    abandon.indexOf('clearAttemptIdUnconditional:'),
+  );
+  assert.ok(clearIf.includes("SecureStore.getItemAsync('returnAttemptId')"));
+  assert.ok(/if \(current !== expected\) return false;/.test(clearIf));
+  assert.ok(clearIf.includes("SecureStore.deleteItemAsync('returnAttemptId')"));
+  // A session transition must never leave the latch held for the next session.
+  for (const reason of ['provider_unmount', 'revalidation_hard_fail', 'login_identity', 'logout_cascade', 'logout']) {
+    const at = auth.indexOf(`bumpAuthorityGeneration('${reason}')`);
+    assert.ok(at > 0, `missing generation bump: ${reason}`);
+    assert.ok(
+      auth.slice(at, at + 320).includes('abandonLatchRef.current.reset();'),
+      `latch not handed off at ${reason}`,
+    );
+  }
+});
+
+test('wiring: the return-abandon race guards live in a pure, testable module', () => {
+  const flow = src('src/core/services/workPeriodAuthority/returnAbandonFlow.ts');
+  // RN/expo-free so the interleavings are executable in node:test.
+  assert.ok(!/from '(react|react-native|expo[-/][^']*)'/.test(flow));
+  assert.ok(flow.includes('export async function runReturnAbandon'));
+  assert.ok(flow.includes('export function createReturnAbandonLatch'));
+  // Latch acquired before any await; never released by the loser.
+  // Ticketed ownership: a superseded holder's release must be inert, so a
+  // session hand-off cannot be undone by an old abandonment finishing.
+  assert.ok(flow.includes('const ticket = ports.latch.tryAcquire();'));
+  assert.ok(flow.includes('if (ticket === null) {'));
+  assert.ok(flow.includes('ports.latch.release(ticket);'));
+  assert.ok(/tryAcquire: \(\) => number \| null/.test(flow));
+  assert.ok(/release: \(ticket: number\) => void/.test(flow));
+  // Generation re-checked after the awaited governed callable, before commit.
+  const enforcedBranch = flow.slice(flow.indexOf('if (ports.enforced) {'), flow.indexOf('async function commitLocalClear'));
+  assert.ok(/result = await ports\.recordAbandoned/.test(enforcedBranch));
+  const afterRecord = enforcedBranch.slice(enforcedBranch.indexOf('result = await ports.recordAbandoned'));
+  assert.ok(afterRecord.indexOf('if (!ports.isCurrent())') < afterRecord.indexOf('if (!result.ok)'));
+  // The commit deletes the attempt id only while it is still ours.
+  assert.ok(flow.includes('const owned = await ports.clearAttemptIdIf(attemptId);'));
+  assert.ok(flow.includes('if (!owned) {'));
 });
 
 test('wiring: shiftAuthorityClient forbids identity in payloads (source)', () => {

@@ -29,6 +29,7 @@ import { wbDiagLog } from '../services/wbDiagLog';
 import type { ShiftAuthorityUiState } from '../services/workPeriodAuthority/postLoginShiftRestoration';
 import { createGenerationClock } from '../services/workPeriodAuthority/shiftSessionGuards';
 import { classifyCloseOdometerMiles } from '../services/workPeriodAuthority/shiftSessionGuards';
+import { runReturnAbandon, createReturnAbandonLatch } from '../services/workPeriodAuthority/returnAbandonFlow';
 
 export interface AuthUser {
   driverId: string;
@@ -190,6 +191,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   const authorityGenRef = useRef(createGenerationClock());
   const startShiftInFlightRef = useRef(false);
+  /**
+   * Single-owner latch for the return divert. "Back to work" is a modal button
+   * and two taps used to run two concurrent abandonments of the SAME attempt.
+   * Held across the whole abandonment (see runReturnAbandon).
+   */
+  const abandonLatchRef = useRef(createReturnAbandonLatch());
   const bumpAuthorityGeneration = useCallback((reason: string) => {
     const n = authorityGenRef.current.bump(reason);
     console.log(JSON.stringify({ tag: '[shiftAuthority]', event: 'generation.bump', reason, gen: n }));
@@ -280,6 +287,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       bumpAuthorityGeneration('provider_unmount');
       startShiftInFlightRef.current = false;
+      abandonLatchRef.current.reset();
     };
   }, [bumpAuthorityGeneration]);
 
@@ -440,6 +448,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               // Take reconciliation ownership so orphan SDK state cannot linger.
               bumpAuthorityGeneration('revalidation_hard_fail');
               startShiftInFlightRef.current = false;
+              abandonLatchRef.current.reset();
               setStartShiftBusy(false);
               reconcileForIdentity(null);
               setUser(null);
@@ -473,6 +482,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // New identity — invalidate any in-flight resolve/claim from prior session.
       const loginGen = bumpAuthorityGeneration('login_identity');
       startShiftInFlightRef.current = false;
+      abandonLatchRef.current.reset();
       setStartShiftBusy(false);
 
       await saveDriverSession(
@@ -959,6 +969,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // the app must not show a divert the server never recorded, so the yard card
     // stays and the driver (or another device) still resolves the authoritative
     // "returning" state. On a non-enforced shift the direct write is permitted.
+    //
+    // The race discipline (single-owner latch, generation re-check before every
+    // durable write, compare-and-delete of the persisted attempt id) lives in
+    // runReturnAbandon so it is executable in node:test; everything below is the
+    // port wiring. Capture the generation BEFORE the first await: an abandonment
+    // that resolves after a logout / account switch must neither delete a NEWER
+    // session's persisted return identity nor clear its yard card.
+    const gen = authorityGenRef.current.current();
+    const isCurrent = () => authorityGenRef.current.isCurrent(gen);
     const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { recordEnforcedReturnAbandoned }] =
       await Promise.all([
         import('../services/companyConfig'),
@@ -966,41 +985,66 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         import('../services/workPeriodAuthority/postLoginShiftRestoration'),
         import('../services/workPeriodAuthority/explicitShiftLifecycle'),
       ]);
+    if (!isCurrent()) return;
     const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
+    if (!isCurrent()) return;
     const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+    const driverId = user.driverId;
+    const driverName = user.legalName || user.displayName;
+    const companyId = user.companyId;
 
-    // The abandonment must carry the SAME attempt id the return started with, so
-    // it links to that exact attempt and dedupes per attempt (a second return in
-    // this shift gets its own abandonment). SecureStore is the source of truth so
-    // this is correct after an app restart.
-    const attemptId = await SecureStore.getItemAsync('returnAttemptId').catch(() => null);
+    const outcome = await runReturnAbandon({
+      enforced: isEnforcedExplicitShift(enforcement),
+      isCurrent,
+      latch: abandonLatchRef.current,
+      // The abandonment must carry the SAME attempt id the return started with,
+      // so it links to that exact attempt and dedupes per attempt (a second
+      // return in this shift gets its own abandonment). SecureStore is the
+      // source of truth, so this is correct after an app restart too.
+      readAttemptId: () => SecureStore.getItemAsync('returnAttemptId').catch(() => null),
+      readPeriodId: () => getCurrentShiftId(),
+      recordAbandoned: ({ periodId, attemptId }) => recordEnforcedReturnAbandoned({ periodId, attemptId }),
+      recordLegacyAbandoned: () => {
+        void recordShiftEvent(
+          'return_abandoned',
+          driverId,
+          driverName,
+          companyId,
+          'wbs',
+          undefined,
+          { enforcedExplicit: false, allowDirectWrite: true },
+        ).catch(() => {});
+      },
+      // Compare-and-delete: drop the persisted id only while it is still the one
+      // THIS abandonment recorded, so a newer return's identity always survives.
+      clearAttemptIdIf: async (expected) => {
+        const current = await SecureStore.getItemAsync('returnAttemptId').catch(() => null);
+        if (current !== expected) return false;
+        await SecureStore.deleteItemAsync('returnAttemptId').catch(() => {});
+        return true;
+      },
+      clearAttemptIdUnconditional: async () => {
+        await SecureStore.deleteItemAsync('returnAttemptId').catch(() => {});
+      },
+      clearDepartTime: async () => {
+        await SecureStore.deleteItemAsync('returnDepartTime').catch(() => {});
+      },
+      clearReturnUi: () => {
+        setReturningToYard(false);
+        setReturnDepartTime(null);
+      },
+      isValidAttemptId: isReturnAttemptId,
+      log: (event, detail) => {
+        console.log(JSON.stringify({ tag: '[shiftAuthority]', event, ...(detail ?? {}) }));
+      },
+    });
 
-    if (isEnforcedExplicitShift(enforcement)) {
-      const periodId = await getCurrentShiftId();
-      if (!attemptId || !isReturnAttemptId(attemptId)) {
-        console.warn('[AuthContext] no return attempt id on record — keeping return state');
-        return;
-      }
-      const result = await recordEnforcedReturnAbandoned({ periodId, attemptId });
-      if (!result.ok) {
-        console.warn('[AuthContext] recordReturnAbandoned failed — keeping return state:', result.reason);
-        return;
-      }
-    } else {
-      recordShiftEvent(
-        'return_abandoned',
-        user.driverId,
-        user.legalName || user.displayName,
-        user.companyId,
-        'wbs',
-        undefined,
-        { enforcedExplicit: false, allowDirectWrite: true },
-      ).catch(() => {});
+    if (!outcome.ok) {
+      // Keeping return state is the point: never show a divert the server did
+      // not record, and keep the attempt id so a retry is the SAME attempt.
+      console.warn('[AuthContext] return divert not applied — keeping return state:', outcome.reason);
+      return;
     }
-    await SecureStore.deleteItemAsync('returnAttemptId').catch(() => {});
-    await SecureStore.deleteItemAsync('returnDepartTime').catch(() => {});
-    setReturningToYard(false);
-    setReturnDepartTime(null);
     console.log('[AuthContext] Return-to-yard diverted to new work for:', user.displayName);
   }, [user, returningToYard]);
 
@@ -1109,6 +1153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout_cascade');
     startShiftInFlightRef.current = false;
+    abandonLatchRef.current.reset();
     setStartShiftBusy(false);
     setShiftAuthorityUi({ kind: 'legacy' });
     // Post-Trip gate: never complete logout while the active shift lacks
@@ -1228,6 +1273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Invalidate in-flight resolve/claim so they cannot restore after logout.
     bumpAuthorityGeneration('logout');
     startShiftInFlightRef.current = false;
+    abandonLatchRef.current.reset();
     setStartShiftBusy(false);
     setShiftAuthorityUi({ kind: 'legacy' });
     // Post-Trip gate for home-screen Log Out while shift still active.
