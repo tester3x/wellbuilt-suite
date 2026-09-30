@@ -15,6 +15,7 @@
     "test:sso": "node tools/mirror-sso-protocol.mjs --verify && tsx --test src/core/services/ssoAuthorizationCore.test.ts src/core/services/ssoLaunchPolicy.test.ts src/core/services/ticketsLaunchDvir.test.ts src/core/services/ssoRouteAdapter.test.ts src/core/services/ssoAuthorizeRouteOwnership.test.ts src/core/services/ssoJsaAudience.test.ts src/core/services/ssoAuthorizeScreenPolicy.test.ts src/core/services/ssoFrozenFlows.nonregression.test.ts",
     "test:sso-e2e": "tsx tools/test-ssoEndToEnd.mjs",
     "test:shift-authority": "tsx --test src/core/services/workPeriodAuthority/**/*.test.ts",
+    "test:return": "tsx --test src/core/services/returnStart.test.ts src/core/services/returnDivert.test.ts src/core/services/workPeriodAuthority/returnAttempt.test.ts src/core/services/workPeriodAuthority/returnAbandonFlow.test.ts src/core/services/workPeriodAuthority/returnStateStore.test.ts",
     "test:etc-start": "tsx --test src/core/services/etcStart/etcStartFlow.test.ts src/core/services/etcStart/etcBuildTarget.test.ts"
   },
   "dependencies": {

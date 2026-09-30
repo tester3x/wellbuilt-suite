@@ -23,7 +23,7 @@ import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
 import { subscribeEtcNotice } from '@/core/services/etcStart/etcNoticeStore';
-import { confirmReturnStart, returnStartMessage, type ReturnStartResult } from '@/core/services/returnStart';
+import { runReturnTap, createReturnTapLatch, type ReturnStartResult } from '@/core/services/returnStart';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -88,7 +88,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
   const [returnBusy, setReturnBusy] = useState(false);
-  const returnBusyRef = useRef(false);
+  const returnTapLatch = useRef(createReturnTapLatch());
   const [returnError, setReturnError] = useState<string | null>(null);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
   const [startConfirmBusy, setStartConfirmBusy] = useState(false);
@@ -195,18 +195,34 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   };
 
   // ── End shift: return to yard ──
+  // The confirmation is dismissed ONLY after the return has actually been
+  // accepted. v49 closed it first and discarded the result, so a refused
+  // return dropped the driver back to Home with an open shift, no return and
+  // no error — and no way forward through End Shift / logout. All of the tap
+  // behaviour lives in runReturnTap so it is covered by returnStart.test.ts.
   const handleReturnToYard = async () => {
-    if (returnBusyRef.current) return;
-    returnBusyRef.current = true;
-    setReturnBusy(true);
-    setReturnError(null);
-    try {
-      const result = await confirmReturnStart(onStartReturn, () => setShowEndModal(false));
-      if (!result.ok) setReturnError(returnStartMessage(result.reason));
-    } finally {
-      returnBusyRef.current = false;
-      setReturnBusy(false);
-    }
+    await runReturnTap({
+      latch: returnTapLatch.current,
+      start: onStartReturn,
+      onStarted: () => setShowEndModal(false),
+      onBusyChange: setReturnBusy,
+      onError: setReturnError,
+      report: (diagnosis) => {
+        // Give a refused return somewhere durable to go: before this, the
+        // reason was a console.warn on the device only, so a backend refusal
+        // could not be told from a dead network without reading the tablet.
+        void import('@/core/services/wbDiagLog')
+          .then(({ wbDiagLog }) => wbDiagLog({
+            area: 'shift',
+            event: 'returnToYard.refused',
+            source: 'ActionCardRow.handleReturnToYard',
+            result: 'error',
+            reason: diagnosis.code,
+            extra: { recovery: diagnosis.recovery, retryable: diagnosis.retryable },
+          }))
+          .catch(() => {});
+      },
+    });
   };
 
 
@@ -354,7 +370,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       {/* ── Enhanced Shift End Modal ── */}
       <ShiftEndModal
         visible={showEndModal}
-        onClose={() => { if (!returnBusyRef.current) { setShowEndModal(false); setReturnError(null); } }}
+        onClose={() => { if (!returnTapLatch.current.held()) { setShowEndModal(false); setReturnError(null); } }}
         onReturnToYard={handleReturnToYard}
         busy={returnBusy}
         error={returnError}
