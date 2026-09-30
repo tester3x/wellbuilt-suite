@@ -18,6 +18,8 @@ interface ShiftEndModalProps {
   onClose: () => void;
   onReturnToYard: () => void;
   shiftStartTime: string | null;
+  busy?: boolean;
+  error?: string | null;
 }
 
 function formatShiftDuration(startIso: string | null): string {
@@ -29,11 +31,11 @@ function formatShiftDuration(startIso: string | null): string {
   return `${h}h ${m}m`;
 }
 
-export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftStartTime }: ShiftEndModalProps) {
+export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftStartTime, busy = false, error }: ShiftEndModalProps) {
   const shiftDuration = formatShiftDuration(shiftStartTime);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => { if (!busy) onClose(); }}>
       <View style={s.overlay}>
         <View style={s.card}>
           <MaterialCommunityIcons name="truck" size={36} color={colors.status.warning} style={s.headerIcon} />
@@ -49,12 +51,13 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftS
           </View>
 
           {/* Buttons */}
+          {error ? <Text accessibilityRole="alert" style={{ color: '#fca5a5', marginBottom: 12 }}>{error}</Text> : null}
           <View style={s.buttons}>
-            <Pressable onPress={() => { onReturnToYard(); }} style={[s.btn, s.btnReturn]}>
+            <Pressable disabled={busy} onPress={() => { onReturnToYard(); }} style={[s.btn, s.btnReturn, busy && { opacity: 0.6 }]}>
               <MaterialCommunityIcons name="truck-fast" size={20} color="#000" />
-              <Text style={s.btnReturnText}>Return to Yard</Text>
+              <Text style={s.btnReturnText}>{busy ? 'Starting return…' : 'Return to Yard'}</Text>
             </Pressable>
-            <Pressable onPress={onClose} style={[s.btn, s.btnCancel]}>
+            <Pressable disabled={busy} onPress={onClose} style={[s.btn, s.btnCancel]}>
               <Text style={s.btnCancelText}>Cancel</Text>
             </Pressable>
           </View>

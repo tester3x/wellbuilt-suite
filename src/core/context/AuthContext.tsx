@@ -81,7 +81,7 @@ interface AuthContextType {
   /** Full logout — clears SecureStore session. If shift is active, ends it first. */
   logout: () => Promise<void>;
   /** Start the return-to-yard drive (captures GPS, writes depart_return event) */
-  startReturn: () => Promise<void>;
+  startReturn: () => Promise<import('../services/returnStart').ReturnStartResult>;
   /**
    * Confirm arrival at yard — server close under enforcement.
    * Returns false when close is blocked (invalid odometer, close failure, etc.)
@@ -870,13 +870,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const returnInFlight = useRef(false);
   const arrivalInFlight = useRef(false);
 
-  const startReturn = useCallback(async () => {
-    if (!user) return;
+  const startReturn = useCallback(async (): Promise<import('../services/returnStart').ReturnStartResult> => {
+    if (!user) return { ok: false, reason: 'no_user' };
     // Caller gate: Return-to-Yard is only valid during an OPEN shift, and not if
     // already returning — prevents a stray/duplicate depart_return.
-    if (!shiftActive || returningToYard) return;
-    if (returnInFlight.current) return;
+    if (!shiftActive) return { ok: false, reason: 'no_open_shift' };
+    if (returningToYard) return { ok: true };
+    if (returnInFlight.current) return { ok: false, reason: 'in_flight' };
     returnInFlight.current = true;
+    const gen = authorityGenRef.current.current();
     try {
       const now = new Date().toISOString();
       const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { recordEnforcedDepartReturn }] =
@@ -905,10 +907,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const result = await recordEnforcedDepartReturn({ periodId, attemptId });
         if (!result.ok) {
           console.warn('[AuthContext] recordDepartReturn failed — not entering return state:', result.reason);
-          return;
+          return { ok: false, reason: result.reason || 'return_failed' };
         }
       } else {
-        recordShiftEvent(
+        const recorded = await recordShiftEvent(
           'depart_return',
           user.driverId,
           user.legalName || user.displayName,
@@ -916,12 +918,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           'wbs',
           undefined,
           { enforcedExplicit: false, allowDirectWrite: true },
-        ).catch(() => {});
+        );
+        if (!recorded) return { ok: false, reason: 'return_failed' };
       }
+      if (!authorityGenRef.current.isCurrent(gen)) return { ok: false, reason: 'stale_generation' };
       await SecureStore.setItemAsync('returnDepartTime', now);
+      if (!authorityGenRef.current.isCurrent(gen)) return { ok: false, reason: 'stale_generation' };
       setReturningToYard(true);
       setReturnDepartTime(now);
       console.log('[AuthContext] Return to yard started for:', user.displayName);
+      return { ok: true };
+    } catch (err) {
+      console.warn('[AuthContext] Return to yard failed:', err);
+      return { ok: false, reason: 'return_failed' };
     } finally {
       returnInFlight.current = false;
     }

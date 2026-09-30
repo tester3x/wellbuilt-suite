@@ -9,7 +9,7 @@ interface ShiftButtonProps {
   returning: boolean;
   returnStartTime: string | null;
   shiftStartTime: string | null;
-  onStartReturn: () => Promise<void>;
+  onStartReturn: () => Promise<import('@/core/services/returnStart').ReturnStartResult>;
   onArrived: () => Promise<void>;
 }
 

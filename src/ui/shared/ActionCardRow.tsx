@@ -4,7 +4,7 @@
 // odometer, and pre-trip checklist.
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Animated, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -23,6 +23,7 @@ import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
 import { subscribeEtcNotice } from '@/core/services/etcStart/etcNoticeStore';
+import { confirmReturnStart, returnStartMessage, type ReturnStartResult } from '@/core/services/returnStart';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -30,7 +31,7 @@ interface ActionCardRowProps {
   returnStartTime: string | null;
   shiftStartTime: string | null;
   onStartShift: (packageId?: string) => Promise<{ ok: boolean; reason?: string }>;
-  onStartReturn: () => Promise<void>;
+  onStartReturn: () => Promise<ReturnStartResult>;
   onArrived: (odometerMiles?: number) => Promise<boolean | void>;
   jsaMode?: JsaMode;
   jsaPending?: boolean;
@@ -86,6 +87,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [dotColor, setDotColor] = useState('#34D399');
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
+  const [returnBusy, setReturnBusy] = useState(false);
+  const returnBusyRef = useRef(false);
+  const [returnError, setReturnError] = useState<string | null>(null);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
   const [startConfirmBusy, setStartConfirmBusy] = useState(false);
   const [etcNotice, setEtcNotice] = useState<string | null>(null);
@@ -192,8 +196,17 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
   // ── End shift: return to yard ──
   const handleReturnToYard = async () => {
-    setShowEndModal(false);
-    await onStartReturn();
+    if (returnBusyRef.current) return;
+    returnBusyRef.current = true;
+    setReturnBusy(true);
+    setReturnError(null);
+    try {
+      const result = await confirmReturnStart(onStartReturn, () => setShowEndModal(false));
+      if (!result.ok) setReturnError(returnStartMessage(result.reason));
+    } finally {
+      returnBusyRef.current = false;
+      setReturnBusy(false);
+    }
   };
 
 
@@ -341,8 +354,10 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       {/* ── Enhanced Shift End Modal ── */}
       <ShiftEndModal
         visible={showEndModal}
-        onClose={() => setShowEndModal(false)}
+        onClose={() => { if (!returnBusyRef.current) { setShowEndModal(false); setReturnError(null); } }}
         onReturnToYard={handleReturnToYard}
+        busy={returnBusy}
+        error={returnError}
         shiftStartTime={shiftStartTime}
       />
     </View>
