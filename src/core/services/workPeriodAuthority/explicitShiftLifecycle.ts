@@ -16,6 +16,7 @@ import {
 import {
   createShiftAuthorityClient,
   shiftAuthorityDiag,
+  ShiftAuthorityError,
   type ShiftAuthorityClient,
   type ResolveActiveResult,
 } from './shiftAuthorityClient';
@@ -276,7 +277,10 @@ export async function recordEnforcedDepartReturn(deps: {
   } catch (err) {
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
     const reason = err instanceof Error ? err.message : 'depart_failed';
-    shiftAuthorityDiag('departReturn.error', { reason });
+    // Carry the sanitized server details into the diagnostic record: a refused
+    // return used to leave nothing behind but a generic reason.
+    const details = err instanceof ShiftAuthorityError ? err.details : undefined;
+    shiftAuthorityDiag('departReturn.error', { reason, ...(details ?? {}) });
     return { ok: false, reason };
   }
 }
@@ -303,7 +307,10 @@ export async function recordEnforcedReturnAbandoned(deps: {
   } catch (err) {
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
     const reason = err instanceof Error ? err.message : 'abandon_failed';
-    shiftAuthorityDiag('returnAbandoned.error', { reason });
+    // Carry the sanitized server details into the diagnostic record: a refused
+    // return used to leave nothing behind but a generic reason.
+    const details = err instanceof ShiftAuthorityError ? err.details : undefined;
+    shiftAuthorityDiag('returnAbandoned.error', { reason, ...(details ?? {}) });
     return { ok: false, reason };
   }
 }

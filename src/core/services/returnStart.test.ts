@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { mintReturnAttemptId, RETURN_ATTEMPT_ID_RE } from './workPeriodAuthority/returnAttempt';
 import {
   confirmReturnStart,
   returnStartMessage,
@@ -230,6 +231,48 @@ test('an empty or missing reason still produces a usable diagnosis', () => {
 });
 
 
+// ── specific server reasons must reach the driver ─────────────────────────
+// The MikeS24 refusal showed a bare `invalid_argument`. With the client error
+// mapping repaired, a named reason — and the field it names — must survive all
+// the way to the modal text.
+
+test('a named server reason replaces the generic invalid_argument message', () => {
+  const generic = classifyReturnStartFailure('invalid_argument');
+  for (const reason of ['malformed_attempt', 'payload_not_object', 'malformed_period', 'unknown_fields']) {
+    const d = classifyReturnStartFailure(reason);
+    assert.equal(d.code, reason);
+    assert.equal(d.recovery, 'update_app', `${reason} is a contract problem, not a network one`);
+    assert.equal(d.retryable, false);
+    assert.ok(d.message.includes(`code: ${reason}`));
+    assert.notEqual(d.message, generic.message, `${reason} must not read as the generic refusal`);
+  }
+});
+
+test('unknown_fields:attemptId names the rejected field in the driver-visible code', () => {
+  const d = classifyReturnStartFailure('unknown_fields:attemptId');
+  assert.equal(d.code, 'unknown_fields:attemptid', 'full token kept, field included');
+  assert.equal(d.recovery, 'update_app', 'classified on the token head');
+  assert.equal(d.retryable, false);
+  assert.ok(d.message.includes('code: unknown_fields:attemptid'));
+  assert.match(d.message, /shift is still open/i);
+});
+
+test('invalid_argument:attemptId still names the field when the reason is unrecognised', () => {
+  const d = classifyReturnStartFailure('invalid_argument:attemptId');
+  assert.ok(d.message.includes('code: invalid_argument:attemptid'));
+  assert.match(d.message, /shift is still open/i);
+});
+
+test('a :field suffix never changes the recovery of its token', () => {
+  for (const token of ['malformed_attempt', 'driver_session_required', 'authority_uninitialized']) {
+    assert.equal(
+      classifyReturnStartFailure(`${token}:attemptId`).recovery,
+      classifyReturnStartFailure(token).recovery,
+      `${token} recovery must be stable with a field suffix`,
+    );
+  }
+});
+
 // ── source non-regression: the v49 shape must not come back ───────────────
 const repoRoot = join(__dirname, '..', '..', '..');
 const readSrc = (p: string) => readFileSync(join(repoRoot, p), 'utf8');
@@ -272,4 +315,23 @@ test('REGRESSION (source): startReturn reports an outcome instead of returning v
   const ui = readSrc('src/ui/shared/ActionCardRow.tsx');
   assert.ok(ui.includes('onStartReturn: () => Promise<ReturnStartResult>'));
   assert.doesNotMatch(ui, /onStartReturn:\s*\(\)\s*=>\s*Promise<void>/);
+});
+
+
+test('CONTRACT (source): the client attempt-id format matches the documented server expectation', () => {
+  // Source-level only. This asserts the client regex against the format the
+  // server source is documented to accept; it does NOT assert anything about
+  // the revision actually deployed to wellbuilt-sync / us-central1, which
+  // remains unverified and is the open question behind the live refusal.
+  const attempt = readSrc('src/core/services/workPeriodAuthority/returnAttempt.ts');
+  assert.ok(
+    attempt.includes('export const RETURN_ATTEMPT_ID_RE = /^[A-Za-z0-9_-]{6,80}$/'),
+    'client attempt-id pattern changed — re-verify it against the server contract',
+  );
+  // Ids this client actually mints must satisfy that pattern, including the
+  // underscore and hyphen inherited from the periodId.
+  const minted = mintReturnAttemptId('2026-09-29_082000', 1_790_000_000_000, () => 0.4242);
+  assert.ok(RETURN_ATTEMPT_ID_RE.test(minted), `minted id rejected by its own pattern: ${minted}`);
+  assert.ok(minted.includes('_') && minted.includes('-'), 'minted ids carry both separators');
+  assert.ok(minted.length >= 6 && minted.length <= 80);
 });

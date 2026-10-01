@@ -73,9 +73,12 @@ const CONTRACT = new Set([
   'unsupported_return_contract',
   'malformed_response',
   'malformed_period',
+  'malformed_period_proposal',
   'malformed_attempt',
   'unsupported_protocol_version',
   'payload_not_object',
+  'unknown_fields',
+  'failed_precondition_contract',
 ]);
 
 /** Back-office state: driver record or company shift authority. */
@@ -128,13 +131,17 @@ function isStorageReason(code: string): boolean {
  * nobody could tell a backend contract rejection from a dead network.
  */
 export function classifyReturnStartFailure(raw: string | null | undefined): ReturnStartDiagnosis {
-  const code = (typeof raw === 'string' && raw.trim() ? raw.trim() : 'return_failed').toLowerCase();
-  const support = ` (code: ${code})`;
+  const full = (typeof raw === 'string' && raw.trim() ? raw.trim() : 'return_failed').toLowerCase();
+  // A reason may carry the offending field, e.g. "unknown_fields:attemptid".
+  // Classify on the token, but SHOW the whole thing — naming the field is the
+  // difference between a report dispatch can act on and a shrug.
+  const code = full.split(':', 1)[0] || full;
+  const support = ` (code: ${full})`;
   const stillOpen = 'Your shift is still open.';
 
   if (CONTRACT.has(code) || isMalformedFieldReason(code)) {
     return {
-      code,
+      code: full,
       recovery: 'update_app',
       message: `The server could not accept this return request. ${stillOpen} `
         + `The app and server need a matching update — report this code.${support}`,
@@ -143,7 +150,7 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
   }
   if (code === 'driver_session_required') {
     return {
-      code,
+      code: full,
       recovery: 'reauthenticate',
       message: `Your secure session has expired, so the return could not be recorded. ${stillOpen} `
         + `Log out and log back in, then try the return again.${support}`,
@@ -152,7 +159,7 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
   }
   if (DISPATCH.has(code)) {
     return {
-      code,
+      code: full,
       recovery: 'contact_dispatch',
       message: `The shift server will not record a return for this driver yet. ${stillOpen} `
         + `Retrying will not change this — give dispatch this code.${support}`,
@@ -161,7 +168,7 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
   }
   if (DEVICE_DATE.has(code)) {
     return {
-      code,
+      code: full,
       recovery: 'check_device_date',
       message: `The shift server rejected this device's date. ${stillOpen} `
         + `Set date, time and time zone to automatic, then try again.${support}`,
@@ -170,7 +177,7 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
   }
   if (SHIFT_UNCONFIRMED.has(code)) {
     return {
-      code,
+      code: full,
       recovery: 'refresh_shift',
       message: `Your active shift could not be confirmed, so the return was not started. ${stillOpen} `
         + `Refresh your shift status and try again.${support}`,
@@ -179,7 +186,7 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
   }
   if (isStorageReason(code) || code === 'no_attempt') {
     return {
-      code,
+      code: full,
       recovery: 'retry',
       message: `This device could not save the return securely, so the return was not started. ${stillOpen} `
         + `Try again.${support}`,
@@ -188,7 +195,7 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
   }
   if (TRANSIENT.has(code)) {
     return {
-      code,
+      code: full,
       recovery: 'retry',
       message: `Could not start the return drive. ${stillOpen} `
         + `Check your connection and try again.${support}`,
@@ -197,7 +204,7 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
   }
   // Unrecognised: never dress it up as a network problem, and keep the token.
   return {
-    code,
+    code: full,
     recovery: 'retry',
     message: `The return could not be started for a reason this app version does not recognise. `
       + `${stillOpen} Try again; if it repeats, give dispatch this code.${support}`,

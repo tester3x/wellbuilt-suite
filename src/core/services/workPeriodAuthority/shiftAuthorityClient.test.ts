@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   createShiftAuthorityClient,
@@ -9,6 +11,10 @@ import {
   validateCloseResponse,
   normalizeOdometerMiles,
   mapHttpsError,
+  sanitizeShiftAuthorityDetails,
+  extractReasonToken,
+  reasonTokenHead,
+  SHIFT_AUTHORITY_REASON_TOKENS,
   ShiftAuthorityError,
   CLAIM_DRIVER_SHIFT,
   CLOSE_DRIVER_SHIFT,
@@ -182,4 +188,143 @@ test('client fails closed without SDK session', async () => {
     assert.equal((e as ShiftAuthorityError).failure, 'driver_session_required');
     return true;
   });
+});
+
+
+// ── invalid-argument refusals must name the specific reason ───────────────
+// Regression for the MikeS24 Return-to-Yard refusal (2026-09-30): the server
+// sent a specific reason, the extractor could not match it, and the driver was
+// shown a bare `invalid_argument` with no field named.
+
+test('every declared server reason token is extractable and survives mapping', () => {
+  for (const token of SHIFT_AUTHORITY_REASON_TOKENS) {
+    assert.equal(extractReasonToken(`FAILED_PRECONDITION: ${token}`), token, `bare ${token}`);
+    const mapped = mapHttpsError({ code: 'functions/invalid-argument', message: token });
+    assert.equal(mapped.message, token, `mapped message for ${token}`);
+    assert.equal(mapped.failure, token, `failure class for ${token}`);
+    assert.notEqual(mapped.message, 'invalid_argument', `${token} must not degrade to the generic token`);
+  }
+});
+
+test('the two reasons that used to degrade now survive: malformed_attempt, payload_not_object', () => {
+  for (const token of ['malformed_attempt', 'payload_not_object']) {
+    const e = mapHttpsError({ code: 'functions/invalid-argument', message: `INVALID_ARGUMENT: ${token}` });
+    assert.equal(e.message, token);
+    assert.equal(e.failure, token);
+  }
+});
+
+test('unknown_fields:attemptId keeps the field that was rejected', () => {
+  const e = mapHttpsError({
+    code: 'functions/invalid-argument',
+    message: 'INVALID_ARGUMENT: unknown_fields:attemptId',
+  });
+  assert.equal(e.message, 'unknown_fields:attemptId');
+  assert.equal(e.failure, 'unknown_fields', 'classified on the token head');
+  assert.equal(reasonTokenHead(e.message), 'unknown_fields');
+});
+
+test('a reason carried in details.reason is used when the message has none', () => {
+  const e = mapHttpsError({
+    code: 'functions/invalid-argument',
+    message: 'Request had invalid arguments.',
+    details: { reason: 'malformed_attempt' },
+  });
+  assert.equal(e.message, 'malformed_attempt');
+  assert.equal(e.failure, 'malformed_attempt');
+});
+
+test('details.field names the offending field even when the reason is unrecognised', () => {
+  const e = mapHttpsError({
+    code: 'functions/invalid-argument',
+    message: 'Request had invalid arguments.',
+    details: { field: 'attemptId' },
+  });
+  assert.equal(e.message, 'invalid_argument:attemptId', 'field preserved rather than discarded');
+  assert.deepEqual(e.details, { field: 'attemptId' });
+});
+
+test('malformed_period still maps, and period/attempt reasons stay distinct', () => {
+  assert.equal(mapHttpsError({ code: 'functions/invalid-argument', message: 'malformed_period' }).failure, 'malformed_period');
+  assert.equal(mapHttpsError({ code: 'functions/invalid-argument', message: 'malformed_attempt' }).failure, 'malformed_attempt');
+});
+
+test('a truly opaque invalid-argument still falls back honestly', () => {
+  const e = mapHttpsError({ code: 'functions/invalid-argument', message: 'Request had invalid arguments.' });
+  assert.equal(e.message, 'invalid_argument');
+  assert.equal(e.failure, 'unknown');
+  assert.equal(e.details, undefined);
+});
+
+test('missing / malformed details never throw and never invent a reason', () => {
+  for (const details of [undefined, null, 'a string', 42, [], { }, { nested: { a: 1 } }]) {
+    const e = mapHttpsError({ code: 'functions/invalid-argument', message: 'opaque', details });
+    assert.equal(e.message, 'invalid_argument');
+    assert.equal(e.details, undefined);
+  }
+});
+
+// ── privacy filtering on details ──────────────────────────────────────────
+test('details sanitization keeps only allowlisted structural keys', () => {
+  const out = sanitizeShiftAuthorityDetails({
+    field: 'attemptId',
+    expected: '^[A-Za-z0-9_-]{6,80}$',
+    length: 36,
+    protocolVersion: 1,
+    somethingElse: 'dropped',
+  });
+  assert.deepEqual(out, {
+    field: 'attemptId',
+    expected: '^[A-Za-z0-9_-]{6,80}$',
+    length: 36,
+    protocolVersion: 1,
+  });
+});
+
+test('details sanitization drops credentials, identity and location', () => {
+  const out = sanitizeShiftAuthorityDetails({
+    idToken: 'eyJhbGciOiJIUzI1NiJ9.payload',
+    authorization: 'Bearer abc',
+    passcodeHash: 'deadbeef',
+    driverId: 'D-123',
+    companyId: 'C-9',
+    email: 'mike@example.com',
+    latitude: 47.1234567,
+    field: 'attemptId',
+  });
+  assert.deepEqual(out, { field: 'attemptId' }, 'only the safe structural key survives');
+});
+
+test('a sensitive VALUE is dropped even under an allowlisted key', () => {
+  assert.equal(sanitizeShiftAuthorityDetails({ reason: 'mike@example.com' }), undefined);
+  assert.equal(sanitizeShiftAuthorityDetails({ expected: '-122.4194019' }), undefined);
+  assert.equal(sanitizeShiftAuthorityDetails({ field: 'eyJhbGciOiJIUzI1NiJ9.abcdefgh' }), undefined);
+});
+
+test('details sanitization bounds size, arrays and value length', () => {
+  const long = 'x'.repeat(500);
+  const out = sanitizeShiftAuthorityDetails({ expected: long, fields: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] });
+  assert.ok(out);
+  assert.equal((out as Record<string, string>).expected.length, 120);
+  assert.equal((out as Record<string, string>).fields, 'a,b,c,d,e');
+  // Non-finite numbers and nested objects never appear.
+  assert.equal(sanitizeShiftAuthorityDetails({ length: Number.NaN }), undefined);
+  assert.equal(sanitizeShiftAuthorityDetails({ expected: { nested: true } }), undefined);
+});
+
+test('the returned details object is frozen so callers cannot mutate the record', () => {
+  const out = sanitizeShiftAuthorityDetails({ field: 'attemptId' });
+  assert.ok(out && Object.isFrozen(out));
+});
+
+// ── the drift that caused this ────────────────────────────────────────────
+test('the recognized-reason set and the extractor come from ONE list', () => {
+  const src = readFileSync(
+    join(__dirname, 'shiftAuthorityClient.ts'),
+    'utf8',
+  );
+  assert.ok(src.includes('const KNOWN_REASONS: ReadonlySet<string> = new Set(SHIFT_AUTHORITY_REASON_TOKENS);'));
+  assert.ok(src.includes('SHIFT_AUTHORITY_REASON_TOKENS.join(\'|\')'));
+  // No second hand-written alternation list may reappear.
+  assert.doesNotMatch(src, /driver_session_required\|driver_not_authoritative/);
 });
