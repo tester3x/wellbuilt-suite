@@ -100,9 +100,17 @@ export const SHIFT_AUTHORITY_REASON_TOKENS = [
 
 export type ShiftAuthorityServerReason = (typeof SHIFT_AUTHORITY_REASON_TOKENS)[number];
 
-/** Server reasons plus the three the client itself raises. */
+/**
+ * Server reasons plus the classes the client itself raises.
+ *
+ * `callable_absent` is a DEPLOYMENT fact, not a server reason: the callable
+ * does not exist in the project/region at all. It is kept distinct because
+ * retrying cannot help and it is the clearest possible signal that a function
+ * has not been released yet.
+ */
 export type ShiftAuthorityFailureClass =
   | ShiftAuthorityServerReason
+  | 'callable_absent'
   | 'malformed_response'
   | 'transport'
   | 'unknown';
@@ -268,6 +276,12 @@ export function mapHttpsError(err: unknown): ShiftAuthorityError {
   if (code.includes('failed-precondition')) {
     const reason = reasonFromMsg ? withField(reasonFromMsg) : 'failed_precondition';
     return new ShiftAuthorityError(failureClassFor(reason), reason, code || undefined, details);
+  }
+  // The callable is not deployed in this project/region. Firebase answers
+  // not-found for a function that does not exist, which must NOT be reported as
+  // a connection problem: no amount of retrying deploys it.
+  if (code.includes('not-found') || code.includes('unimplemented')) {
+    return new ShiftAuthorityError('callable_absent', 'callable_absent', code || undefined, details);
   }
   if (
     code.includes('unavailable')

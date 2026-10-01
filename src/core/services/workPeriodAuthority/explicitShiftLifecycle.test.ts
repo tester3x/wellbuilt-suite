@@ -157,7 +157,12 @@ test('wiring: abandonReturn is latched and generation-gated against a stale comm
   // Generation captured BEFORE the first await, and re-checked across each one.
   assert.ok(abandon.includes('const gen = authorityGenRef.current.current();'));
   assert.ok(abandon.includes('const isCurrent = () => authorityGenRef.current.isCurrent(gen);'));
-  assert.ok((abandon.match(/if \(!isCurrent\(\)\) return;/g) || []).length >= 2);
+  // The gates must exist across the awaits. abandonReturn now RETURNS an
+  // outcome instead of bare `return;`, so assert the guard, not the shape.
+  assert.ok((abandon.match(/if \(!isCurrent\(\)\)\s*return/g) || []).length >= 2);
+  // A refused divert must hand the reason back so the card can show it.
+  assert.ok(abandon.includes("return { ok: false, reason: outcome.reason };"));
+  assert.ok(abandon.includes("event: 'returnDivert.refused'"));
   assert.ok(abandon.includes('isCurrent,'));
   // One abandonment at a time, via a ref-held latch shared across renders.
   assert.ok(abandon.includes('latch: abandonLatchRef.current,'));

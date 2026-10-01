@@ -328,3 +328,18 @@ test('the recognized-reason set and the extractor come from ONE list', () => {
   // No second hand-written alternation list may reappear.
   assert.doesNotMatch(src, /driver_session_required\|driver_not_authoritative/);
 });
+
+
+test('an absent callable is callable_absent, not transport', () => {
+  // recordReturnAbandoned is not deployed in wellbuilt-sync/us-central1 yet.
+  for (const code of ['functions/not-found', 'functions/unimplemented']) {
+    const e = mapHttpsError({ code, message: 'NOT_FOUND' });
+    assert.equal(e.failure, 'callable_absent', code);
+    assert.equal(e.message, 'callable_absent', code);
+    assert.notEqual(e.message, 'callable_unavailable', 'must not be bucketed as transport');
+  }
+  // Genuine transport codes still map to transport.
+  for (const code of ['functions/unavailable', 'functions/deadline-exceeded', 'functions/internal']) {
+    assert.equal(mapHttpsError({ code, message: '' }).failure, 'transport', code);
+  }
+});

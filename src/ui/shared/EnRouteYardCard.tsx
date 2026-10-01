@@ -3,7 +3,7 @@
 // Destination defaults to the last logout GPS coords (where the driver parked last time).
 // First-ever shift = no destination, just timer.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, radius, typography } from '@/core/theme';
 import { fetchLastYardLocation } from '@/core/services/shiftTracking';
 import { useAuth } from '@/core/context/AuthContext';
+import { returnDivertMessage } from '@/core/services/returnStart';
 
 interface EnRouteYardCardProps {
   returnStartTime: string | null;
@@ -42,13 +43,36 @@ export default function EnRouteYardCard({ returnStartTime, onArrived }: EnRouteY
   // WITHOUT marking arrival or ending the shift (abandonReturn keeps the shift
   // open and leaves the depart_return leg in history). Confirm to avoid a
   // mis-tap discarding the return.
+  // A refused divert must be VISIBLE. Previously this was fire-and-forget with
+  // only a console.warn, so when the server rejected it the driver saw nothing
+  // at all and kept tapping — the same silent dead end that Return to Yard had
+  // in v49. The divert still leaves the return state intact on failure.
+  const divertBusy = useRef(false);
   const handleDivert = useCallback(() => {
     Alert.alert(
       'Back to work?',
       'Cancel the drive to The Yard and keep your shift open for a new job. This does not mark you arrived or end your shift.',
       [
         { text: 'Keep returning', style: 'cancel' },
-        { text: 'Back to work', onPress: () => { void abandonReturn(); } },
+        {
+          text: 'Back to work',
+          onPress: () => {
+            if (divertBusy.current) return;
+            divertBusy.current = true;
+            void (async () => {
+              try {
+                const result = await abandonReturn();
+                if (!result.ok) {
+                  Alert.alert('Still returning to the yard', returnDivertMessage(result.reason));
+                }
+              } catch {
+                Alert.alert('Still returning to the yard', returnDivertMessage('return_failed'));
+              } finally {
+                divertBusy.current = false;
+              }
+            })();
+          },
+        },
       ],
     );
   }, [abandonReturn]);

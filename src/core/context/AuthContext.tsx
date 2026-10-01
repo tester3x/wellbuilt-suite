@@ -116,7 +116,12 @@ interface AuthContextType {
    *  recording an arrival or closing the shift. The depart_return event stays
    *  in history (the attempt is preserved); the server shift period remains
    *  open. */
-  abandonReturn: () => Promise<void>;
+  /**
+   * Divert from the return drive ("Back to work"). Returns an explicit outcome:
+   * a refused divert must be visible, never a silent no-op — the same failure
+   * shape that stranded Return to Yard in v49.
+   */
+  abandonReturn: () => Promise<import('../services/returnStart').ReturnStartResult>;
   /** Register a new driver (goes to pending state) */
   register: (displayName: string, passcode: string, companyCode: string, legalName?: string) => Promise<{ success: boolean; error?: string }>;
   /** Check registration status */
@@ -995,9 +1000,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // in the shift history, preserving the return attempt; daySummary only counts
   // a returning leg when a depart_return is immediately followed by a logout,
   // so a diverted (superseded) depart_return is never counted as yard time.
-  const abandonReturn = useCallback(async () => {
-    if (!user) return;
-    if (!shouldDivertFromReturn({ hasUser: !!user, returningToYard })) return; // nothing to abandon
+  const abandonReturn = useCallback(async (): Promise<import('../services/returnStart').ReturnStartResult> => {
+    if (!user) return { ok: false, reason: 'no_user' };
+    // Nothing to abandon — treat as already-diverted rather than a failure.
+    if (!shouldDivertFromReturn({ hasUser: !!user, returningToYard })) return { ok: true };
     // Durable cancellation marker linked to the return attempt: append a
     // return_abandoned event so history shows the return was diverted (the
     // depart_return stays; this records it was abandoned, NOT that the driver
@@ -1027,9 +1033,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         import('../services/workPeriodAuthority/postLoginShiftRestoration'),
         import('../services/workPeriodAuthority/explicitShiftLifecycle'),
       ]);
-    if (!isCurrent()) return;
+    if (!isCurrent()) return { ok: false, reason: 'stale_generation' };
     const cfg = user.companyId ? await fetchCompanyConfig(user.companyId) : null;
-    if (!isCurrent()) return;
+    if (!isCurrent()) return { ok: false, reason: 'stale_generation' };
     const enforcement = parseSuiteEnforcement(cfg ?? undefined);
     const driverId = user.driverId;
     const driverName = user.legalName || user.displayName;
@@ -1079,10 +1085,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!outcome.ok) {
       // Keeping return state is the point: never show a divert the server did
       // not record, and keep the attempt id so a retry is the SAME attempt.
+      // The reason is RETURNED so the card can tell the driver, instead of the
+      // tap looking like it did nothing.
       console.warn('[AuthContext] return divert not applied — keeping return state:', outcome.reason);
-      return;
+      void import('../services/wbDiagLog')
+        .then(({ wbDiagLog }) => wbDiagLog({
+          area: 'shift',
+          event: 'returnDivert.refused',
+          source: 'AuthContext.abandonReturn',
+          result: 'error',
+          reason: outcome.reason,
+        }))
+        .catch(() => {});
+      return { ok: false, reason: outcome.reason };
     }
     console.log('[AuthContext] Return-to-yard diverted to new work for:', user.displayName);
+    return { ok: true };
   }, [user, returningToYard]);
 
   const confirmArrival = useCallback(async (odometerMiles?: number): Promise<boolean> => {

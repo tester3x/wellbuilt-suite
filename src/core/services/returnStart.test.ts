@@ -17,6 +17,7 @@ import test from 'node:test';
 import { mintReturnAttemptId, RETURN_ATTEMPT_ID_RE } from './workPeriodAuthority/returnAttempt';
 import {
   confirmReturnStart,
+  returnDivertMessage,
   returnStartMessage,
   classifyReturnStartFailure,
   runReturnTap,
@@ -273,6 +274,45 @@ test('a :field suffix never changes the recovery of its token', () => {
   }
 });
 
+// ── an undeployed callable is not a network problem ───────────────────────
+// recordReturnAbandoned does not exist in wellbuilt-sync/us-central1 yet, so
+// every "Back to work" currently gets functions/not-found. Reporting that as
+// "check your connection" sends the driver into an unwinnable retry loop.
+
+test('callable_absent is reported as unavailable-yet, not as a connection fault', () => {
+  const d = classifyReturnStartFailure('callable_absent');
+  assert.equal(d.recovery, 'contact_dispatch');
+  assert.equal(d.retryable, false);
+  assert.doesNotMatch(d.message, /check your connection/i);
+  assert.match(d.message, /not available yet/i);
+  assert.ok(d.message.includes('code: callable_absent'));
+});
+
+test('a refused divert says the driver is STILL RETURNING, not merely that the shift is open', () => {
+  const divert = classifyReturnStartFailure('callable_absent', 'divert');
+  assert.match(divert.message, /still returning to the yard/i);
+  assert.match(divert.message, /shift is still open/i);
+  assert.equal(returnDivertMessage('callable_absent'), divert.message);
+  // The start wording must NOT claim the driver is returning.
+  const start = classifyReturnStartFailure('callable_absent', 'start');
+  assert.doesNotMatch(start.message, /still returning to the yard/i);
+});
+
+test('flow only changes the state sentence, never the classification', () => {
+  for (const reason of ['callable_absent', 'driver_session_required', 'malformed_attempt', 'callable_unavailable']) {
+    const a = classifyReturnStartFailure(reason, 'start');
+    const b = classifyReturnStartFailure(reason, 'divert');
+    assert.equal(a.recovery, b.recovery, `${reason} recovery`);
+    assert.equal(a.retryable, b.retryable, `${reason} retryable`);
+    assert.equal(a.code, b.code, `${reason} code`);
+  }
+});
+
+test('a real transport failure still reads as a connection problem', () => {
+  assert.match(classifyReturnStartFailure('callable_unavailable').message, /check your connection/i);
+  assert.equal(classifyReturnStartFailure('callable_unavailable').retryable, true);
+});
+
 // ── source non-regression: the v49 shape must not come back ───────────────
 const repoRoot = join(__dirname, '..', '..', '..');
 const readSrc = (p: string) => readFileSync(join(repoRoot, p), 'utf8');
@@ -334,4 +374,34 @@ test('CONTRACT (source): the client attempt-id format matches the documented ser
   assert.ok(RETURN_ATTEMPT_ID_RE.test(minted), `minted id rejected by its own pattern: ${minted}`);
   assert.ok(minted.includes('_') && minted.includes('-'), 'minted ids carry both separators');
   assert.ok(minted.length >= 6 && minted.length <= 80);
+});
+
+
+test('REGRESSION (source): a refused "Back to work" is shown, not swallowed', () => {
+  // The divert used to be `void abandonReturn()` over a Promise<void>, with the
+  // failure reaching only console.warn — the same silent dead end Return to
+  // Yard had in v49, on the other half of the flow.
+  const card = readSrc('src/ui/shared/EnRouteYardCard.tsx');
+  assert.doesNotMatch(
+    card,
+    /onPress: \(\) => \{ void abandonReturn\(\); \}/,
+    'fire-and-forget divert is back: a refusal would be invisible',
+  );
+  assert.ok(card.includes('const result = await abandonReturn();'));
+  assert.ok(card.includes('if (!result.ok)'));
+  assert.ok(card.includes('returnDivertMessage(result.reason)'));
+  assert.ok(card.includes('divertBusy'), 'double-tap guard present');
+
+  const auth = readSrc('src/core/context/AuthContext.tsx');
+  assert.doesNotMatch(auth, /abandonReturn:\s*\(\)\s*=>\s*Promise<void>/);
+  assert.ok(auth.includes("abandonReturn: () => Promise<import('../services/returnStart').ReturnStartResult>"));
+});
+
+test('REGRESSION (source): not-found maps to callable_absent, ahead of the transport bucket', () => {
+  const client = readSrc('src/core/services/workPeriodAuthority/shiftAuthorityClient.ts');
+  const absentAt = client.indexOf("code.includes('not-found')");
+  const transportAt = client.indexOf("code.includes('unavailable')");
+  assert.ok(absentAt > 0 && transportAt > 0);
+  assert.ok(absentAt < transportAt, 'an absent callable must not fall into the transport bucket');
+  assert.ok(client.includes("new ShiftAuthorityError('callable_absent', 'callable_absent'"));
 });

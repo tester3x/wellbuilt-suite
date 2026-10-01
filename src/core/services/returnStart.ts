@@ -130,14 +130,34 @@ function isStorageReason(code: string): boolean {
  * carries the code, because the reason was previously only a console.warn and
  * nobody could tell a backend contract rejection from a dead network.
  */
-export function classifyReturnStartFailure(raw: string | null | undefined): ReturnStartDiagnosis {
+/** Which tap failed — only changes the sentence describing the surviving state. */
+export type ReturnFlow = 'start' | 'divert';
+
+export function classifyReturnStartFailure(
+  raw: string | null | undefined,
+  flow: ReturnFlow = 'start',
+): ReturnStartDiagnosis {
   const full = (typeof raw === 'string' && raw.trim() ? raw.trim() : 'return_failed').toLowerCase();
   // A reason may carry the offending field, e.g. "unknown_fields:attemptid".
   // Classify on the token, but SHOW the whole thing — naming the field is the
   // difference between a report dispatch can act on and a shrug.
   const code = full.split(':', 1)[0] || full;
   const support = ` (code: ${full})`;
-  const stillOpen = 'Your shift is still open.';
+  // A refused divert leaves the driver STILL RETURNING; saying only "your shift
+  // is still open" would read as though the divert had taken effect.
+  const stillOpen = flow === 'divert'
+    ? 'You are still returning to the yard and your shift is still open.'
+    : 'Your shift is still open.';
+
+  if (code === 'callable_absent') {
+    return {
+      code: full,
+      recovery: 'contact_dispatch',
+      message: `This shift server feature is not available yet. ${stillOpen} `
+        + `Retrying will not change this — give dispatch this code.${support}`,
+      retryable: false,
+    };
+  }
 
   if (CONTRACT.has(code) || isMalformedFieldReason(code)) {
     return {
@@ -215,6 +235,11 @@ export function classifyReturnStartFailure(raw: string | null | undefined): Retu
 /** Back-compatible message helper. */
 export function returnStartMessage(reason: string): string {
   return classifyReturnStartFailure(reason).message;
+}
+
+/** Driver-facing text for a refused "Back to work" divert. */
+export function returnDivertMessage(reason: string): string {
+  return classifyReturnStartFailure(reason, 'divert').message;
 }
 
 /** Single-owner latch so a double tap cannot start two returns. */
