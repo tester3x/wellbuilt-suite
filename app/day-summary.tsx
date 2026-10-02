@@ -26,7 +26,7 @@ import { cascadeLogoutToSSOApps } from '@/core/services/appLauncher';
 import {
   fetchTodayInvoices,
   invoiceQueryWindow,
-  periodIdToStartIso,
+  originDateFromPeriodId,
   jsaCardPresentation,
   fetchTodayShift,
   fetchShiftDocForDate,
@@ -162,6 +162,8 @@ export default function DaySummaryScreen() {
   // are three separate things: with JSA off the summary must not present an
   // unmet obligation. Defaults to 'off' so an unread config never invents one.
   const [jsaMode, setJsaMode] = useState<string>('off');
+  /** True when the origin-day shift document could not be read at all. */
+  const [shiftRecordMissing, setShiftRecordMissing] = useState(false);
   const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
   const [jsaGateLoaded, setJsaGateLoaded] = useState(false);
   const [jsaAllowAcknowledge, setJsaAllowAcknowledge] = useState(true);
@@ -272,17 +274,17 @@ export default function DaySummaryScreen() {
     // the far side of midnight) fell outside the window and the screen said
     // "No completed loads today" for a shift full of real closed loads.
     const invoicesP = getCurrentShiftId()
-      .then(pid => invoiceQueryWindow(periodIdToStartIso(pid)))
+      .then(async pid => invoiceQueryWindow(
+        (await getCurrentShiftOriginDate()) || originDateFromPeriodId(pid),
+      ))
       .catch(() => invoiceQueryWindow(null))
       .then(window => fetchTodayInvoices(user.driverId, user.companyId, window))
       .catch(() => [] as any[]);
     // Explicit shifts store login/depart_return/logout/odometer on the ORIGIN-day
     // document (frozen at claim), not "calendar today" after a cross-midnight close.
-    let summaryPeriodId: string | null = null;
     const shiftP = (async () => {
       try {
         const periodId = await getCurrentShiftId();
-        summaryPeriodId = periodId;
         const origin = (await getCurrentShiftOriginDate()) || originDateFromShiftId(periodId);
         const now = new Date();
         const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -357,9 +359,10 @@ export default function DaySummaryScreen() {
 
     Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoices, shift, jsaResult, companyDoc]) => {
       // Summary data
-      const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles, {
-        periodId: summaryPeriodId,
-      });
+      const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles);
+      // Distinguish "no shift record could be read" from "the record has no
+      // bookends": the first is a fault worth showing, the second is a fact.
+      setShiftRecordMissing(!shift);
       setSummary(result);
 
       // JSA status — collapse possibly-many operator-scoped docs into a
@@ -560,7 +563,11 @@ export default function DaySummaryScreen() {
     : jsaView.tone === 'informational' ? colors.text.secondary
     : '#22c55e';
   const timeRange = summary
-    ? `${formatTime12h(summary.shiftStart)} – ${summary.shiftEnd ? formatTime12h(summary.shiftEnd) : 'end not recorded'}`
+    ? (summary.shiftStart || summary.shiftEnd
+        ? `${formatTime12h(summary.shiftStart)} – ${formatTime12h(summary.shiftEnd)}`
+        : shiftRecordMissing
+          ? 'Shift times unavailable'
+          : 'Shift times not recorded')
     : '';
 
   return (

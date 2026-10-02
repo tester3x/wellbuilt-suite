@@ -17,14 +17,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   invoiceQueryWindow,
-  periodIdToStartIso,
+  originDateFromPeriodId,
   resolveShiftBookends,
   jsaCardPresentation,
   jsaIsRequired,
   calculateDaySummary,
 } from './daySummary';
 
-/** An enforced shift's day doc: the client writes NO login/logout. */
+/**
+ * A real enforced shift's origin-day document, matching the 2026-10-01 field
+ * receipt for period 2026-09-29_080914: the SERVER writes login at claim and
+ * logout at close, with depart_return between them. The client only avoids
+ * writing duplicates.
+ */
+const SERVER_AUTHORED_EVENTS = [
+  { type: 'login', timestamp: '2026-09-29T13:09:14.000Z', lat: null, lng: null },
+  { type: 'depart_return', timestamp: '2026-09-30T23:40:00.000Z', lat: null, lng: null },
+  { type: 'logout', timestamp: '2026-10-01T01:05:00.000Z', lat: null, lng: null },
+];
+/** A document carrying no bookends at all — the honestly-absent case. */
 const ENFORCED_EVENTS = [
   { type: 'depart_return', timestamp: '2026-09-30T23:40:00.000Z', lat: null, lng: null },
 ];
@@ -42,65 +53,80 @@ function invoice(id: string, createdAt: string, bbl = 100) {
 }
 
 // ── 1. shift start / stop ─────────────────────────────────────────────────
-test('REGRESSION: an enforced shift has bookends even though no login event exists', () => {
-  // Under enforced explicit_shift the claim "never appends client login" and
-  // recordShiftEvent refuses direct writes, so login/logout are absent and the
-  // old code produced null/null -> "--:-- – --:--" on every enforced shift.
-  const before = ENFORCED_EVENTS.filter(e => e.type === 'login' || e.type === 'logout');
-  assert.equal(before.length, 0, 'premise: the day doc carries no login/logout');
+// CORRECTION (2026-10-02): an earlier revision claimed enforced shifts have no
+// login/logout at all and fell back to the period id. Both halves were wrong.
+// The server writes login at claim and logout at close into the origin-day
+// document — a field receipt read exactly those events for period
+// 2026-09-29_080914 — and the period id is minted CLIENT-side before the claim,
+// so its timestamp is a local clock reading, not an authoritative start.
+// Events are the only bookends; anything else would render an invented time.
 
-  const b = resolveShiftBookends({ events: ENFORCED_EVENTS, periodId: '2026-09-29_082000' });
-  assert.equal(b.startSource, 'period_id');
-  assert.ok(b.startIso, 'start is recovered from the server-assigned period id');
-  assert.equal(new Date(b.startIso as string).getFullYear(), 2026);
-  // No authoritative end exists client-side: report it as unavailable rather
-  // than substituting the phone clock.
-  assert.equal(b.endIso, null);
-  assert.equal(b.endSource, 'unavailable');
-});
-
-test('a login/logout pair still wins over the period id, and survives cross-midnight', () => {
-  const b = resolveShiftBookends({ events: LEGACY_EVENTS, periodId: '2026-09-29_082000' });
+test('a server-authored login/logout pair renders BOTH times', () => {
+  const b = resolveShiftBookends({ events: LEGACY_EVENTS });
   assert.equal(b.startIso, '2026-09-29T13:20:00.000Z');
   assert.equal(b.endIso, '2026-10-01T01:05:00.000Z');
   assert.equal(b.startSource, 'event');
   assert.equal(b.endSource, 'event');
 });
 
-test('the LAST login/logout pair is used when a day holds several shifts', () => {
+test('cross-midnight: both bookends survive a shift spanning local days', () => {
+  const b = resolveShiftBookends({ events: LEGACY_EVENTS });
+  const startDay = new Date(b.startIso as string).toISOString().slice(0, 10);
+  const endDay = new Date(b.endIso as string).toISOString().slice(0, 10);
+  assert.notEqual(startDay, endDay, 'premise: the shift crosses a day boundary');
+  assert.ok(new Date(b.endIso as string) > new Date(b.startIso as string));
+});
+
+test('close/reopen: the LAST login/logout pair of the day document is used', () => {
   const events = [
     { type: 'login', timestamp: '2026-09-29T06:00:00.000Z', lat: null, lng: null },
     { type: 'logout', timestamp: '2026-09-29T10:00:00.000Z', lat: null, lng: null },
     { type: 'login', timestamp: '2026-09-29T14:00:00.000Z', lat: null, lng: null },
+    { type: 'depart_return', timestamp: '2026-09-29T19:30:00.000Z', lat: null, lng: null },
     { type: 'logout', timestamp: '2026-09-29T20:00:00.000Z', lat: null, lng: null },
   ];
-  const b = resolveShiftBookends({ events, periodId: null });
-  assert.equal(b.startIso, '2026-09-29T14:00:00.000Z');
+  const b = resolveShiftBookends({ events });
+  assert.equal(b.startIso, '2026-09-29T14:00:00.000Z', 'reopened shift, not the first');
   assert.equal(b.endIso, '2026-09-29T20:00:00.000Z');
 });
 
-test('close/reopen: a second period id resolves to its own start, not the first', () => {
-  const first = periodIdToStartIso('2026-09-29_082000');
-  const second = periodIdToStartIso('2026-09-29_173000');
-  assert.ok(first && second);
-  assert.notEqual(first, second);
-  assert.ok(new Date(second as string).getTime() > new Date(first as string).getTime());
+test('a shift still open shows its start and an honestly absent end', () => {
+  const events = [{ type: 'login', timestamp: '2026-09-29T13:20:00.000Z', lat: null, lng: null }];
+  const b = resolveShiftBookends({ events });
+  assert.equal(b.startIso, '2026-09-29T13:20:00.000Z');
+  assert.equal(b.endIso, null);
+  assert.equal(b.endSource, 'unavailable');
 });
 
-test('genuinely absent data stays absent — no fabricated times', () => {
-  const b = resolveShiftBookends({ events: [], periodId: null });
+test('genuinely missing events stay missing — no substituted time', () => {
+  const b = resolveShiftBookends({ events: [] });
   assert.deepEqual(b, { startIso: null, endIso: null, startSource: 'unavailable', endSource: 'unavailable' });
-  for (const bad of [null, undefined, '', 'wbs', 'not-a-period', '2026-09-29']) {
-    assert.equal(periodIdToStartIso(bad as string | null), null, String(bad));
+  // depart_return alone is not a bookend.
+  const partial = resolveShiftBookends({ events: ENFORCED_EVENTS });
+  assert.equal(partial.startIso, null);
+  assert.equal(partial.endIso, null);
+});
+
+test('a client-minted period id can never become a displayed start time', () => {
+  // mintShiftId() runs before the claim, so this timestamp is local clock.
+  // Only its DATE part is used, and only to pick which day document to read.
+  assert.equal(originDateFromPeriodId('2026-09-29_080914'), '2026-09-29');
+  assert.equal(originDateFromPeriodId('2026-09-29'), null, 'not a period id');
+  for (const bad of [null, undefined, '', 'wbs', 'not-a-period']) {
+    assert.equal(originDateFromPeriodId(bad as string | null), null, String(bad));
   }
+  const b = resolveShiftBookends({ events: ENFORCED_EVENTS });
+  assert.equal(b.startIso, null, 'no period-id-derived start leaks into the bookends');
 });
 
 test('malformed event timestamps are ignored rather than becoming Invalid Date', () => {
   const b = resolveShiftBookends({
-    events: [{ type: 'login', timestamp: 'garbage', lat: null, lng: null }],
-    periodId: '2026-09-29_082000',
+    events: [
+      { type: 'login', timestamp: 'garbage', lat: null, lng: null },
+      { type: 'login', timestamp: '2026-09-29T13:20:00.000Z', lat: null, lng: null },
+    ],
   });
-  assert.equal(b.startSource, 'period_id', 'falls through to the authoritative source');
+  assert.equal(b.startIso, '2026-09-29T13:20:00.000Z');
 });
 
 // ── 2. loads / invoice window ─────────────────────────────────────────────
@@ -130,30 +156,32 @@ test('REGRESSION: an evening load is no longer outside the query window', () => 
   void oldStart;
 });
 
-test('with a shift start the window covers the whole shift, across midnight', () => {
-  const shiftStart = periodIdToStartIso('2026-09-29_082000') as string;
-  const now = new Date(2026, 9, 1, 20, 0, 0); // 2026-10-01 8pm local, ~36h later
-  const w = invoiceQueryWindow(shiftStart, now);
-  assert.ok(Date.parse(w.startIso) <= Date.parse(shiftStart), 'starts at or before the shift');
+test('the origin day bounds the window, so a cross-midnight shift is covered', () => {
+  const originDay = originDateFromPeriodId('2026-09-29_080914') as string;
+  const now = new Date(2026, 9, 1, 20, 0, 0); // 2026-10-01 8pm local, ~2 days later
+  const w = invoiceQueryWindow(originDay, now);
+  const expected = new Date(2026, 8, 29, 0, 0, 0, 0).toISOString();
+  assert.equal(w.startIso, expected, 'local midnight of the ORIGIN day, converted to UTC');
   assert.ok(Date.parse(w.endIso) >= now.getTime(), 'reaches now');
-  // A load closed the previous evening is inside the window.
+  // An invoice created the previous evening is inside the window.
   assert.ok(Date.parse('2026-09-30T01:02:00.000Z') > Date.parse(w.startIso));
+  // The window is a FETCH bound only; the displayed times still come from events.
 });
 
-test('REGRESSION: loads on an enforced shift are counted, not zeroed', () => {
-  // Phone 2: loads WERE done. Without bookends the invoice filter had no
-  // window; with the period id it has one and the loads land inside it.
+test('REGRESSION: loads created in the evening are counted, not zeroed', () => {
+  // Phone 2: loads WERE done. The query field is invoice `createdAt`, so what
+  // the old window excluded was invoices CREATED outside the stamped-Z day.
   const invoices = [
     invoice('a', '2026-09-30T01:02:00.000Z', 120),  // evening of the 29th local
     invoice('b', '2026-09-30T18:40:00.000Z', 95),
   ];
-  const summary = calculateDaySummary(invoices, ENFORCED_EVENTS, undefined, {
-    periodId: '2026-09-29_082000',
-  });
+  const summary = calculateDaySummary(invoices, SERVER_AUTHORED_EVENTS, undefined);
   assert.equal(summary.totalLoads, 2, 'both loads attributed to the shift');
   assert.equal(summary.totalBBL, 215);
   assert.equal(summary.wellsVisited.length, 2);
-  assert.ok(summary.shiftStart, 'and the times are populated');
+  // Times come from the server-authored events, not from anything derived.
+  assert.equal(summary.shiftStart, '2026-09-29T13:09:14.000Z');
+  assert.equal(summary.shiftEnd, '2026-10-01T01:05:00.000Z');
 });
 
 test('loads outside the shift window are NOT counted', () => {
@@ -161,17 +189,28 @@ test('loads outside the shift window are NOT counted', () => {
     invoice('before', '2026-09-28T12:00:00.000Z'),   // previous shift
     invoice('inside', '2026-09-30T01:02:00.000Z'),
   ];
-  const summary = calculateDaySummary(invoices, LEGACY_EVENTS, undefined, { periodId: null });
+  const summary = calculateDaySummary(invoices, LEGACY_EVENTS, undefined);
   assert.equal(summary.totalLoads, 1);
   assert.equal(summary.wellStats[0].name, 'Well inside');
 });
 
-test('PHOTO 1: a device with no jobs still reports none', () => {
-  const summary = calculateDaySummary([], ENFORCED_EVENTS, undefined, { periodId: '2026-09-29_082000' });
+test('PHOTO 1: a device with no jobs still reports none, and still shows its times', () => {
+  const summary = calculateDaySummary([], SERVER_AUTHORED_EVENTS, undefined);
   assert.equal(summary.totalLoads, 0);
   assert.equal(summary.totalBBL, 0);
   assert.deepEqual(summary.wellsVisited, []);
-  assert.ok(summary.shiftStart, 'times are shown even with no loads');
+  assert.equal(summary.shiftStart, '2026-09-29T13:09:14.000Z', 'times do not depend on loads');
+  assert.equal(summary.shiftEnd, '2026-10-01T01:05:00.000Z');
+});
+
+test('a shift document that could not be read yields no times and no invented ones', () => {
+  // fetchShiftDocForDate returns null on a failed read (it now logs the status),
+  // so the screen receives an empty event list and must stay honest.
+  const summary = calculateDaySummary([], [], undefined);
+  assert.equal(summary.shiftStart, null);
+  assert.equal(summary.shiftEnd, null);
+  assert.equal(summary.shiftStartSource, 'unavailable');
+  assert.equal(summary.shiftEndSource, 'unavailable');
 });
 
 // ── 3. JSA requirement vs status ──────────────────────────────────────────

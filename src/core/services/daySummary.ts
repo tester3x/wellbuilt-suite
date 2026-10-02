@@ -3,7 +3,6 @@
 // and calculates daily summary stats for the end-of-day screen.
 // Pure calculation functions ported from Dashboard's driverLogs.ts.
 
-import { firebaseGet } from './driverAuth';
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -327,7 +326,19 @@ export async function fetchShiftDocForDate(
     const resp = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
 
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      // Previously `return null` with no log at all, so an unreadable shift
+      // record was indistinguishable from a shift that had no events — and the
+      // screen blanked its times either way with nothing in the log to explain
+      // it. Note these Firestore reads carry only an API key and no
+      // Authorization header, so a rules-protected collection answers 403 here.
+      const errText = await resp.text().catch(() => '');
+      console.warn(
+        '[daySummary] driver_shifts read failed:', resp.status,
+        'doc:', docId, errText.substring(0, 200),
+      );
+      return null;
+    }
 
     const doc = await resp.json();
     const eventsRaw = doc.fields?.events?.arrayValue?.values || [];
@@ -398,30 +409,31 @@ export function resolveShiftSummaryDate(opts: {
  * the earlier day entirely.
  *
  * `new Date(y, m, d)` is local midnight as a real instant, so `.toISOString()`
- * is the correct UTC bound. When the shift's start is known we query from the
- * shift instead of the calendar day, which is what actually matters — and
- * cross-midnight shifts then work. An hour of slack on each end absorbs device
- * clock skew; calculateDaySummary still narrows to the shift window, so a wider
- * fetch cannot inflate the count.
+ * is the correct UTC bound. The lower bound is the shift's ORIGIN DAY when it
+ * is known, which is what makes a cross-midnight shift work — a date, not a
+ * claimed start time. calculateDaySummary still narrows to the shift's actual
+ * recorded bookends, so a wider fetch cannot inflate the count.
+ *
+ * NOTE on scope: the query field is invoice `createdAt`, i.e. when the invoice
+ * was CREATED, not when the load was closed. The two differ, and this window
+ * only governs which documents are fetched.
  */
 export function invoiceQueryWindow(
-  shiftStartIso: string | null,
+  /** Origin local date (YYYY-MM-DD) of the completed shift, when known. */
+  originLocalDate: string | null,
   now: Date = new Date(),
 ): { startIso: string; endIso: string } {
   const HOUR = 60 * 60 * 1000;
   const endIso = new Date(now.getTime() + HOUR).toISOString();
-  if (shiftStartIso) {
-    const startMs = new Date(shiftStartIso).getTime();
-    if (!Number.isNaN(startMs)) {
-      return { startIso: new Date(startMs - HOUR).toISOString(), endIso };
-    }
-  }
-  const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  return { startIso: localMidnight.toISOString(), endIso };
+  const m = originLocalDate && /^(\d{4})-(\d{2})-(\d{2})$/.exec(originLocalDate);
+  const base = m
+    ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0)
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  return { startIso: base.toISOString(), endIso };
 }
 
 /** Where a bookend came from, so the UI can be honest about what it knows. */
-export type ShiftBookendSource = 'event' | 'period_id' | 'unavailable';
+export type ShiftBookendSource = 'event' | 'unavailable';
 
 export type ShiftBookends = {
   startIso: string | null;
@@ -430,57 +442,44 @@ export type ShiftBookends = {
   endSource: ShiftBookendSource;
 };
 
-/** Period ids are `YYYY-MM-DD_HHMMSS` in the driver's local wall clock. */
-export function periodIdToStartIso(periodId: string | null | undefined): string | null {
+/** Period ids are `YYYY-MM-DD_HHMMSS`; the DATE part identifies the origin day. */
+export function originDateFromPeriodId(periodId: string | null | undefined): string | null {
   if (!periodId) return null;
-  const m = periodId.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})$/);
-  if (!m) return null;
-  const [, y, mo, d, h, mi, sec] = m;
-  const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec));
-  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+  const m = periodId.match(/^(\d{4}-\d{2}-\d{2})_\d{6}$/);
+  return m ? m[1] : null;
 }
 
 /**
- * The completed shift's actual start and stop.
+ * The completed shift's start and stop, taken from the server-authored
+ * `login` / `logout` events in the origin-day document.
  *
- * THE BUG THIS REPLACES: start and end were read ONLY from `login` / `logout`
- * events in the day document. Under enforced explicit_shift the client writes
- * neither — claimEnforcedExplicitStart "never appends client login", and
- * recordShiftEvent refuses any direct write when enforcedExplicit is set. So
- * for every enforced shift both ends were null and the screen read
- * "--:-- – --:--", with or without loads.
+ * CORRECTION (2026-10-02): an earlier revision of this function fell back to
+ * the period id when no login event was found, on the reasoning that an
+ * enforced shift writes no client login. That reasoning was wrong twice over.
+ * The server writes login at claim and logout at close into the origin-day
+ * document — a field receipt read exactly those events for period
+ * 2026-09-29_080914 — so the client avoiding a DUPLICATE write is not the same
+ * as the events being absent. And the period id is minted CLIENT-side by
+ * mintShiftId() before the claim, so its timestamp is a local clock reading,
+ * not an authoritative start. Deriving a displayed start from it would have
+ * shown an invented time next to a real one.
  *
- * The period id is server-assigned at claim and encodes the authoritative
- * start, so it is a real record rather than a guess. There is no equivalent
- * client-side source for the END: when no logout event exists the end is
- * reported as genuinely unavailable rather than being filled in from the phone
- * clock, which would silently invent a shift length.
+ * Events are therefore the only source. When they cannot be read the caller is
+ * told so, rather than a plausible-looking substitute being rendered.
  */
-export function resolveShiftBookends(input: {
-  events: TimelineEvent[];
-  periodId?: string | null;
-}): ShiftBookends {
+export function resolveShiftBookends(input: { events: TimelineEvent[] }): ShiftBookends {
   const events = Array.isArray(input.events) ? input.events : [];
   const usable = (e: TimelineEvent) => !!e?.timestamp && !Number.isNaN(new Date(e.timestamp).getTime());
+  // Last pair: a day document accumulates events across shifts via arrayUnion.
   const logins = events.filter(e => e?.type === 'login' && usable(e));
   const logouts = events.filter(e => e?.type === 'logout' && usable(e));
   const loginEvt = logins[logins.length - 1] || null;
   const logoutEvt = logouts[logouts.length - 1] || null;
 
-  if (loginEvt) {
-    return {
-      startIso: loginEvt.timestamp,
-      endIso: logoutEvt ? logoutEvt.timestamp : null,
-      startSource: 'event',
-      endSource: logoutEvt ? 'event' : 'unavailable',
-    };
-  }
-
-  const fromPeriod = periodIdToStartIso(input.periodId);
   return {
-    startIso: fromPeriod,
+    startIso: loginEvt ? loginEvt.timestamp : null,
     endIso: logoutEvt ? logoutEvt.timestamp : null,
-    startSource: fromPeriod ? 'period_id' : 'unavailable',
+    startSource: loginEvt ? 'event' : 'unavailable',
     endSource: logoutEvt ? 'event' : 'unavailable',
   };
 }
@@ -556,15 +555,10 @@ export function calculateDaySummary(
   invoices: DaySummaryInvoice[],
   shiftEvents: TimelineEvent[],
   odometerMiles?: number,
-  /** Period id, so an enforced shift (which writes no login event) still has bookends. */
-  opts?: { periodId?: string | null },
 ): DaySummary {
-  // Bookends come from the last login/logout pair when the client wrote them
-  // (multiple shifts per day append via arrayUnion, so the LAST pair is the
-  // current shift), and otherwise from the server-assigned period id. Without
-  // this fallback an enforced shift has no window at all, which both blanked
-  // the displayed times AND disabled the invoice filter below.
-  const bookends = resolveShiftBookends({ events: shiftEvents, periodId: opts?.periodId });
+  // Bookends are the server-authored login/logout pair in the origin-day
+  // document (the LAST pair, since a day accumulates events across shifts).
+  const bookends = resolveShiftBookends({ events: shiftEvents });
   const loginEvt = bookends.startIso ? { timestamp: bookends.startIso } : null;
   const logoutEvt = bookends.endIso ? { timestamp: bookends.endIso } : null;
 
