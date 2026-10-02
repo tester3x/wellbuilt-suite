@@ -83,18 +83,22 @@ export default function DvirCompleteScreen() {
         }
 
         // Post-Trip: resume arrival if pending, else home / day-summary
-        const pending = await gate.consumePendingEndShiftIfReady();
-        if (pending.resume && shiftActive) {
-          try {
-            await confirmArrival(pending.odometerMiles);
-            setTimeout(() => router.replace('/day-summary'), 600);
-            return;
-          } catch (err) {
-            console.warn('[dvir-complete] confirmArrival failed:', err);
-          }
+        // Cold-launch return. Same single transition the warm listener uses, so
+        // both paths behave identically: a Post-Trip receipt advances the
+        // arrival to its final step and NEVER closes the shift.
+        const { handlePostTripReceipt } = await import('@/core/services/dvirGate/arrivalCoordinator');
+        const advanced = await handlePostTripReceipt(
+          gate,
+          { shiftId: result.receipt.shiftId, phase: result.receipt.phase },
+          shiftActive,
+        );
+        await gate.finalizeShiftDvirSummary(result.receipt.shiftId);
+        if (advanced.openFinalModal && shiftActive) {
+          // Home restores the final mileage modal from the durable record.
+          setTimeout(() => router.replace('/home'), 600);
+          return;
         }
         await gate.clearDvirRoutingAfterFinalization();
-        await gate.finalizeShiftDvirSummary(result.receipt.shiftId);
         setTimeout(() => router.replace(shiftActive ? '/home' : '/day-summary'), 900);
       } catch (err) {
         console.warn('[dvir-complete] handler failed:', err);

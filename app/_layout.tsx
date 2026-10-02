@@ -57,14 +57,19 @@ function DvirReceiptListener() {
 
       // Resume end-shift if Post-Trip completed and pending flag set
       if (result.receipt.phase === 'post_trip') {
-        const pending = await gate.consumePendingEndShiftIfReady();
-        if (pending.resume && shiftActiveRef.current) {
-          try {
-            await confirmArrival(pending.odometerMiles);
-            router.replace('/day-summary');
-          } catch (err) {
-            console.warn('[DvirReceipt] resume confirmArrival failed:', err);
-          }
+        // A Post-Trip receipt advances the arrival to its FINAL step — it never
+        // closes the shift. Closing here used to end the shift the moment a
+        // receipt landed, before any odometer or paperwork confirmation.
+        const { handlePostTripReceipt } = await import('@/core/services/dvirGate/arrivalCoordinator');
+        const advanced = await handlePostTripReceipt(
+          gate,
+          { shiftId: result.receipt.shiftId, phase: result.receipt.phase },
+          shiftActiveRef.current,
+        );
+        if (advanced.openFinalModal && shiftActiveRef.current) {
+          // Home renders the final mileage modal from the durable record.
+          router.replace('/home');
+          await gate.finalizeShiftDvirSummary(result.receipt.shiftId);
         } else if (!shiftActiveRef.current) {
           // Already finalized — ensure pending flag cannot re-hijack module taps
           await gate.clearDvirRoutingAfterFinalization();

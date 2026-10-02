@@ -87,12 +87,37 @@ describe('shift DVIR stays on the shift actions', () => {
   });
 
   it('Post-Trip runs before return-to-yard arrival closes the shift', () => {
+    // This invariant now holds MORE strongly than when it was frozen. It used
+    // to be satisfied inside onConfirm: the modal opened first, the driver
+    // ticked an unverified Post-Trip box, and ensurePostTripGate launched WB-E
+    // only on confirm. Post-Trip now runs at Mark Arrived, BEFORE the mileage
+    // modal exists, and the close is gated on a verified receipt for this
+    // exact shift rather than on a checkbox.
     const row = read('../ui/shared/ActionCardRow.tsx');
+
+    // 1. The handoff happens at Mark Arrived, not at confirm.
+    assert.ok(row.includes('onArrived={handleMarkArrived}'), 'Mark Arrived drives the handoff');
+    const markArrived = row.slice(row.indexOf('const handleMarkArrived'));
+    assert.ok(markArrived.indexOf('coordinator.markArrived(gate)') > -1);
+    // Mark Arrived must never close the shift.
+    assert.ok(
+      markArrived.slice(0, markArrived.indexOf('const handleShiftPress')) .indexOf('onArrived(') === -1,
+      'Mark Arrived must not close the shift',
+    );
+
+    // 2. The close goes through the checked path, which requires the receipt.
     const arrival = row.slice(row.indexOf('onConfirm={async (miles)'));
-    const post = arrival.indexOf('ensurePostTripGate({');
-    const close = arrival.indexOf('const closed = await onArrived(miles)');
-    assert.ok(post > -1 && close > post);
-    assert.match(arrival, /if \(!post\.allowed\) \{[\s\S]*return;/);
+    const finalize = arrival.indexOf('coordinator.finalizeArrival(gate, {');
+    const close = arrival.indexOf('close: async (m) => (await onArrived(m)) !== false');
+    assert.ok(finalize > -1, 'the final submit goes through finalizeArrival');
+    assert.ok(close > finalize, 'the close is the callback finalizeArrival invokes');
+    assert.match(arrival, /if \(!result\.ok\) \{[\s\S]*return;/, 'a blocked submit keeps the modal');
+
+    // 3. finalizeArrival itself requires a verified Post-Trip receipt.
+    const coordinator = read('services/dvirGate/arrivalCoordinator.ts');
+    assert.ok(coordinator.includes('postTripReceiptValid'));
+    const flow = read('services/dvirGate/arrivalFlow.ts');
+    assert.ok(flow.includes("if (!input.postTripReceiptValid) return { ok: false, reason: 'post_trip_missing' };"));
   });
 
   it('logout still requires Post-Trip while a shift is active', () => {

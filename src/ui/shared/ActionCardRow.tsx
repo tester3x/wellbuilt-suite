@@ -4,7 +4,7 @@
 // odometer, and pre-trip checklist.
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, Pressable, Animated, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -91,6 +91,82 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const returnTapLatch = useRef(createReturnTapLatch());
   const [returnError, setReturnError] = useState<string | null>(null);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
+  const [postTripVerified, setPostTripVerified] = useState(false);
+  const [arrivalError, setArrivalError] = useState<string | null>(null);
+  const [retainedOdometer, setRetainedOdometer] = useState<string | undefined>(undefined);
+  const markArrivedBusy = useRef(false);
+
+  /**
+   * Mark Arrived now records a durable arrival and launches the governed
+   * Post-Trip inspection IMMEDIATELY — before any mileage or checkbox. The old
+   * order opened this modal first and asked the driver to tick a Post-Trip box
+   * that nothing had verified, launching WB-E only on confirm.
+   * It never closes the shift.
+   */
+  const handleMarkArrived = useCallback(async () => {
+    if (markArrivedBusy.current) return;
+    markArrivedBusy.current = true;
+    try {
+      const [{ createSuiteDvirGate }, coordinator] = await Promise.all([
+        import('@/core/services/dvirGate'),
+        import('@/core/services/dvirGate/arrivalCoordinator'),
+      ]);
+      const gate = createSuiteDvirGate({ isShiftActive: () => true });
+      const result = await coordinator.markArrived(gate);
+      if (!result.arrived) {
+        Alert.alert('Could not mark arrived', result.reason || 'Your shift is still open.');
+        return;
+      }
+      if (result.showFinalModal) {
+        // Post-Trip already satisfied for this shift — straight to the final
+        // step, no relaunch of WB-E.
+        setPostTripVerified(true);
+        setArrivalError(null);
+        setShowArrivalModal(true);
+        return;
+      }
+      if (!result.launched) {
+        // Handoff cancelled or failed: stay arrived, offer retry, and do NOT
+        // present the final modal as though the inspection had passed.
+        Alert.alert(
+          'Post-trip inspection needed',
+          (result.reason || 'The inspection app did not open.')
+            + ' Your shift is still open — tap Mark Arrived again to retry.',
+        );
+      }
+      // Launched: the receipt return opens the final modal.
+    } catch (err) {
+      console.warn('[ActionCardRow] mark arrived failed:', err);
+      Alert.alert('Could not mark arrived', 'Try again. Your shift is still open.');
+    } finally {
+      markArrivedBusy.current = false;
+    }
+  }, []);
+
+  /** Restore the final step after a receipt return or a process restart. */
+  useEffect(() => {
+    if (!returning) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [{ createSuiteDvirGate }, coordinator] = await Promise.all([
+          import('@/core/services/dvirGate'),
+          import('@/core/services/dvirGate/arrivalCoordinator'),
+        ]);
+        const gate = createSuiteDvirGate({ isShiftActive: () => true });
+        const view = await coordinator.getResumeArrivalView(gate, { shiftActive: true });
+        if (cancelled) return;
+        if (view.show === 'final_modal') {
+          setPostTripVerified(true);
+          setRetainedOdometer(
+            view.record.odometerMiles !== undefined ? String(view.record.odometerMiles) : undefined,
+          );
+          setShowArrivalModal(true);
+        }
+      } catch { /* resume is best-effort; the card stays usable */ }
+    })();
+    return () => { cancelled = true; };
+  }, [returning]);
   const [startConfirmBusy, setStartConfirmBusy] = useState(false);
   const [etcNotice, setEtcNotice] = useState<string | null>(null);
   useEffect(() => subscribeEtcNotice(setEtcNotice), []);
@@ -267,7 +343,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       <View>
         <EnRouteYardCard
           returnStartTime={returnStartTime}
-          onArrived={() => setShowArrivalModal(true)}
+          onArrived={handleMarkArrived}
         />
         {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
 
@@ -276,37 +352,47 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           visible={showArrivalModal}
           onClose={() => setShowArrivalModal(false)}
           onConfirm={async (miles) => {
-            // Hold the modal open with its busy spinner while end-of-shift
-            // work runs. Do not close on close failure or invalid odometer.
+            // Only this submit closes the shift, and only once every condition
+            // holds: a verified Post-Trip receipt for THIS shift, the driver's
+            // paperwork confirmation, and valid miles.
             try {
-              const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
-              // Governed Post-Trip: PKCE only (no hash/name URI material).
+              setArrivalError(null);
+              const [{ createSuiteDvirGate }, coordinator] = await Promise.all([
+                import('@/core/services/dvirGate'),
+                import('@/core/services/dvirGate/arrivalCoordinator'),
+              ]);
               const gate = createSuiteDvirGate({ isShiftActive: () => true });
-              const post = await gate.ensurePostTripGate({
+              const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+              const result = await coordinator.finalizeArrival(gate, {
+                paperworkConfirmed: true, // the modal enables submit only when ticked
                 odometerMiles: miles,
-                alertOnBlock: true,
+                close: async (m) => (await onArrived(m)) !== false,
+                // Promoted only after the authoritative close succeeded.
+                onPrefillOdometer: async (m) => {
+                  await AsyncStorage.setItem('wellbuilt-last-odometer', String(m)).catch(() => {});
+                },
               });
-              if (!post.allowed) {
-                // Keep shift active; pending end-shift stored for resume after receipt.
-                setShowArrivalModal(false);
-                return;
+              if (!result.ok) {
+                setRetainedOdometer(miles !== undefined ? String(miles) : undefined);
+                const message = result.reason === 'post_trip_missing'
+                  ? 'The post-trip inspection for this shift is not recorded yet. Your shift is still open.'
+                  : result.reason === 'odometer_invalid'
+                    ? 'Check total miles (0–5000 whole miles). Your shift is still open.'
+                    : 'Could not end shift. Your shift is still open — try again.';
+                setArrivalError(message);
+                return; // keep the modal open and recoverable
               }
-              const closed = await onArrived(miles);
-              if (closed === false) {
-                Alert.alert(
-                  'Could not end shift',
-                  'Check total miles (0–5000 whole miles) and try again. Your shift is still open.',
-                );
-                return; // keep arrival modal open
-              }
-              // Arrival finalizes the shift — clear pending Post-Trip routing.
               await gate.clearDvirRoutingAfterFinalization();
               setShowArrivalModal(false);
+              setRetainedOdometer(undefined);
             } catch (err) {
               console.warn('[ActionCardRow] arrival confirm failed:', err);
-              Alert.alert('Could not end shift', 'Try again. Your shift is still open.');
+              setArrivalError('Could not end shift. Your shift is still open — try again.');
             }
           }}
+          postTripVerified={postTripVerified}
+          initialOdometer={retainedOdometer}
+          errorText={arrivalError}
           returnStartTime={returnStartTime}
         />
       </View>

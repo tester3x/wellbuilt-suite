@@ -24,6 +24,15 @@ interface ShiftArrivalModalProps {
   onClose: () => void;
   /** Returning a Promise lets the modal hold its busy state until end-of-shift work resolves. */
   onConfirm: (odometerMiles?: number) => void | Promise<void>;
+  /**
+   * Post-Trip satisfied, derived from a verified receipt for THIS shift.
+   * The row is display-only: a tap must never claim an inspection happened.
+   */
+  postTripVerified?: boolean;
+  /** Odometer retained from a failed close, so a retry does not re-ask. */
+  initialOdometer?: string;
+  /** Visible reason a previous submit did not close the shift. */
+  errorText?: string | null;
   returnStartTime: string | null;
 }
 
@@ -49,11 +58,17 @@ function CheckItem({ label, checked, onToggle }: { label: string; checked: boole
   );
 }
 
-export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnStartTime }: ShiftArrivalModalProps) {
+export default function ShiftArrivalModal({
+  visible, onClose, onConfirm, returnStartTime,
+  postTripVerified = false, initialOdometer, errorText,
+}: ShiftArrivalModalProps) {
   const [endOdometer, setEndOdometer] = useState('');
   const [startOdometer, setStartOdometer] = useState('');
   const [totalMiles, setTotalMiles] = useState('');
-  const [postTripDone, setPostTripDone] = useState(false);
+  // NOT driver-settable. Post-Trip is satisfied by a verified receipt or not
+  // at all — the old manual checkbox let a tap assert an inspection that had
+  // not been done, because the handoff only happened after this modal closed.
+  const postTripDone = postTripVerified;
   const [paperworkDone, setPaperworkDone] = useState(false);
   // Busy = end-of-shift work in flight. Modal stays open with a spinner
   // and disabled buttons so the driver doesn't double-tap thinking the
@@ -64,16 +79,17 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
   // Reset + load start odometer on open
   useEffect(() => {
     if (!visible) return;
-    setPostTripDone(false);
     setPaperworkDone(false);
-    setEndOdometer('');
+    // Restore a reading retained from a failed close so the retry does not
+    // make the driver type it again.
+    setEndOdometer(initialOdometer || '');
     setTotalMiles('');
     setBusy(false);
     (async () => {
       const startOdo = await AsyncStorage.getItem('wellbuilt-shift-start-odometer').catch(() => null);
       setStartOdometer(startOdo || '');
     })();
-  }, [visible]);
+  }, [visible, initialOdometer]);
 
   // Auto-calculate total miles
   useEffect(() => {
@@ -96,9 +112,9 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
     setBusy(true);
     try {
       // Save end odometer as next day's start pre-fill
-      if (endOdometer.trim()) {
-        await AsyncStorage.setItem('wellbuilt-last-odometer', endOdometer.trim()).catch(() => {});
-      }
+      // The next shift's prefill is promoted by the caller only after the
+      // authoritative close succeeds. Writing it here promoted a reading from
+      // a shift that might never close.
       // Pass odometer miles to parent so it can write to Firestore shift
       // doc. Awaiting onConfirm holds the modal open with the spinner
       // until end-of-shift work resolves (recordShiftEvent + Firestore
@@ -167,12 +183,25 @@ export default function ShiftArrivalModal({ visible, onClose, onConfirm, returnS
               ) : null}
             </View>
 
+            {errorText ? (
+
+
+              <Text style={{ color: '#f59e0b', fontSize: 13, marginTop: 12 }}>{errorText}</Text>
+
+
+            ) : null}
+
             {/* Post-trip checklist */}
             <Text style={[s.sectionLabel, { marginTop: 16 }]}>END OF SHIFT</Text>
+            {/* Display-only: satisfied by a verified receipt for this shift,
+                never by a tap. The inspection happens at Mark Arrived, before
+                this modal opens. */}
             <CheckItem
-              label="Post-trip vehicle inspection completed"
+              label={postTripDone
+                ? 'Post-trip vehicle inspection completed'
+                : 'Post-trip vehicle inspection required'}
               checked={postTripDone}
-              onToggle={() => setPostTripDone(v => !v)}
+              onToggle={() => {}}
             />
             <CheckItem
               label="All paperwork completed"
