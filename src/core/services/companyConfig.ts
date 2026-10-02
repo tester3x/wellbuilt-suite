@@ -63,6 +63,20 @@ export interface CompanyConfig {
   name: string;
   requiredApps: string[]; // BYOA app IDs
   jsaMode?: JsaMode;
+  /**
+   * The jsaMode string exactly as stored, unnormalized.
+   *
+   * `jsaMode` above coerces anything unrecognised to 'off'. That is safe for
+   * presentation but wrong for the shift JSA close gate, where an unknown mode
+   * is an UNKNOWN obligation, not an absent one. shiftJsaClose reads this.
+   */
+  jsaModeRaw?: string;
+  /**
+   * companies/{id}.jsaAllowAcknowledge. `undefined` means the field is absent,
+   * which the Dashboard JsaCard treats as true; the shift close gate applies the
+   * same default rather than inventing a stricter one.
+   */
+  jsaAllowAcknowledge?: boolean;
   logoUrl?: string;
   primaryColor?: string;
   phone?: string;
@@ -221,6 +235,10 @@ export async function loadCompanyConfigResult(
       name: parseStr(f.name),
       requiredApps: parseStrArray(f.requiredApps),
       jsaMode: (['off', 'per_shift', 'per_job', 'per_location', 'per_load'].includes(jsaModeRaw) ? jsaModeRaw : 'off') as JsaMode,
+      jsaModeRaw: parseStr(f.jsaMode) || undefined,
+      ...(typeof f.jsaAllowAcknowledge?.booleanValue === 'boolean'
+        ? { jsaAllowAcknowledge: f.jsaAllowAcknowledge.booleanValue }
+        : {}),
       logoUrl: parseStr(f.logoUrl) || undefined,
       primaryColor: parseStr(f.primaryColor) || undefined,
       phone: parseStr(f.phone) || undefined,

@@ -24,6 +24,7 @@ import ShiftArrivalModal from './ShiftArrivalModal';
 import EnRouteYardCard from './EnRouteYardCard';
 import { subscribeEtcNotice } from '@/core/services/etcStart/etcNoticeStore';
 import { runReturnTap, createReturnTapLatch, type ReturnStartResult } from '@/core/services/returnStart';
+import { jsaRecoveryLabel, type BlockedJsaClose } from '@/core/services/shiftJsaClose';
 
 interface ActionCardRowProps {
   active: boolean;
@@ -36,6 +37,19 @@ interface ActionCardRowProps {
   jsaMode?: JsaMode;
   jsaPending?: boolean;
   onJsaLaunch?: () => void;
+}
+
+/**
+ * The modal's recovery button for a blocked shift JSA. Null when there is
+ * nothing extra to offer — a retry is the Confirm button the driver already has.
+ */
+function jsaRecoveryAction(
+  block: BlockedJsaClose | null,
+  onJsaLaunch?: () => void,
+): { label: string; onPress: () => void } | null {
+  if (!block || !onJsaLaunch) return null;
+  const label = jsaRecoveryLabel(block);
+  return label ? { label, onPress: onJsaLaunch } : null;
 }
 
 function formatElapsed(startIso: string): string {
@@ -93,6 +107,12 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [showArrivalModal, setShowArrivalModal] = useState(false);
   const [postTripVerified, setPostTripVerified] = useState(false);
   const [arrivalError, setArrivalError] = useState<string | null>(null);
+  /**
+   * The blocked shift JSA decision, when a close was refused for JSA evidence.
+   * Held so the modal can offer the route out of it (Open JSA / Acknowledge /
+   * Try again) instead of only naming the problem.
+   */
+  const [jsaBlock, setJsaBlock] = useState<BlockedJsaClose | null>(null);
   const [retainedOdometer, setRetainedOdometer] = useState<string | undefined>(undefined);
   const markArrivedBusy = useRef(false);
 
@@ -350,23 +370,29 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         {/* ── Arrival Confirmation Modal ── */}
         <ShiftArrivalModal
           visible={showArrivalModal}
-          onClose={() => setShowArrivalModal(false)}
+          onClose={() => { setShowArrivalModal(false); setJsaBlock(null); }}
           onConfirm={async (miles) => {
             // Only this submit closes the shift, and only once every condition
             // holds: a verified Post-Trip receipt for THIS shift, the driver's
             // paperwork confirmation, and valid miles.
             try {
               setArrivalError(null);
+              setJsaBlock(null);
               const [{ createSuiteDvirGate }, coordinator] = await Promise.all([
                 import('@/core/services/dvirGate'),
                 import('@/core/services/dvirGate/arrivalCoordinator'),
               ]);
               const gate = createSuiteDvirGate({ isShiftActive: () => true });
               const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+              const { suiteShiftJsaCloseGate } = await import('@/core/services/shiftJsaCloseLive');
               const result = await coordinator.finalizeArrival(gate, {
                 paperworkConfirmed: true, // the modal enables submit only when ticked
                 odometerMiles: miles,
                 close: async (m) => (await onArrived(m)) !== false,
+                // The shift JSA rule, checked HERE because this is the only
+                // place the shift closes. The gate it replaces sat on Log Out,
+                // which runs after finalization.
+                jsaGate: suiteShiftJsaCloseGate,
                 // Promoted only after the authoritative close succeeded.
                 onPrefillOdometer: async (m) => {
                   await AsyncStorage.setItem('wellbuilt-last-odometer', String(m)).catch(() => {});
@@ -374,6 +400,13 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
               });
               if (!result.ok) {
                 setRetainedOdometer(miles !== undefined ? String(miles) : undefined);
+                // A JSA block carries the server-truthful reason and the route
+                // out of it. Never collapsed into the generic close failure.
+                if (result.jsa?.kind === 'blocked') {
+                  setJsaBlock(result.jsa);
+                  setArrivalError(result.jsa.message);
+                  return;
+                }
                 const message = result.reason === 'post_trip_missing'
                   ? 'The post-trip inspection for this shift is not recorded yet. Your shift is still open.'
                   : result.reason === 'odometer_invalid'
@@ -382,6 +415,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
                 setArrivalError(message);
                 return; // keep the modal open and recoverable
               }
+              setJsaBlock(null);
               await gate.clearDvirRoutingAfterFinalization();
               setShowArrivalModal(false);
               setRetainedOdometer(undefined);
@@ -393,6 +427,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           postTripVerified={postTripVerified}
           initialOdometer={retainedOdometer}
           errorText={arrivalError}
+          recoveryAction={jsaRecoveryAction(jsaBlock, onJsaLaunch)}
           returnStartTime={returnStartTime}
         />
       </View>

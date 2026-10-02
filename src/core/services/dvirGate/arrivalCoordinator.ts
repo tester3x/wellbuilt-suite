@@ -11,6 +11,7 @@
  * submit, and it stays in AuthContext.confirmArrival.
  */
 import type { DvirGateDeps } from './dvirGateService';
+import type { JsaCloseDecision } from '../shiftJsaClose';
 import { isPostTripCompleteForShift, launchEquipmentPhase } from './dvirGateService';
 import {
   beginArrival,
@@ -129,8 +130,8 @@ export async function postTripSatisfiedForCurrentShift(deps: DvirGateDeps): Prom
 }
 
 export type FinalizeResult =
-  | { ok: true }
-  | { ok: false; reason: string; recoverable: true };
+  | { ok: true; jsa?: JsaCloseDecision }
+  | { ok: false; reason: string; recoverable: true; jsa?: JsaCloseDecision };
 
 /**
  * Stage 3. Checks every condition, then runs the caller's close exactly once.
@@ -138,6 +139,13 @@ export type FinalizeResult =
  * `close` is AuthContext.confirmArrival. On success the arrival record is
  * cleared and the caller may promote the odometer prefill; on failure the
  * record and the typed reading are kept so the modal stays recoverable.
+ *
+ * `jsaGate` is the shift JSA close rule (shiftJsaClose.decideShiftJsaClose). It
+ * runs HERE, before the close, because this is the only place the shift is
+ * closed. The gate it replaces sat on day-summary's Log Out button, which runs
+ * after finalization — so a required JSA could not prevent a close, only strand
+ * a logout. A blocked decision keeps the typed reading, exactly as a failed
+ * close does, so the trip to WB JSA and back is not destructive.
  */
 export async function finalizeArrival(
   deps: DvirGateDeps,
@@ -146,6 +154,7 @@ export async function finalizeArrival(
     odometerMiles?: number;
     close: (odometerMiles?: number) => Promise<boolean>;
     onPrefillOdometer?: (miles: number) => Promise<void> | void;
+    jsaGate?: () => Promise<JsaCloseDecision>;
   },
 ): Promise<FinalizeResult> {
   const shiftId = await deps.getCurrentShiftId();
@@ -161,9 +170,40 @@ export async function finalizeArrival(
   });
   if (!check.ok) return { ok: false, reason: check.reason, recoverable: true };
 
+  // Evidence before closure. Deliberately after canSubmitFinal: no network trip
+  // is spent while the local preconditions are still unmet.
+  if (opts.jsaGate) {
+    const decision = await opts.jsaGate();
+    if (decision.kind === 'blocked') {
+      // Keep the typed reading the way a failed close does, so being sent to
+      // WB JSA and back does not cost the driver their odometer entry.
+      const held = afterFinalSubmit({
+        record: record as ArrivalRecord,
+        closed: false,
+        odometerMiles: opts.odometerMiles,
+      });
+      if (held.keepRecord) await writeArrivalRecord(deps.kv, held.keepRecord);
+      return { ok: false, reason: `jsa:${decision.reason}`, recoverable: true, jsa: decision };
+    }
+    return await runClose(deps, opts, record, check.odometerMiles, decision);
+  }
+  return await runClose(deps, opts, record, check.odometerMiles, undefined);
+}
+
+async function runClose(
+  deps: DvirGateDeps,
+  opts: {
+    odometerMiles?: number;
+    close: (odometerMiles?: number) => Promise<boolean>;
+    onPrefillOdometer?: (miles: number) => Promise<void> | void;
+  },
+  record: ArrivalRecord | null,
+  closeOdometerMiles: number | undefined,
+  jsa: JsaCloseDecision | undefined,
+): Promise<FinalizeResult> {
   let closed = false;
   try {
-    closed = await opts.close(check.odometerMiles);
+    closed = await opts.close(closeOdometerMiles);
   } catch {
     closed = false;
   }
@@ -182,5 +222,7 @@ export async function finalizeArrival(
     await opts.onPrefillOdometer(opts.odometerMiles);
   }
 
-  return closed ? { ok: true } : { ok: false, reason: 'close_failed', recoverable: true };
+  return closed
+    ? { ok: true, jsa }
+    : { ok: false, reason: 'close_failed', recoverable: true, jsa };
 }

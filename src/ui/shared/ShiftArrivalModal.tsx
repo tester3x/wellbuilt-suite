@@ -33,6 +33,12 @@ interface ShiftArrivalModalProps {
   initialOdometer?: string;
   /** Visible reason a previous submit did not close the shift. */
   errorText?: string | null;
+  /**
+   * The recovery action for a blocked shift JSA, when there is one. Shown next
+   * to errorText so a driver who cannot close is told what to DO, not only what
+   * is wrong. Absent for every non-JSA failure.
+   */
+  recoveryAction?: { label: string; onPress: () => void } | null;
   returnStartTime: string | null;
 }
 
@@ -60,7 +66,7 @@ function CheckItem({ label, checked, onToggle }: { label: string; checked: boole
 
 export default function ShiftArrivalModal({
   visible, onClose, onConfirm, returnStartTime,
-  postTripVerified = false, initialOdometer, errorText,
+  postTripVerified = false, initialOdometer, errorText, recoveryAction,
 }: ShiftArrivalModalProps) {
   const [endOdometer, setEndOdometer] = useState('');
   const [startOdometer, setStartOdometer] = useState('');
@@ -184,11 +190,26 @@ export default function ShiftArrivalModal({
             </View>
 
             {errorText ? (
-
-
-              <Text style={{ color: '#f59e0b', fontSize: 13, marginTop: 12 }}>{errorText}</Text>
-
-
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ color: '#f59e0b', fontSize: 13 }}>{errorText}</Text>
+                {recoveryAction ? (
+                  <Pressable
+                    onPress={recoveryAction.onPress}
+                    style={{
+                      marginTop: 10,
+                      alignSelf: 'flex-start',
+                      paddingVertical: 10,
+                      paddingHorizontal: 14,
+                      borderRadius: 8,
+                      backgroundColor: '#f59e0b',
+                    }}
+                  >
+                    <Text style={{ color: '#000', fontSize: 13, fontWeight: '700' }}>
+                      {recoveryAction.label}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
             ) : null}
 
             {/* Post-trip checklist */}

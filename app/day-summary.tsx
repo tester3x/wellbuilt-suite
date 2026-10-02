@@ -35,6 +35,15 @@ import {
   type DaySummary,
 } from '@/core/services/daySummary';
 import { acknowledgeShiftJsa } from '@/core/services/jsaShiftAck';
+import {
+  collectShiftJsaEvidence,
+  decideShiftJsaClose,
+  jsaBlocksLogout,
+  jsaCloseHeadline,
+  normalizeJsaShiftMode,
+  type JsaCloseDecision,
+} from '@/core/services/shiftJsaClose';
+import { recordsFromRestDocs } from '@/core/services/shiftJsaCloseGate';
 import { wbDiagLog } from '@/core/services/wbDiagLog';
 import { getCurrentShiftId, getCurrentShiftOriginDate } from '@/core/services/shiftTracking';
 import { originDateFromShiftId } from '@/core/services/workPeriodAuthority/postLoginShiftRestoration';
@@ -173,6 +182,15 @@ export default function DaySummaryScreen() {
   // jsaCompleted. Acknowledge writes jsa_day_status.jsaCompleted=true; Read
   // deep-links to WB JSA. After Acknowledge, logout proceeds via the same
   // confirm Alert that already exists below.
+  /**
+   * The shift JSA close decision for this shift, from the same rule the close
+   * itself uses (shiftJsaClose). Null until the reads land.
+   *
+   * This screen's gate is now a BACKSTOP. The authoritative check runs at the
+   * close, in finalizeArrival — this screen renders after finalization, so a
+   * gate here could never prevent a close, only strand a logout.
+   */
+  const [jsaDecision, setJsaDecision] = useState<JsaCloseDecision | null>(null);
   const [showJsaModal, setShowJsaModal] = useState(false);
   const [jsaAcknowledging, setJsaAcknowledging] = useState(false);
   const [dvirSummary, setDvirSummary] = useState<ShiftDvirSummary | null>(null);
@@ -335,12 +353,16 @@ export default function DaySummaryScreen() {
           limit: 50,
         },
       };
-      const queryResults: any[] = await fetch(`${BASE}:runQuery?key=${API_KEY}`, {
+      // A failed query must stay distinguishable from an empty one: the old
+      // code collapsed both to [], so an unreadable JSA read looked exactly
+      // like a driver who owed nothing.
+      const queryResults: any[] | null = await fetch(`${BASE}:runQuery?key=${API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(queryBody),
-      }).then(r => r.ok ? r.json() : []).catch(() => []);
-      const operatorDocs = queryResults
+      }).then(r => r.ok ? r.json() : null).catch(() => null);
+      const queryFailed = queryResults === null;
+      const operatorDocs = (queryResults ?? [])
         .filter((r: any) => r.document)
         .map((r: any) => r.document);
 
@@ -356,10 +378,13 @@ export default function DaySummaryScreen() {
           directDoc: directDoc ? 1 : 0,
           operatorDocs: operatorDocs.length,
         },
-        extra: { scope, companyId: user.companyId || null },
+        extra: { scope, companyId: user.companyId || null, queryFailed },
       });
 
-      return { directDoc, operatorDocs, scope };
+      // Both reads failing is unknown, not empty. The direct GET 404s
+      // legitimately when no legacy single doc exists, so it cannot prove a
+      // failure on its own.
+      return { directDoc, operatorDocs, scope, readFailed: queryFailed && !directDoc };
     });
     const companyP = user.companyId
       ? fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`)
@@ -414,60 +439,63 @@ export default function DaySummaryScreen() {
         totalLocations += l;
         perDocBreakdown.push(`${docName}:w=${w},l=${l}`);
       }
-      if (allDocs.length > 0) {
-        // Path D (2026-04-27): one signed JSA per shift = shift complete.
-        // Previous strict-AND gate required EVERY operator-scoped doc to
-        // have jsaCompleted=true, which blocked logout when WB T stamps
-        // had created multiple per-(shift, operator) docs but the driver
-        // only signed one. Now lenient: ANY doc completed = shift gate
-        // satisfied. Doesn't change the data model — only the gate.
-        let anyCompleted = false;
-        let mostRecentCompletedAt: string | null = null;
-        let pdfUrl: string | null = null;
-        for (const doc of allDocs) {
-          const f = doc.fields;
-          if (f?.jsaCompleted?.booleanValue === true) {
-            anyCompleted = true;
-            const ts = f?.jsaCompletedAt?.timestampValue || null;
-            if (ts && (!mostRecentCompletedAt || ts > mostRecentCompletedAt)) {
-              mostRecentCompletedAt = ts;
-            }
-            if (!pdfUrl && f?.pdfUrl?.stringValue) pdfUrl = f.pdfUrl.stringValue;
-          }
-        }
-        const finalCount = totalWells + totalLocations;
-        console.log(
-          `[jsaFix] shiftId=${scopeUsed} driverHash=${user.driverId} docs=${allDocs.length} ` +
-          `docIds=[${docIds.join(',')}] wells=${totalWells} locations=${totalLocations} ` +
-          `final=${finalCount} anyCompleted=${anyCompleted}`,
-        );
-        console.log(`[jsaFix] perDoc=${perDocBreakdown.join(' | ')}`);
-        setJsaStatus({
-          completed: anyCompleted,
-          completedAt: mostRecentCompletedAt,
-          pdfUrl,
-          wellCount: finalCount,
-        });
-      } else {
-        console.log(
-          `[jsaFix] shiftId=${scopeUsed} driverHash=${user.driverId} docs=0 ` +
-          `docIds=[] wells=0 locations=0 final=0 allCompleted=false`,
-        );
-        setJsaStatus({ completed: false, completedAt: null, pdfUrl: null, wellCount: 0 });
-      }
+      // The signature is collapsed leniently (one signature per shift is the
+      // rule, so any signed record satisfies it) and the acknowledgments
+      // strictly (every stamped location must carry its own). The code this
+      // replaces collapsed BOTH leniently — Path D's "ANY doc completed" — so a
+      // signature on one operator's record satisfied the shift while another
+      // operator's stamped location sat unacknowledged. It also read only
+      // jsaCompleted, so an acknowledgment-only flag was indistinguishable from
+      // a signed JSA.
+      const jsaRecords = recordsFromRestDocs({
+        directDoc: jsaResult?.directDoc ?? null,
+        operatorDocs: jsaResult?.operatorDocs ?? null,
+        readFailed: !!jsaResult?.readFailed,
+      });
+      const evidence = collectShiftJsaEvidence({
+        records: jsaRecords,
+        shiftId: jsaResult?.scope || null,
+      });
+      console.log(
+        `[jsaFix] shiftId=${scopeUsed} driverHash=${user.driverId} docs=${allDocs.length} ` +
+        `docIds=[${docIds.join(',')}] wells=${totalWells} locations=${totalLocations} ` +
+        `final=${totalWells + totalLocations} signature=${evidence.signature} ` +
+        `outstanding=${evidence.outstandingLocations.length} artifact=${evidence.artifact} ` +
+        `recordsRead=${evidence.recordsRead}`,
+      );
+      if (perDocBreakdown.length > 0) console.log(`[jsaFix] perDoc=${perDocBreakdown.join(' | ')}`);
+      setJsaStatus({
+        completed: evidence.signature !== 'absent',
+        completedAt: evidence.completedAtIso,
+        pdfUrl: evidence.artifactUrl,
+        wellCount: totalWells + totalLocations,
+      });
 
       // JSA gate from company config. Legacy 'per_load' / 'per_location' read
       // as their behavior (per_load was per-job, no shift gate; per_location
       // gated like per_shift). Per the 4/24 mode rename, only 'per_shift'
       // gates shift end going forward.
+      //
+      // An UNREADABLE config is not 'off'. The code this replaces assigned
+      // jsaGateShiftEnd only inside `if (companyDoc)` and left the default
+      // false, so one failed company read silently removed a required
+      // company's JSA gate. The mode now normalizes to null in that case and
+      // the decision below reports it as unverifiable.
+      const allow = companyDoc?.fields?.jsaAllowAcknowledge?.booleanValue;
+      // Default true when field missing — matches Dashboard JsaCard default.
+      const allowAcknowledge = allow !== false;
       if (companyDoc) {
         const mode = companyDoc.fields?.jsaMode?.stringValue || 'off';
         setJsaMode(mode);
         setJsaGateShiftEnd(mode === 'per_shift' || mode === 'per_location');
-        const allow = companyDoc.fields?.jsaAllowAcknowledge?.booleanValue;
-        // Default true when field missing — matches Dashboard JsaCard default.
-        setJsaAllowAcknowledge(allow !== false);
+        setJsaAllowAcknowledge(allowAcknowledge);
       }
+      const decision = decideShiftJsaClose({
+        mode: normalizeJsaShiftMode(companyDoc?.fields?.jsaMode?.stringValue ?? null),
+        allowAcknowledge,
+        evidence,
+      });
+      setJsaDecision(decision);
 
       setJsaGateLoaded(true);
       setLoading(false);
@@ -493,7 +521,22 @@ export default function DaySummaryScreen() {
     // jsaCompleted hasn't flipped to true today. The proper modal replaces
     // the Alert-based shortcut so drivers get the same Read/Ack experience
     // they see in WB T at job-close.
-    if (jsaGateShiftEnd && jsaStatus && !jsaStatus.completed) {
+    // Backstop only: the authoritative check is at the close, in
+    // finalizeArrival. This screen renders after finalization, so this gate can
+    // never prevent a close — it exists for flows that reached Shift Complete
+    // some other way. It uses the same rule, so an acknowledgment-only flag at a
+    // company that forbids acknowledgment is refused here too, and an
+    // unreadable config no longer drops the gate.
+    // UNREACHABLE TODAY — recorded here rather than silently fixed. Log Out
+    // moved to the WB S home screen (see the bottom-button comment below), so
+    // handleLogout has no caller but itself, JsaCloseModal is imported and
+    // rendered NOWHERE in the repository, showJsaModal is written and never
+    // read, and handleJsaAcknowledge/Read/Cancel are never referenced. On a
+    // required company this path would set a flag nothing renders and return —
+    // Log Out doing nothing, with no message. The rule below is corrected so
+    // the re-attachment inherits a working gate, but wiring the modal belongs
+    // with that re-attachment, not here.
+    if (jsaDecision && jsaBlocksLogout(jsaDecision)) {
       setShowJsaModal(true);
       return;
     }
@@ -562,6 +605,13 @@ export default function DaySummaryScreen() {
   };
 
   // Requirement-aware JSA presentation — see jsaCardPresentation.
+  /**
+   * The honest headline. 'JSA completed' is reserved for evidence that actually
+   * shows completion: an acknowledgment reads as an acknowledgment, and a bare
+   * flag whose origin this build cannot identify says so. Falls back to the
+   * requirement-aware presentation until the decision lands.
+   */
+  const jsaHeadline = (jsaDecision && jsaCloseHeadline(jsaDecision)) || null;
   const jsaView = jsaCardPresentation({
     mode: jsaMode,
     completed: !!jsaStatus?.completed,
@@ -692,7 +742,7 @@ export default function DaySummaryScreen() {
                     color={jsaTone}
                   />
                   <Text style={{ fontSize: 14, fontWeight: '600', color: jsaTone }}>
-                    {jsaView.show ? jsaView.headline : ''}
+                    {jsaView.show ? (jsaHeadline ?? jsaView.headline) : ''}
                   </Text>
                 </View>
                 {jsaStatus.completed && jsaStatus.completedAt && (
