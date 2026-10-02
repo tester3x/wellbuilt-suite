@@ -16,6 +16,7 @@
     "test:sso-e2e": "tsx tools/test-ssoEndToEnd.mjs",
     "test:shift-authority": "tsx --test src/core/services/workPeriodAuthority/**/*.test.ts",
     "test:return": "tsx --test src/core/services/returnStart.test.ts src/core/services/returnDivert.test.ts src/core/services/workPeriodAuthority/returnAttempt.test.ts src/core/services/workPeriodAuthority/returnAbandonFlow.test.ts src/core/services/workPeriodAuthority/returnStateStore.test.ts",
+    "test:day-summary": "TZ=America/Chicago tsx --test src/core/services/daySummary.shiftComplete.test.ts src/core/services/daySummary.driverIdJoin.test.ts src/core/services/companyConfig.outcome.test.ts",
     "test:etc-start": "tsx --test src/core/services/etcStart/etcStartFlow.test.ts src/core/services/etcStart/etcBuildTarget.test.ts"
   },
   "dependencies": {

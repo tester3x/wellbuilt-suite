@@ -51,6 +51,9 @@ export interface DaySummary {
   avgSpeedMph: number;
   shiftStart: string | null;
   shiftEnd: string | null;
+  /** Where each bookend came from, so the screen can be honest when absent. */
+  shiftStartSource: ShiftBookendSource;
+  shiftEndSource: ShiftBookendSource;
 }
 
 // ── Pure calculation functions (ported from Dashboard driverLogs.ts) ─────────
@@ -185,13 +188,10 @@ function parseFirestoreValue(val: any): any {
 export async function fetchTodayInvoices(
   driverId: string,
   companyId?: string,
+  /** Explicit UTC window. Omit only for a legacy local-day query. */
+  window?: { startIso: string; endIso: string },
 ): Promise<DaySummaryInvoice[]> {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const startOfDay = `${year}-${month}-${day}T00:00:00Z`;
-  const endOfDay = `${year}-${month}-${day}T23:59:59.999Z`;
+  const { startIso: startOfDay, endIso: endOfDay } = window ?? invoiceQueryWindow(null);
 
   const filters: any[] = [
     {
@@ -242,7 +242,7 @@ export async function fetchTodayInvoices(
   };
 
   try {
-    console.log('[daySummary] Querying invoices for driverId:', driverId, 'companyId:', companyId || '(none)', 'date:', startOfDay.slice(0, 10));
+    console.log('[daySummary] Querying invoices for driverId:', driverId, 'companyId:', companyId || '(none)', 'window:', startOfDay, '->', endOfDay);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     const resp = await fetch(firestoreQueryUrl(), {
@@ -382,6 +382,171 @@ export function resolveShiftSummaryDate(opts: {
   return opts.todayLocalDate;
 }
 
+
+// ── Shift bookends and query windows ─────────────────────────────────────────
+
+/**
+ * Local-midnight-to-now, expressed correctly in UTC.
+ *
+ * THE BUG THIS REPLACES: the old query took the LOCAL calendar y/m/d and
+ * stamped it with a literal `Z`:
+ *     `${year}-${month}-${day}T00:00:00Z` .. `T23:59:59.999Z`
+ * For a driver at UTC-5 the real local day runs 05:00Z today to 05:00Z
+ * tomorrow, so every invoice closed after 19:00 local (00:00Z the NEXT UTC
+ * day) fell outside the window and the screen reported "No completed loads
+ * today" for a shift full of real closed loads. A shift spanning midnight lost
+ * the earlier day entirely.
+ *
+ * `new Date(y, m, d)` is local midnight as a real instant, so `.toISOString()`
+ * is the correct UTC bound. When the shift's start is known we query from the
+ * shift instead of the calendar day, which is what actually matters — and
+ * cross-midnight shifts then work. An hour of slack on each end absorbs device
+ * clock skew; calculateDaySummary still narrows to the shift window, so a wider
+ * fetch cannot inflate the count.
+ */
+export function invoiceQueryWindow(
+  shiftStartIso: string | null,
+  now: Date = new Date(),
+): { startIso: string; endIso: string } {
+  const HOUR = 60 * 60 * 1000;
+  const endIso = new Date(now.getTime() + HOUR).toISOString();
+  if (shiftStartIso) {
+    const startMs = new Date(shiftStartIso).getTime();
+    if (!Number.isNaN(startMs)) {
+      return { startIso: new Date(startMs - HOUR).toISOString(), endIso };
+    }
+  }
+  const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  return { startIso: localMidnight.toISOString(), endIso };
+}
+
+/** Where a bookend came from, so the UI can be honest about what it knows. */
+export type ShiftBookendSource = 'event' | 'period_id' | 'unavailable';
+
+export type ShiftBookends = {
+  startIso: string | null;
+  endIso: string | null;
+  startSource: ShiftBookendSource;
+  endSource: ShiftBookendSource;
+};
+
+/** Period ids are `YYYY-MM-DD_HHMMSS` in the driver's local wall clock. */
+export function periodIdToStartIso(periodId: string | null | undefined): string | null {
+  if (!periodId) return null;
+  const m = periodId.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, sec] = m;
+  const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec));
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
+
+/**
+ * The completed shift's actual start and stop.
+ *
+ * THE BUG THIS REPLACES: start and end were read ONLY from `login` / `logout`
+ * events in the day document. Under enforced explicit_shift the client writes
+ * neither — claimEnforcedExplicitStart "never appends client login", and
+ * recordShiftEvent refuses any direct write when enforcedExplicit is set. So
+ * for every enforced shift both ends were null and the screen read
+ * "--:-- – --:--", with or without loads.
+ *
+ * The period id is server-assigned at claim and encodes the authoritative
+ * start, so it is a real record rather than a guess. There is no equivalent
+ * client-side source for the END: when no logout event exists the end is
+ * reported as genuinely unavailable rather than being filled in from the phone
+ * clock, which would silently invent a shift length.
+ */
+export function resolveShiftBookends(input: {
+  events: TimelineEvent[];
+  periodId?: string | null;
+}): ShiftBookends {
+  const events = Array.isArray(input.events) ? input.events : [];
+  const usable = (e: TimelineEvent) => !!e?.timestamp && !Number.isNaN(new Date(e.timestamp).getTime());
+  const logins = events.filter(e => e?.type === 'login' && usable(e));
+  const logouts = events.filter(e => e?.type === 'logout' && usable(e));
+  const loginEvt = logins[logins.length - 1] || null;
+  const logoutEvt = logouts[logouts.length - 1] || null;
+
+  if (loginEvt) {
+    return {
+      startIso: loginEvt.timestamp,
+      endIso: logoutEvt ? logoutEvt.timestamp : null,
+      startSource: 'event',
+      endSource: logoutEvt ? 'event' : 'unavailable',
+    };
+  }
+
+  const fromPeriod = periodIdToStartIso(input.periodId);
+  return {
+    startIso: fromPeriod,
+    endIso: logoutEvt ? logoutEvt.timestamp : null,
+    startSource: fromPeriod ? 'period_id' : 'unavailable',
+    endSource: logoutEvt ? 'event' : 'unavailable',
+  };
+}
+
+// ── JSA presentation ─────────────────────────────────────────────────────────
+
+/**
+ * Requirement, status and optional completion are three different things.
+ *
+ * THE BUG THIS REPLACES: the card rendered from jsaStatus alone and never
+ * consulted the company's jsaMode. With JSA switched off the driver was still
+ * shown an amber "Pending" and a "Complete JSA Now" command — an obligation
+ * their company had not set. jsaMode was read, but only to decide the shift-end
+ * gate, never the card.
+ */
+export type JsaCardView =
+  | { show: false; required: boolean }
+  | {
+      show: true;
+      required: boolean;
+      tone: 'complete' | 'pending' | 'informational';
+      headline: string;
+      showCompleteAction: boolean;
+    };
+
+/** Any mode other than 'off' (or absent/unknown) requires a JSA. */
+export function jsaIsRequired(mode: string | null | undefined): boolean {
+  const m = (mode || 'off').trim().toLowerCase();
+  return m === 'per_shift' || m === 'per_job' || m === 'per_location' || m === 'per_load';
+}
+
+export function jsaCardPresentation(input: {
+  mode: string | null | undefined;
+  completed: boolean;
+  /** Whether any jsa_day_status record was found at all. */
+  hasRecord: boolean;
+}): JsaCardView {
+  const required = jsaIsRequired(input.mode);
+
+  if (!required) {
+    // Nothing is owed. A JSA that was completed anyway is worth showing as a
+    // fact; an absent one is not a finding and must not be framed as pending.
+    if (input.completed) {
+      return {
+        show: true,
+        required: false,
+        tone: 'informational',
+        headline: 'JSA completed (not required)',
+        showCompleteAction: false,
+      };
+    }
+    return { show: false, required: false };
+  }
+
+  if (input.completed) {
+    return { show: true, required: true, tone: 'complete', headline: 'JSA completed', showCompleteAction: false };
+  }
+  return {
+    show: true,
+    required: true,
+    tone: 'pending',
+    headline: 'JSA pending',
+    showCompleteAction: input.hasRecord || true,
+  };
+}
+
 // ── Summary calculation ──────────────────────────────────────────────────────
 
 /**
@@ -391,17 +556,21 @@ export function calculateDaySummary(
   invoices: DaySummaryInvoice[],
   shiftEvents: TimelineEvent[],
   odometerMiles?: number,
+  /** Period id, so an enforced shift (which writes no login event) still has bookends. */
+  opts?: { periodId?: string | null },
 ): DaySummary {
-  // Extract shift bookends — use the LAST login/logout pair (multiple shifts per day
-  // append events via arrayUnion, so the first login is the earliest shift, not current).
-  const logins = shiftEvents.filter(e => e.type === 'login');
-  const logouts = shiftEvents.filter(e => e.type === 'logout');
-  const loginEvt = logins[logins.length - 1] || null;
-  const logoutEvt = logouts[logouts.length - 1] || null;
+  // Bookends come from the last login/logout pair when the client wrote them
+  // (multiple shifts per day append via arrayUnion, so the LAST pair is the
+  // current shift), and otherwise from the server-assigned period id. Without
+  // this fallback an enforced shift has no window at all, which both blanked
+  // the displayed times AND disabled the invoice filter below.
+  const bookends = resolveShiftBookends({ events: shiftEvents, periodId: opts?.periodId });
+  const loginEvt = bookends.startIso ? { timestamp: bookends.startIso } : null;
+  const logoutEvt = bookends.endIso ? { timestamp: bookends.endIso } : null;
 
   // Filter invoices to only those within the shift window.
   // Without a shift, show all (backwards compat). With a shift, only count
-  // invoices created between login and logout (or now if shift still open).
+  // invoices created between start and end (or now if shift still open).
   const shiftStartMs = loginEvt ? new Date(loginEvt.timestamp).getTime() : 0;
   const shiftEndMs = logoutEvt ? new Date(logoutEvt.timestamp).getTime() : Date.now();
   const shiftInvoices = loginEvt
@@ -511,7 +680,9 @@ export function calculateDaySummary(
     dropoffMinutes,
     driveMiles,
     avgSpeedMph,
-    shiftStart: loginEvt?.timestamp || null,
-    shiftEnd: logoutEvt?.timestamp || null,
+    shiftStart: bookends.startIso,
+    shiftEnd: bookends.endIso,
+    shiftStartSource: bookends.startSource,
+    shiftEndSource: bookends.endSource,
   };
 }

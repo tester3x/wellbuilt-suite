@@ -25,6 +25,9 @@ import { firebasePatch } from '@/core/services/driverAuth';
 import { cascadeLogoutToSSOApps } from '@/core/services/appLauncher';
 import {
   fetchTodayInvoices,
+  invoiceQueryWindow,
+  periodIdToStartIso,
+  jsaCardPresentation,
   fetchTodayShift,
   fetchShiftDocForDate,
   resolveShiftSummaryDate,
@@ -138,6 +141,8 @@ function randomMockSummary(): DaySummary {
     avgSpeedMph: Math.round(miles / (driveMin / 60)),
     shiftStart: start.toISOString(),
     shiftEnd: end.toISOString(),
+    shiftStartSource: 'event',
+    shiftEndSource: 'event',
   };
 }
 
@@ -153,6 +158,10 @@ export default function DaySummaryScreen() {
     pdfUrl: string | null;
     wellCount: number;
   } | null>(null);
+  // The company's JSA requirement. Requirement, status and optional completion
+  // are three separate things: with JSA off the summary must not present an
+  // unmet obligation. Defaults to 'off' so an unread config never invents one.
+  const [jsaMode, setJsaMode] = useState<string>('off');
   const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
   const [jsaGateLoaded, setJsaGateLoaded] = useState(false);
   const [jsaAllowAcknowledge, setJsaAllowAcknowledge] = useState(true);
@@ -258,12 +267,22 @@ export default function DaySummaryScreen() {
     // Join by stable driverId (not the display name — WB-T stores the canonical
     // driver name on invoices, WB-S has the login alias). driverName is still
     // used for other UI below.
-    const invoicesP = fetchTodayInvoices(user.driverId, user.companyId).catch(() => [] as any[]);
+    // Query the window of the SHIFT, in correct UTC. The old call derived a
+    // local calendar date and stamped it 'Z', so evening loads (and anything on
+    // the far side of midnight) fell outside the window and the screen said
+    // "No completed loads today" for a shift full of real closed loads.
+    const invoicesP = getCurrentShiftId()
+      .then(pid => invoiceQueryWindow(periodIdToStartIso(pid)))
+      .catch(() => invoiceQueryWindow(null))
+      .then(window => fetchTodayInvoices(user.driverId, user.companyId, window))
+      .catch(() => [] as any[]);
     // Explicit shifts store login/depart_return/logout/odometer on the ORIGIN-day
     // document (frozen at claim), not "calendar today" after a cross-midnight close.
+    let summaryPeriodId: string | null = null;
     const shiftP = (async () => {
       try {
         const periodId = await getCurrentShiftId();
+        summaryPeriodId = periodId;
         const origin = (await getCurrentShiftOriginDate()) || originDateFromShiftId(periodId);
         const now = new Date();
         const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -338,7 +357,9 @@ export default function DaySummaryScreen() {
 
     Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoices, shift, jsaResult, companyDoc]) => {
       // Summary data
-      const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles);
+      const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles, {
+        periodId: summaryPeriodId,
+      });
       setSummary(result);
 
       // JSA status — collapse possibly-many operator-scoped docs into a
@@ -426,6 +447,7 @@ export default function DaySummaryScreen() {
       // gates shift end going forward.
       if (companyDoc) {
         const mode = companyDoc.fields?.jsaMode?.stringValue || 'off';
+        setJsaMode(mode);
         setJsaGateShiftEnd(mode === 'per_shift' || mode === 'per_location');
         const allow = companyDoc.fields?.jsaAllowAcknowledge?.booleanValue;
         // Default true when field missing — matches Dashboard JsaCard default.
@@ -524,8 +546,21 @@ export default function DaySummaryScreen() {
     setShowJsaModal(false);
   };
 
+  // Requirement-aware JSA presentation — see jsaCardPresentation.
+  const jsaView = jsaCardPresentation({
+    mode: jsaMode,
+    completed: !!jsaStatus?.completed,
+    hasRecord: !!jsaStatus,
+  });
+  // Amber is reserved for a genuinely unmet obligation. An optional JSA that
+  // was completed anyway reads as information, never as something outstanding.
+  const jsaTone = !jsaView.show
+    ? colors.text.muted
+    : jsaView.tone === 'pending' ? '#f59e0b'
+    : jsaView.tone === 'informational' ? colors.text.secondary
+    : '#22c55e';
   const timeRange = summary
-    ? `${formatTime12h(summary.shiftStart)} – ${formatTime12h(summary.shiftEnd)}`
+    ? `${formatTime12h(summary.shiftStart)} – ${summary.shiftEnd ? formatTime12h(summary.shiftEnd) : 'end not recorded'}`
     : '';
 
   return (
@@ -610,18 +645,18 @@ export default function DaySummaryScreen() {
             )}
 
             {/* ── JSA card ──────────────────────────────────────── */}
-            {jsaStatus && (
+            {jsaStatus && jsaView.show && (
               <View style={s.timeSection}>
                 <View style={s.cardHeader}>
                   <Text style={s.sectionTitle}>
                     <MaterialCommunityIcons
-                      name={jsaStatus.completed ? 'shield-check' : 'shield-alert'}
+                      name={jsaView.show && jsaView.tone === 'pending' ? 'shield-alert' : 'shield-check'}
                       size={14}
-                      color={jsaStatus.completed ? '#22c55e' : '#f59e0b'}
+                      color={jsaTone}
                     />  JSA
                   </Text>
-                  <Text style={[s.cardTotal, { color: jsaStatus.completed ? '#22c55e' : '#f59e0b' }]}>
-                    {jsaStatus.completed ? 'Completed' : 'Pending'}
+                  <Text style={[s.cardTotal, { color: jsaTone }]}>
+                    {jsaView.show && jsaView.tone === 'pending' ? 'Pending' : 'Completed'}
                   </Text>
                 </View>
                 {/* Shift-end checklist row — explicit visible status the
@@ -635,14 +670,10 @@ export default function DaySummaryScreen() {
                   <MaterialCommunityIcons
                     name={jsaStatus.completed ? 'checkbox-marked' : 'checkbox-blank-outline'}
                     size={22}
-                    color={jsaStatus.completed ? '#22c55e' : '#f59e0b'}
+                    color={jsaTone}
                   />
-                  <Text style={{
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: jsaStatus.completed ? '#22c55e' : '#f59e0b',
-                  }}>
-                    {jsaStatus.completed ? 'JSA completed' : 'JSA pending'}
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: jsaTone }}>
+                    {jsaView.show ? jsaView.headline : ''}
                   </Text>
                 </View>
                 {jsaStatus.completed && jsaStatus.completedAt && (
@@ -669,7 +700,8 @@ export default function DaySummaryScreen() {
                     <MaterialCommunityIcons name="file-pdf-box" size={18} color="#ef4444" />
                     <Text style={{ color: colors.brand.accent, fontSize: 13, fontWeight: '600' }}>View PDF</Text>
                   </Pressable>
-                ) : !jsaStatus.completed ? (
+                ) : (jsaView.show && jsaView.showCompleteAction) ? (
+                  // Only offered when the company actually requires a JSA.
                   <Pressable
                     onPress={() => {
                       import('expo-linking').then(({ default: Linking }) => {
