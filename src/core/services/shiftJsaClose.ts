@@ -74,11 +74,23 @@ export function normalizeJsaShiftMode(raw: string | null | undefined): JsaShiftM
 
 /** One location WB T stamped onto a jsa_day_status record as work proceeded. */
 export type JsaLocationEntry = {
+  /**
+   * Merge identity. An explicit id/locationId when a writer supplies one,
+   * otherwise the normalized name — which is the key WB JSA itself uses.
+   */
   id: string;
   label?: string | null;
   /** True only when this location carries its own acknowledgment. */
   acknowledged: boolean;
   acknowledgedAt?: string | null;
+  /**
+   * When the location was stamped onto the record (WB JSA writes `stampedAt`).
+   * Kept because an acknowledgment older than the newest stamp does not cover
+   * it — the location was re-stamped after being acknowledged.
+   */
+  stampedAt?: string | null;
+  /** Which array(s) this entry came from, for diagnosis. */
+  buckets?: Array<'wells' | 'locations'>;
 };
 
 /** One jsa_day_status record, decoded out of Firestore into plain fields. */
@@ -528,33 +540,180 @@ export function decodeJsaStatusDoc(doc: any): JsaStatusRecord | null {
 }
 
 /**
- * Locations come from `locations[]`, falling back to `wells[]` (WB T's older
- * stamp). An entry is acknowledged only when it SAYS so — an entry with no
- * acknowledgment field is outstanding, never assumed done.
+ * The merge identity for a location entry.
+ *
+ * WB JSA's own writer (app/signoff.tsx) keys on `name.trim().toUpperCase()` as a
+ * SINGLE union across both buckets, and deliberately refuses to let one name
+ * appear in both wells[] and locations[] of a record — its cross-bucket dedup.
+ * Matching that key exactly is what makes a mixed record merge the way its
+ * author intended. Keying on something narrower (name + jobType, say) would
+ * re-create the ghost duplicates that writer exists to prevent, because a well
+ * and a location for the same place carry different type/jobType values.
+ *
+ * An explicit id/locationId still wins when a writer supplies one: WB JSA writes
+ * none today, so this is for whatever does later.
+ */
+export function locationMergeKey(input: {
+  id?: string | null;
+  locationId?: string | null;
+  name?: string | null;
+}): string | null {
+  const explicit = (input.id || input.locationId || '').trim();
+  // Namespaced so an explicit id can never collide with a name equal to it.
+  // Internal to the merge — the entry's own `id` stays the readable value.
+  if (explicit) return `id:${explicit}`;
+  const name = (input.name || '').trim();
+  if (name) return `name:${name.toUpperCase()}`;
+  return null;
+}
+
+/** The readable identifier carried on the entry and reported to the driver. */
+function locationDisplayId(input: {
+  id?: string | null;
+  locationId?: string | null;
+  name?: string | null;
+}): string | null {
+  const explicit = (input.id || input.locationId || '').trim();
+  if (explicit) return explicit;
+  const name = (input.name || '').trim();
+  return name || null;
+}
+
+/** Later of two ISO timestamps, treating absent as older. */
+function laterIso(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+
+/**
+ * Does this entry's acknowledgment actually cover its newest stamp?
+ *
+ * An acknowledgment recorded BEFORE the location was (re)stamped does not cover
+ * that stamp — the place came back onto the record after the driver signed it
+ * off, which is a fresh obligation. Without a comparable pair of timestamps the
+ * boolean evidence stands on its own.
+ */
+function acknowledgmentCoversStamp(
+  acknowledged: boolean,
+  acknowledgedAt: string | null,
+  stampedAt: string | null,
+): boolean {
+  if (!acknowledged) return false;
+  if (!acknowledgedAt || !stampedAt) return true;
+  return acknowledgedAt >= stampedAt;
+}
+
+/** One raw entry, decoded but not yet merged. */
+function decodeOneLocation(
+  entry: any,
+  bucket: 'wells' | 'locations',
+  index: number,
+): { key: string; entry: JsaLocationEntry } | null {
+  // A bare legacy string entry carries no acknowledgment of its own. Its
+  // positional fallback is bucket-qualified so two unnamed entries in different
+  // arrays can never collide into one.
+  if (typeof entry?.stringValue === 'string') {
+    const name = entry.stringValue.trim();
+    const fallback = `${bucket}#${index}`;
+    return {
+      key: locationMergeKey({ name }) ?? `pos:${fallback}`,
+      entry: {
+        id: locationDisplayId({ name }) ?? fallback,
+        label: entry.stringValue || null,
+        acknowledged: false,
+        acknowledgedAt: null,
+        stampedAt: null,
+        buckets: [bucket],
+      },
+    };
+  }
+  const mf = entry?.mapValue?.fields;
+  if (!mf) return null;
+  const acknowledgedAt = mf.acknowledgedAt?.timestampValue ?? null;
+  const stampedAt = mf.stampedAt?.timestampValue ?? null;
+  const hasEvidence = mf.acknowledged?.booleanValue === true || !!acknowledgedAt;
+  const identity = {
+    id: mf.id?.stringValue,
+    locationId: mf.locationId?.stringValue,
+    name: mf.name?.stringValue,
+  };
+  const fallback = `${bucket}#${index}`;
+  return {
+    key: locationMergeKey(identity) ?? `pos:${fallback}`,
+    entry: {
+      id: locationDisplayId(identity) ?? fallback,
+      label: mf.label?.stringValue ?? mf.name?.stringValue ?? null,
+      acknowledged: acknowledgmentCoversStamp(hasEvidence, acknowledgedAt, stampedAt),
+      acknowledgedAt,
+      stampedAt,
+      buckets: [bucket],
+    },
+  };
+}
+
+/**
+ * Locations are the MERGE of `wells[]` and `locations[]`, by WB JSA's own key.
+ *
+ * THE DEFECT THIS REPLACES: the read was
+ * `locations?.arrayValue?.values ?? wells?.arrayValue?.values`. On a mixed or
+ * transitional record that carries both arrays with different entries, the
+ * presence of any locations[] silently discarded wells[] entirely — so every
+ * well WB T had stamped vanished from the obligation, and a required-mode close
+ * sailed past locations nobody had acknowledged. A record mid-migration is the
+ * normal case while WB T and WB JSA are both being changed, not an edge case.
+ *
+ * Wells are read first, matching the order WB JSA's own row builder uses, so a
+ * stable order survives the merge.
+ *
+ * On a genuine duplicate the SAFE state wins: the merged entry is acknowledged
+ * only if EVERY copy is. An acknowledged copy can therefore never hide an
+ * unacknowledged stamp of the same location, whichever array it arrived in and
+ * whichever order they were read.
  */
 function decodeLocationEntries(fields: any): JsaLocationEntry[] {
-  const raw = fields.locations?.arrayValue?.values ?? fields.wells?.arrayValue?.values;
-  if (!Array.isArray(raw)) return [];
-  const out: JsaLocationEntry[] = [];
-  raw.forEach((entry: any, index: number) => {
-    // A bare string entry carries no acknowledgment of its own.
-    if (typeof entry?.stringValue === 'string') {
-      out.push({ id: entry.stringValue || `#${index}`, label: entry.stringValue, acknowledged: false });
-      return;
-    }
-    const mf = entry?.mapValue?.fields;
-    if (!mf) return;
-    const id = mf.id?.stringValue || mf.locationId?.stringValue || mf.name?.stringValue || `#${index}`;
-    const acknowledgedAt = mf.acknowledgedAt?.timestampValue ?? null;
-    const acknowledged = mf.acknowledged?.booleanValue === true || !!acknowledgedAt;
-    out.push({
-      id,
-      label: mf.label?.stringValue ?? mf.name?.stringValue ?? null,
-      acknowledged,
-      acknowledgedAt,
+  const buckets: Array<['wells' | 'locations', any[]]> = [
+    ['wells', Array.isArray(fields.wells?.arrayValue?.values) ? fields.wells.arrayValue.values : []],
+    ['locations', Array.isArray(fields.locations?.arrayValue?.values) ? fields.locations.arrayValue.values : []],
+  ];
+
+  const order: string[] = [];
+  const merged = new Map<string, JsaLocationEntry>();
+
+  for (const [bucket, values] of buckets) {
+    values.forEach((entry: any, index: number) => {
+      const decoded = decodeOneLocation(entry, bucket, index);
+      if (!decoded) return;
+      const { key } = decoded;
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, decoded.entry);
+        order.push(key);
+        return;
+      }
+      // Same location in both arrays, or twice in one. Keep one entry, and keep
+      // the obligation: unacknowledged wins.
+      const stampedAt = laterIso(existing.stampedAt, decoded.entry.stampedAt);
+      const bothAcknowledged = existing.acknowledged && decoded.entry.acknowledged;
+      const acknowledgedAt = bothAcknowledged
+        ? laterIso(existing.acknowledgedAt, decoded.entry.acknowledgedAt)
+        : null;
+      merged.set(key, {
+        id: existing.id,
+        label: existing.label ?? decoded.entry.label ?? null,
+        // Re-check against the NEWEST stamp across the copies: an acknowledgment
+        // that covered an older stamp does not cover a newer one.
+        acknowledged: acknowledgmentCoversStamp(bothAcknowledged, acknowledgedAt, stampedAt),
+        acknowledgedAt,
+        stampedAt,
+        buckets: existing.buckets?.includes(bucket)
+          ? existing.buckets
+          : [...(existing.buckets ?? []), bucket],
+      });
     });
-  });
-  return out;
+  }
+
+  return order.map(key => merged.get(key)!);
 }
 
 /** Decode a batch, dropping entries that are not documents. */

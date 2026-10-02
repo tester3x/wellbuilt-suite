@@ -21,6 +21,7 @@ import {
   jsaGatesShiftClose,
   jsaBlocksLogout,
   jsaPermitsClose,
+  locationMergeKey,
   normalizeJsaShiftMode,
   priorDayJsaActions,
   shouldAutoCloseOnNewJsa,
@@ -403,6 +404,246 @@ test('the backstop never holds a logout when nothing is owed', () => {
     mode: 'per_shift', allowAcknowledge: true, evidence: evidenceFor([signed({ locations: [loc()] })]),
   });
   assert.equal(jsaBlocksLogout(finalized), false);
+});
+
+
+// ── Mixed / transitional location records ────────────────────────────────────
+//
+// THE DEFECT THESE COVER: decodeLocationEntries read
+// `locations[] ?? wells[]`, so on a record carrying BOTH arrays the presence of
+// any locations[] discarded wells[] entirely — every well WB T had stamped
+// vanished from the obligation and a required-mode close sailed past locations
+// nobody had acknowledged. A record mid-migration is the normal case while WB T
+// and WB JSA are both changing.
+//
+// The merge key matches WB JSA's own writer (app/signoff.tsx), which keys on
+// name.trim().toUpperCase() as a SINGLE union across both buckets and refuses to
+// let one name live in both. Keying narrower (name + jobType) would re-create the
+// ghost duplicates that writer exists to prevent.
+
+/** A WB JSA / WB T structured entry: name, type, jobType, stampedAt. */
+function mapLoc(over: {
+  name?: string; type?: string; jobType?: string; stampedAt?: string;
+  acknowledged?: boolean; acknowledgedAt?: string; id?: string; locationId?: string; label?: string;
+}): any {
+  const f: any = {};
+  if (over.name !== undefined) f.name = { stringValue: over.name };
+  if (over.type !== undefined) f.type = { stringValue: over.type };
+  if (over.jobType !== undefined) f.jobType = { stringValue: over.jobType };
+  if (over.stampedAt !== undefined) f.stampedAt = { timestampValue: over.stampedAt };
+  if (over.acknowledged !== undefined) f.acknowledged = { booleanValue: over.acknowledged };
+  if (over.acknowledgedAt !== undefined) f.acknowledgedAt = { timestampValue: over.acknowledgedAt };
+  if (over.id !== undefined) f.id = { stringValue: over.id };
+  if (over.locationId !== undefined) f.locationId = { stringValue: over.locationId };
+  if (over.label !== undefined) f.label = { stringValue: over.label };
+  return { mapValue: { fields: f } };
+}
+
+function docWith(buckets: { wells?: any[]; locations?: any[] }): any {
+  const fields: any = { shiftId: { stringValue: SHIFT } };
+  if (buckets.wells) fields.wells = { arrayValue: { values: buckets.wells } };
+  if (buckets.locations) fields.locations = { arrayValue: { values: buckets.locations } };
+  return { name: 'x/jsa_day_status/d1', fields };
+}
+
+function locsOf(buckets: { wells?: any[]; locations?: any[] }) {
+  return decodeJsaStatusDoc(docWith(buckets))!.locations;
+}
+
+test('wells-only records are read', () => {
+  const locs = locsOf({ wells: [mapLoc({ name: 'Well A', type: 'pickup' })] });
+  assert.equal(locs.length, 1);
+  assert.equal(locs[0].id, 'Well A');
+  assert.equal(locs[0].acknowledged, false);
+  assert.deepEqual(locs[0].buckets, ['wells']);
+});
+
+test('locations-only records are read', () => {
+  const locs = locsOf({ locations: [mapLoc({ name: 'Yard 3', type: 'location' })] });
+  assert.equal(locs.length, 1);
+  assert.equal(locs[0].id, 'Yard 3');
+  assert.deepEqual(locs[0].buckets, ['locations']);
+});
+
+test('both arrays with disjoint entries keep EVERY location', () => {
+  // The exact case the old `locations ?? wells` read dropped.
+  const locs = locsOf({
+    wells: [mapLoc({ name: 'Well A', type: 'pickup' }), mapLoc({ name: 'Well B', type: 'pickup' })],
+    locations: [mapLoc({ name: 'Yard 3', type: 'location' })],
+  });
+  assert.deepEqual(locs.map(l => l.id), ['Well A', 'Well B', 'Yard 3']);
+});
+
+test('a wells entry alone can block a required-mode close', () => {
+  // End to end: the dropped wells used to let the close through.
+  const rec = decodeJsaStatusDoc({
+    name: 'x/jsa_day_status/d1',
+    fields: {
+      shiftId: { stringValue: SHIFT },
+      jsaCompleted: { booleanValue: true },
+      signedAt: { timestampValue: '2026-10-01T13:00:00Z' },
+      wells: { arrayValue: { values: [mapLoc({ name: 'Well A', type: 'pickup' })] } },
+      locations: { arrayValue: { values: [mapLoc({ name: 'Yard 3', acknowledged: true })] } },
+    },
+  })!;
+  const d = decideShiftJsaClose({
+    mode: 'per_shift', allowAcknowledge: true, evidence: evidenceFor([rec]),
+  });
+  assert.equal(d.kind, 'blocked');
+  if (d.kind !== 'blocked') return;
+  assert.equal(d.reason, 'acknowledgment_outstanding');
+  assert.deepEqual(d.outstandingLocations.map(l => l.locationId), ['Well A']);
+});
+
+test('the same name in both buckets with consistent state merges to one', () => {
+  // WB JSA forbids this by construction, but a transitional record can carry it.
+  const locs = locsOf({
+    wells: [mapLoc({ name: 'Well A', acknowledged: true, acknowledgedAt: '2026-10-01T12:00:00Z' })],
+    locations: [mapLoc({ name: 'Well A', acknowledged: true, acknowledgedAt: '2026-10-01T12:30:00Z' })],
+  });
+  assert.equal(locs.length, 1);
+  assert.equal(locs[0].acknowledged, true);
+  // The later acknowledgment is kept.
+  assert.equal(locs[0].acknowledgedAt, '2026-10-01T12:30:00Z');
+  assert.deepEqual(locs[0].buckets, ['wells', 'locations']);
+});
+
+test('an explicit id merges across buckets too', () => {
+  const locs = locsOf({
+    wells: [mapLoc({ id: 'loc-77', name: 'Well A', acknowledged: true })],
+    locations: [mapLoc({ locationId: 'loc-77', name: 'Renamed Site', acknowledged: true })],
+  });
+  assert.equal(locs.length, 1);
+  assert.equal(locs[0].id, 'loc-77');
+});
+
+test('the name merge is case- and whitespace-insensitive, like WB JSA key', () => {
+  assert.equal(locationMergeKey({ name: ' well a ' }), 'name:WELL A');
+  assert.equal(locationMergeKey({ name: 'WELL A' }), 'name:WELL A');
+  // An explicit id is namespaced so it cannot collide with a name equal to it.
+  assert.equal(locationMergeKey({ id: 'WELL A' }), 'id:WELL A');
+  assert.notEqual(locationMergeKey({ id: 'WELL A' }), locationMergeKey({ name: 'WELL A' }));
+  assert.equal(locationMergeKey({ name: '   ' }), null);
+  const locs = locsOf({
+    wells: [mapLoc({ name: 'Well A' })],
+    locations: [mapLoc({ name: ' well a ' })],
+  });
+  assert.equal(locs.length, 1, 'one place, one obligation');
+});
+
+test('legacy bare strings still decode, and merge with structured entries', () => {
+  const locs = locsOf({
+    wells: ['Well A', 'Well B'].map(v => ({ stringValue: v })),
+    locations: [mapLoc({ name: 'Well A', acknowledged: true })],
+  });
+  // Two places. The bare string carries no acknowledgment of its own, and the
+  // acknowledged structured copy of Well A must not hide it.
+  assert.deepEqual(locs.map(l => l.id), ['Well A', 'Well B']);
+  assert.equal(locs.find(l => l.id === 'Well A')!.acknowledged, false);
+});
+
+test('a duplicate name with a DIFFERENT type is still one obligation', () => {
+  // A pickup and a dropoff at one place are the same acknowledgment to WB JSA's
+  // key. Keying on name+type here would produce two obligations for one place.
+  const locs = locsOf({
+    wells: [mapLoc({ name: 'Well A', type: 'pickup', jobType: 'Load' })],
+    locations: [mapLoc({ name: 'Well A', type: 'dropoff', jobType: 'Unload' })],
+  });
+  assert.equal(locs.length, 1);
+});
+
+test('a duplicate within ONE array collapses', () => {
+  const locs = locsOf({ wells: [mapLoc({ name: 'Well A' }), mapLoc({ name: 'Well A' })] });
+  assert.equal(locs.length, 1);
+});
+
+test('CONFLICTING acknowledgment resolves to unacknowledged, either order', () => {
+  // The crux: an acknowledged copy must never hide an unacknowledged stamp.
+  const ackFirst = locsOf({
+    wells: [mapLoc({ name: 'Well A', acknowledged: true, acknowledgedAt: '2026-10-01T12:00:00Z' })],
+    locations: [mapLoc({ name: 'Well A' })],
+  });
+  assert.equal(ackFirst.length, 1);
+  assert.equal(ackFirst[0].acknowledged, false);
+  assert.equal(ackFirst[0].acknowledgedAt, null);
+
+  const unackFirst = locsOf({
+    wells: [mapLoc({ name: 'Well A' })],
+    locations: [mapLoc({ name: 'Well A', acknowledged: true, acknowledgedAt: '2026-10-01T12:00:00Z' })],
+  });
+  assert.equal(unackFirst.length, 1);
+  assert.equal(unackFirst[0].acknowledged, false);
+});
+
+test('a conflicting duplicate blocks a required-mode close', () => {
+  const rec = decodeJsaStatusDoc({
+    name: 'x/jsa_day_status/d1',
+    fields: {
+      shiftId: { stringValue: SHIFT },
+      jsaCompleted: { booleanValue: true },
+      signedAt: { timestampValue: '2026-10-01T13:00:00Z' },
+      wells: { arrayValue: { values: [mapLoc({ name: 'Well A', acknowledged: true })] } },
+      locations: { arrayValue: { values: [mapLoc({ name: 'Well A' })] } },
+    },
+  })!;
+  const d = decideShiftJsaClose({ mode: 'per_shift', allowAcknowledge: true, evidence: evidenceFor([rec]) });
+  assert.equal(d.kind, 'blocked');
+});
+
+test('an acknowledgment older than the newest stamp does not cover it', () => {
+  // Re-stamped after being signed off: a fresh obligation, not a closed one.
+  const locs = locsOf({
+    wells: [mapLoc({
+      name: 'Well A',
+      acknowledged: true,
+      acknowledgedAt: '2026-10-01T12:00:00Z',
+      stampedAt: '2026-10-01T15:00:00Z',
+    })],
+  });
+  assert.equal(locs[0].acknowledged, false);
+});
+
+test('an acknowledgment at or after the stamp does cover it', () => {
+  for (const ackAt of ['2026-10-01T15:00:00Z', '2026-10-01T16:00:00Z']) {
+    const locs = locsOf({
+      wells: [mapLoc({ name: 'Well A', acknowledged: true, acknowledgedAt: ackAt, stampedAt: '2026-10-01T15:00:00Z' })],
+    });
+    assert.equal(locs[0].acknowledged, true, ackAt);
+  }
+});
+
+test('a re-stamp in the other bucket reopens an acknowledged location', () => {
+  const locs = locsOf({
+    wells: [mapLoc({ name: 'Well A', acknowledged: true, acknowledgedAt: '2026-10-01T12:00:00Z', stampedAt: '2026-10-01T11:00:00Z' })],
+    locations: [mapLoc({ name: 'Well A', acknowledged: true, acknowledgedAt: '2026-10-01T12:00:00Z', stampedAt: '2026-10-01T18:00:00Z' })],
+  });
+  assert.equal(locs.length, 1);
+  assert.equal(locs[0].stampedAt, '2026-10-01T18:00:00Z');
+  assert.equal(locs[0].acknowledged, false, 'the newer stamp is not covered');
+});
+
+test('unnamed entries in different buckets never collide into one', () => {
+  const locs = locsOf({ wells: [mapLoc({ type: 'pickup' })], locations: [mapLoc({ type: 'location' })] });
+  assert.equal(locs.length, 2);
+  assert.deepEqual(locs.map(l => l.id), ['wells#0', 'locations#0']);
+});
+
+test('absent and malformed buckets decode to no locations, not to a crash', () => {
+  assert.deepEqual(locsOf({}), []);
+  assert.deepEqual(locsOf({ wells: [], locations: [] }), []);
+  const weird = decodeJsaStatusDoc({
+    name: 'x/jsa_day_status/d1',
+    fields: { shiftId: { stringValue: SHIFT }, wells: { stringValue: 'not-an-array' }, locations: { arrayValue: {} } },
+  })!;
+  assert.deepEqual(weird.locations, []);
+  assert.deepEqual(locsOf({ wells: [null, {}, { mapValue: {} }] }), []);
+});
+
+test('merging adds no reads: it is a pure decode of fields already fetched', () => {
+  const before = JSON.stringify(docWith({ wells: [mapLoc({ name: 'Well A' })], locations: [mapLoc({ name: 'Yard 3' })] }));
+  const doc = docWith({ wells: [mapLoc({ name: 'Well A' })], locations: [mapLoc({ name: 'Yard 3' })] });
+  decodeJsaStatusDoc(doc);
+  assert.equal(JSON.stringify(doc), before, 'the source document is not mutated');
 });
 
 // ── Firestore decoding ───────────────────────────────────────────────────────
