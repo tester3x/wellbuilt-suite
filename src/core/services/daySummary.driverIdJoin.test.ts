@@ -31,20 +31,30 @@ function invoiceDoc(id: string, driverId: string) {
   };
 }
 
-test('query filters by driverId (not the driver display name)', async () => {
+test('never joins by display name; scopes on company + createdAt', async () => {
+  // a03f336 asserted a driverId EQUALITY filter. The invariant it was really
+  // protecting is "never join by display name", and that still holds. The
+  // query now scopes on the reliable axes and matches identity client-side,
+  // because an invoice may be stamped with driverId OR the passcodeHash that
+  // other WB apps receive as the driver `hash`.
   const calls = stubFetch([invoiceDoc('INV1', DRV)]);
   await fetchTodayInvoices(DRV, 'liquid-gold');
   const body = calls[0];
   const filters = body.structuredQuery.where.compositeFilter.filters.map((f: any) => f.fieldFilter);
-  const driverIdFilter = filters.find((f: any) => f.field.fieldPath === 'driverId');
-  assert.ok(driverIdFilter, 'must filter by driverId');
-  assert.equal(driverIdFilter.op, 'EQUAL');
-  assert.equal(driverIdFilter.value.stringValue, DRV);
-  // The fragile name join must be gone.
   assert.equal(filters.some((f: any) => f.field.fieldPath === 'driver'), false, 'must NOT filter by driver name');
-  // Company + createdAt boundaries preserved.
   assert.ok(filters.some((f: any) => f.field.fieldPath === 'companyId'), 'company boundary kept');
-  assert.equal(filters.filter((f: any) => f.field.fieldPath === 'createdAt').length, 2, 'today (start+end) boundary kept');
+  assert.equal(filters.filter((f: any) => f.field.fieldPath === 'createdAt').length, 2, 'start+end boundary kept');
+});
+
+test('without a company scope it still falls back to driverId equality', async () => {
+  // No safe axis to broaden into, so the query must stay narrow.
+  const calls = stubFetch([]);
+  await fetchTodayInvoices(DRV);
+  const filters = calls[0].structuredQuery.where.compositeFilter.filters.map((f: any) => f.fieldFilter);
+  const driverIdFilter = filters.find((f: any) => f.field.fieldPath === 'driverId');
+  assert.ok(driverIdFilter, 'driverId equality retained without a company scope');
+  assert.equal(driverIdFilter.value.stringValue, DRV);
+  assert.equal(filters.some((f: any) => f.field.fieldPath === 'companyId'), false);
 });
 
 test('Z Fold: closed invoices under this driverId ARE returned', async () => {

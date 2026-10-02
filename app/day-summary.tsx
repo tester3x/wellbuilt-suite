@@ -24,7 +24,7 @@ import { colors } from '@/core/theme';
 import { firebasePatch } from '@/core/services/driverAuth';
 import { cascadeLogoutToSSOApps } from '@/core/services/appLauncher';
 import {
-  fetchTodayInvoices,
+  fetchCompletedLoads,
   invoiceQueryWindow,
   originDateFromPeriodId,
   jsaCardPresentation,
@@ -164,6 +164,8 @@ export default function DaySummaryScreen() {
   const [jsaMode, setJsaMode] = useState<string>('off');
   /** True when the origin-day shift document could not be read at all. */
   const [shiftRecordMissing, setShiftRecordMissing] = useState(false);
+  /** True when the invoice query failed — distinct from a genuinely empty shift. */
+  const [loadsUnavailable, setLoadsUnavailable] = useState(false);
   const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
   const [jsaGateLoaded, setJsaGateLoaded] = useState(false);
   const [jsaAllowAcknowledge, setJsaAllowAcknowledge] = useState(true);
@@ -278,8 +280,15 @@ export default function DaySummaryScreen() {
         (await getCurrentShiftOriginDate()) || originDateFromPeriodId(pid),
       ))
       .catch(() => invoiceQueryWindow(null))
-      .then(window => fetchTodayInvoices(user.driverId, user.companyId, window))
-      .catch(() => [] as any[]);
+      // Pass BOTH stable identity values: other WB apps are launched with
+      // passcodeHash as the driver `hash`, so an invoice may be stamped with
+      // either. Matching is done client-side against all of them.
+      .then(window => fetchCompletedLoads({
+        identity: { driverId: user.driverId, passcodeHash: user.passcodeHash },
+        companyId: user.companyId,
+        window,
+      }))
+      .catch(() => ({ ok: false, reason: 'query_error' } as const));
     // Explicit shifts store login/depart_return/logout/odometer on the ORIGIN-day
     // document (frozen at claim), not "calendar today" after a cross-midnight close.
     const shiftP = (async () => {
@@ -357,7 +366,10 @@ export default function DaySummaryScreen() {
           .then(r => r.ok ? r.json() : null).catch(() => null)
       : Promise.resolve(null);
 
-    Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoices, shift, jsaResult, companyDoc]) => {
+    Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoiceResult, shift, jsaResult, companyDoc]) => {
+      // A failed query is "unavailable", never zero completed loads.
+      const invoices = invoiceResult.ok ? invoiceResult.invoices : [];
+      setLoadsUnavailable(!invoiceResult.ok);
       // Summary data
       const result = calculateDaySummary(invoices, shift?.events || [], shift?.odometerMiles);
       // Distinguish "no shift record could be read" from "the record has no
@@ -891,7 +903,12 @@ export default function DaySummaryScreen() {
 
             {summary.totalLoads === 0 && (
               <View style={s.emptyState}>
-                <Text style={s.emptyText}>{t('daySummary.noLoads')}</Text>
+                {/* A failed query must not read as "you hauled nothing". */}
+                <Text style={s.emptyText}>
+                  {loadsUnavailable
+                    ? 'Completed loads unavailable — could not read your load records.'
+                    : t('daySummary.noLoads')}
+                </Text>
               </View>
             )}
           </>

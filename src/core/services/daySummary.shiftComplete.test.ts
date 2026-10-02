@@ -16,6 +16,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  driverIdentityKeys,
+  invoiceMatchesDriver,
+  isCompletedLoad,
+  fetchCompletedLoads,
   invoiceQueryWindow,
   originDateFromPeriodId,
   resolveShiftBookends,
@@ -247,4 +251,133 @@ test('an unknown or missing mode is treated as not required, never as pending', 
     assert.equal(v.show, false, `${mode} must not invent an obligation`);
   }
   assert.equal(jsaIsRequired('PER_SHIFT'), true, 'case-insensitive');
+});
+
+
+// ── 4. driver identity and completed-load selection ───────────────────────
+// WB-T History matches rows against the driver's identity rather than a single
+// field. WB-S carries TWO stable values and uses them inconsistently:
+// useAppLauncher and createSuiteDvirGate send `hash: user.passcodeHash` to
+// other WB apps, while this screen's query keyed on driverId alone. An invoice
+// stamped with whichever identity WB-T was launched with could therefore match
+// nothing — a zero-load screen for a real shift.
+
+const DRIVER_ID = '2cad521c-13ac-4b6c-b1ab-07843c6bf06f';
+const PASSCODE_HASH = 'a91f00b2c3d4e5f60718293a4b5c6d7e';
+
+test('identity keys cover both stable values and exclude display names', () => {
+  const keys = driverIdentityKeys({ driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH });
+  assert.equal(keys.length, 2);
+  assert.ok(keys.includes(DRIVER_ID.toLowerCase()));
+  assert.ok(keys.includes(PASSCODE_HASH.toLowerCase()));
+  // Blank / missing values never become keys.
+  assert.deepEqual(driverIdentityKeys({ driverId: '', passcodeHash: null }), []);
+  assert.deepEqual(driverIdentityKeys({ driverId: '  ' }), []);
+  // The same value under both fields is not counted twice.
+  assert.equal(driverIdentityKeys({ driverId: DRIVER_ID, passcodeHash: DRIVER_ID }).length, 1);
+});
+
+test('a row stamped with EITHER identity matches; a display name never does', () => {
+  const keys = driverIdentityKeys({ driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH });
+  assert.equal(invoiceMatchesDriver({ driverId: DRIVER_ID }, keys), true);
+  assert.equal(invoiceMatchesDriver({ driverHash: PASSCODE_HASH }, keys), true);
+  assert.equal(invoiceMatchesDriver({ driverUid: DRIVER_ID.toUpperCase() }, keys), true, 'case-insensitive');
+  // The 2026-09-24 bug: the canonical name must never be an identity match.
+  assert.equal(invoiceMatchesDriver({ driver: 'Mike ZFold7 Burger' }, keys), false);
+  // Another driver's row is never claimed.
+  assert.equal(invoiceMatchesDriver({ driverId: '99ff4b35-51ab-4d45-8d54-18b3b8515c9b' }, keys), false);
+  assert.equal(invoiceMatchesDriver({ driverId: '' }, keys), false);
+  assert.equal(invoiceMatchesDriver({ driverId: DRIVER_ID }, []), false, 'no keys never matches');
+});
+
+test('only genuinely completed hauls count; canceled and void never do', () => {
+  for (const ok of ['closed', 'submitted', 'approved', 'paid', 'CLOSED', ' Paid ']) {
+    assert.equal(isCompletedLoad(ok), true, ok);
+  }
+  // Explicitly excluded. WB-T's history view admits `void`; this card says
+  // "completed loads", so it must not.
+  for (const bad of ['canceled', 'cancelled', 'void', 'voided', 'open', 'active', 'in_progress', 'draft', 'rejected']) {
+    assert.equal(isCompletedLoad(bad), false, bad);
+  }
+  // Unknown / missing statuses are NOT counted — an unfamiliar status can
+  // never silently inflate the count.
+  for (const unknown of ['', null, undefined, 'archived', 'transferred', 'something_new']) {
+    assert.equal(isCompletedLoad(unknown as string | null | undefined), false, String(unknown));
+  }
+});
+
+function stubQuery(docs: any[], ok = true, status = 200) {
+  (globalThis as any).fetch = async () => ({
+    ok, status, json: async () => docs, text: async () => '',
+  });
+}
+function doc(id: string, fields: Record<string, any>) {
+  const f: Record<string, any> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    f[k] = typeof v === 'number' ? { integerValue: String(v) } : { stringValue: String(v) };
+  }
+  return { document: { name: `projects/p/databases/(default)/documents/invoices/${id}`, fields: f } };
+}
+
+test('PHOTO 2: loads stamped with the passcodeHash are counted', async () => {
+  stubQuery([
+    doc('A', { status: 'closed', driverHash: PASSCODE_HASH, totalBBL: 120, createdAt: '2026-09-30T01:02:00Z' }),
+    doc('B', { status: 'closed', driverHash: PASSCODE_HASH, totalBBL: 95, createdAt: '2026-09-30T18:40:00Z' }),
+  ]);
+  const r = await fetchCompletedLoads({
+    identity: { driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH },
+    companyId: 'liquid-gold',
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.ok && r.invoices.length, 2, 'driverId-only matching would have returned zero');
+});
+
+test('canceled and other drivers rows are dropped from a company-scoped query', async () => {
+  stubQuery([
+    doc('mine-closed', { status: 'closed', driverId: DRIVER_ID, totalBBL: 100, createdAt: '2026-09-30T12:00:00Z' }),
+    doc('mine-canceled', { status: 'canceled', driverId: DRIVER_ID, totalBBL: 999, createdAt: '2026-09-30T12:00:00Z' }),
+    doc('mine-void', { status: 'void', driverId: DRIVER_ID, totalBBL: 999, createdAt: '2026-09-30T12:00:00Z' }),
+    doc('mine-open', { status: 'open', driverId: DRIVER_ID, totalBBL: 999, createdAt: '2026-09-30T12:00:00Z' }),
+    doc('other', { status: 'closed', driverId: 'someone-else', totalBBL: 999, createdAt: '2026-09-30T12:00:00Z' }),
+  ]);
+  const r = await fetchCompletedLoads({
+    identity: { driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH },
+    companyId: 'liquid-gold',
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.ok && r.invoices.length, 1);
+  assert.equal(r.ok && r.invoices[0].id, 'mine-closed');
+  assert.equal(r.ok && r.invoices[0].totalBBL, 100, 'canceled BBL never added');
+});
+
+test('PHOTO 1: a driver with no records reports a true zero, not unavailable', async () => {
+  stubQuery([]);
+  const r = await fetchCompletedLoads({
+    identity: { driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH },
+    companyId: 'liquid-gold',
+  });
+  assert.equal(r.ok, true, 'a successful empty query is a real zero');
+  assert.equal(r.ok && r.invoices.length, 0);
+});
+
+test('a FAILED query is unavailable, never zero completed loads', async () => {
+  stubQuery([], false, 403);
+  const denied = await fetchCompletedLoads({
+    identity: { driverId: DRIVER_ID },
+    companyId: 'liquid-gold',
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(!denied.ok && denied.reason, 'query_failed_403');
+
+  (globalThis as any).fetch = async () => { throw new Error('network'); };
+  const threw = await fetchCompletedLoads({ identity: { driverId: DRIVER_ID }, companyId: 'liquid-gold' });
+  assert.equal(threw.ok, false);
+  assert.equal(!threw.ok && threw.reason, 'query_error');
+});
+
+test('a transiently missing identity is unavailable, not zero', async () => {
+  stubQuery([doc('A', { status: 'closed', driverId: DRIVER_ID, totalBBL: 10, createdAt: '2026-09-30T12:00:00Z' })]);
+  const r = await fetchCompletedLoads({ identity: {}, companyId: 'liquid-gold' });
+  assert.equal(r.ok, false, 'no identity yet — must not claim the shift was empty');
+  assert.equal(!r.ok && r.reason, 'no_driver_identity');
 });

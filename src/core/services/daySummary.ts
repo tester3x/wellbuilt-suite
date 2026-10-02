@@ -189,8 +189,41 @@ export async function fetchTodayInvoices(
   companyId?: string,
   /** Explicit UTC window. Omit only for a legacy local-day query. */
   window?: { startIso: string; endIso: string },
+  /** Extra stable identity values (e.g. passcodeHash). */
+  identity?: DriverIdentity,
 ): Promise<DaySummaryInvoice[]> {
-  const { startIso: startOfDay, endIso: endOfDay } = window ?? invoiceQueryWindow(null);
+  const result = await fetchCompletedLoads({
+    identity: { driverId, ...(identity || {}) },
+    companyId,
+    window,
+  });
+  return result.ok ? result.invoices : [];
+}
+
+/**
+ * Completed loads for the driver, with a truthful failure mode.
+ *
+ * Query shape: scope on the axes that are reliable — companyId and the
+ * createdAt window — then match the driver CLIENT-side against every stable
+ * identity key. This is the part of WB-T History's approach that applies here
+ * (rowMatchesDriverIdentity); its on-device closed-job ledger and archive union
+ * are deliberately NOT copied, since WB-S cannot read WB-T's local storage and
+ * cross-app storage coupling is not wanted.
+ *
+ * Without a companyId there is no safe scope to broaden into, so the query
+ * falls back to driverId equality rather than reading the whole collection.
+ */
+export async function fetchCompletedLoads(opts: {
+  identity: DriverIdentity;
+  companyId?: string;
+  window?: { startIso: string; endIso: string };
+}): Promise<InvoiceFetchResult> {
+  const keys = driverIdentityKeys(opts.identity);
+  if (!keys.length) {
+    // Transient missing identity is "unavailable", never zero.
+    return { ok: false, reason: 'no_driver_identity' };
+  }
+  const { startIso: startOfDay, endIso: endOfDay } = opts.window ?? invoiceQueryWindow(null);
 
   const filters: any[] = [
     {
@@ -207,21 +240,22 @@ export async function fetchTodayInvoices(
         value: { timestampValue: endOfDay },
       },
     },
-    {
-      fieldFilter: {
-        field: { fieldPath: 'driverId' },
-        op: 'EQUAL',
-        value: { stringValue: driverId },
-      },
-    },
   ];
 
-  if (companyId) {
+  if (opts.companyId) {
     filters.push({
       fieldFilter: {
         field: { fieldPath: 'companyId' },
         op: 'EQUAL',
-        value: { stringValue: companyId },
+        value: { stringValue: opts.companyId },
+      },
+    });
+  } else {
+    filters.push({
+      fieldFilter: {
+        field: { fieldPath: 'driverId' },
+        op: 'EQUAL',
+        value: { stringValue: opts.identity.driverId || '' },
       },
     });
   }
@@ -229,19 +263,18 @@ export async function fetchTodayInvoices(
   const body = {
     structuredQuery: {
       from: [{ collectionId: 'invoices' }],
-      where: {
-        compositeFilter: {
-          op: 'AND',
-          filters,
-        },
-      },
-      // No orderBy — avoids needing a composite index.
+      where: { compositeFilter: { op: 'AND', filters } },
+      // No orderBy — avoids needing a composite index (see de7cd0c, which
+      // removed an orderBy that made this query fail and show all zeros).
       // Results are sorted client-side in calculateDaySummary().
     },
   };
 
   try {
-    console.log('[daySummary] Querying invoices for driverId:', driverId, 'companyId:', companyId || '(none)', 'window:', startOfDay, '->', endOfDay);
+    console.log(
+      '[daySummary] Querying invoices — companyScoped:', !!opts.companyId,
+      'identityKeys:', keys.length, 'window:', startOfDay, '->', endOfDay,
+    );
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     const resp = await fetch(firestoreQueryUrl(), {
@@ -255,25 +288,30 @@ export async function fetchTodayInvoices(
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       console.warn('[daySummary] Firestore query failed:', resp.status, errText.substring(0, 300));
-      // Common cause: missing composite index. Log clearly so it's not silently swallowed.
       if (resp.status === 400 && errText.includes('index')) {
         console.error('[daySummary] ⚠️ MISSING FIRESTORE INDEX — deploy firestore.indexes.json');
       }
-      return [];
+      // A failed read is unavailable, not an empty shift.
+      return { ok: false, reason: `query_failed_${resp.status}` };
     }
 
     const results = await resp.json();
-    console.log('[daySummary] Query returned', results.length, 'results');
     const invoices: DaySummaryInvoice[] = [];
+    let identityRejected = 0;
+    let statusRejected = 0;
 
     for (const result of results) {
       if (!result.document) continue;
       const fields = result.document.fields || {};
-      const status = parseFirestoreValue(fields.status) || 'open';
-      // Only include completed invoices
-      if (!['closed', 'submitted', 'approved', 'paid'].includes(status)) continue;
+      const row: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields)) row[k] = parseFirestoreValue(v);
 
-      const timelineRaw = parseFirestoreValue(fields.timeline) || [];
+      if (!invoiceMatchesDriver(row, keys)) { identityRejected += 1; continue; }
+
+      const status = (row.status as string) || 'open';
+      if (!isCompletedLoad(status)) { statusRejected += 1; continue; }
+
+      const timelineRaw = (row.timeline as any[]) || [];
       const timeline: TimelineEvent[] = timelineRaw.map((evt: any) => ({
         type: evt?.type || '',
         timestamp: evt?.timestamp || '',
@@ -283,27 +321,30 @@ export async function fetchTodayInvoices(
         locationName: evt?.locationName,
       }));
 
-      // Extract doc ID from name path
       const nameParts = result.document.name.split('/');
       const docId = nameParts[nameParts.length - 1];
 
       invoices.push({
         id: docId,
-        wellName: parseFirestoreValue(fields.wellName) || '',
-        hauledTo: parseFirestoreValue(fields.hauledTo) || '',
-        operator: parseFirestoreValue(fields.operator) || '',
-        totalBBL: parseFirestoreValue(fields.totalBBL) || 0,
-        totalHours: parseFirestoreValue(fields.totalHours) || 0,
+        wellName: (row.wellName as string) || '',
+        hauledTo: (row.hauledTo as string) || '',
+        operator: (row.operator as string) || '',
+        totalBBL: (row.totalBBL as number) || 0,
+        totalHours: (row.totalHours as number) || 0,
         status,
         timeline,
-        createdAt: parseFirestoreValue(fields.createdAt) || parseFirestoreValue(fields.invoiceStartedAt) || '',
+        createdAt: (row.createdAt as string) || (row.invoiceStartedAt as string) || '',
       });
     }
 
-    return invoices;
+    console.log(
+      '[daySummary] invoices kept:', invoices.length,
+      'rejected(identity):', identityRejected, 'rejected(status):', statusRejected,
+    );
+    return { ok: true, invoices };
   } catch (err) {
     console.warn('[daySummary] Failed to fetch invoices:', err);
-    return [];
+    return { ok: false, reason: 'query_error' };
   }
 }
 
@@ -393,6 +434,103 @@ export function resolveShiftSummaryDate(opts: {
   return opts.todayLocalDate;
 }
 
+
+
+// ── Driver identity and completed-load selection ─────────────────────────────
+
+/**
+ * The driver's stable identity values.
+ *
+ * WB-S carries TWO and uses them inconsistently: useAppLauncher and
+ * createSuiteDvirGate hand other WB apps `hash: user.passcodeHash`, while
+ * day-summary's JSA deep link and the invoice query used `user.driverId`. If
+ * WB-T stamps an invoice with the identity it was LAUNCHED with, a query keyed
+ * on driverId alone can match nothing — which is a zero-load screen for a shift
+ * of real work, the same shape as the 2026-09-24 display-name bug that
+ * a03f336 fixed by switching to driverId.
+ *
+ * Rather than bet on one field name again, collect every stable value and match
+ * any of them. Display names are deliberately NOT identity: WB-T stamps the
+ * canonical name while WB-S holds the login alias, which is exactly what made
+ * the pre-a03f336 join silently empty.
+ */
+export type DriverIdentity = {
+  driverId?: string | null;
+  passcodeHash?: string | null;
+};
+
+export function driverIdentityKeys(identity: DriverIdentity): string[] {
+  const keys = [identity.driverId, identity.passcodeHash]
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .map(v => v.trim().toLowerCase());
+  return Array.from(new Set(keys));
+}
+
+/** Identity fields an invoice may carry, across WB-T versions. */
+const INVOICE_IDENTITY_FIELDS = ['driverId', 'driverHash', 'driverUid', 'driverKey'] as const;
+
+/**
+ * Does this invoice belong to the driver? Compares every identity field the
+ * row carries against every stable key the driver has. Never matches on a
+ * display name, and never matches on an empty value.
+ */
+export function invoiceMatchesDriver(
+  row: Record<string, unknown>,
+  keys: string[],
+): boolean {
+  if (!keys.length) return false;
+  for (const field of INVOICE_IDENTITY_FIELDS) {
+    const raw = row?.[field];
+    if (typeof raw !== 'string') continue;
+    const value = raw.trim().toLowerCase();
+    if (value && keys.includes(value)) return true;
+  }
+  return false;
+}
+
+/**
+ * Statuses that mean a haul was actually COMPLETED.
+ *
+ * An allowlist on purpose. WB-T's HISTORY_TERMINAL_STATUSES also admits `void`
+ * and can show unknown legacy statuses, which is right for a history view and
+ * wrong here: this card says "completed loads". Canceled, void and anything
+ * in-progress or unrecognised is excluded, so an unfamiliar status can never
+ * silently inflate the count.
+ */
+const COMPLETED_LOAD_STATUSES: ReadonlySet<string> = new Set([
+  'closed',
+  'submitted',
+  'approved',
+  'paid',
+]);
+
+/** Explicitly non-completed, listed so the intent is readable and testable. */
+const NOT_COMPLETED_STATUSES: ReadonlySet<string> = new Set([
+  'canceled',
+  'cancelled',
+  'void',
+  'voided',
+  'open',
+  'active',
+  'in_progress',
+  'draft',
+  'rejected',
+]);
+
+export function isCompletedLoad(status: string | null | undefined): boolean {
+  const s = (status || '').trim().toLowerCase();
+  if (!s) return false;
+  if (NOT_COMPLETED_STATUSES.has(s)) return false;
+  return COMPLETED_LOAD_STATUSES.has(s);
+}
+
+/**
+ * A query that failed is NOT "no loads". The screen must be able to tell a
+ * driver who hauled nothing from a driver whose records could not be read.
+ */
+export type InvoiceFetchResult =
+  | { ok: true; invoices: DaySummaryInvoice[] }
+  | { ok: false; reason: string };
 
 // ── Shift bookends and query windows ─────────────────────────────────────────
 
