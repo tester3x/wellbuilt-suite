@@ -89,6 +89,8 @@ export interface SsoAuthorizationOps {
    * clean "try manual login", not a rejection.
    */
   getReconciliationState(): 'local-only' | 'verifying' | 'verified' | 'rejected' | 'unavailable';
+  /** Await startup verification and retry a transient unavailable state. */
+  resolveReconciliation?(local: SsoIssuerLocalIdentity): Promise<'local-only' | 'verifying' | 'verified' | 'rejected' | 'unavailable'>;
   /** Fresh claims from the owned boundary. Never a cached flag. */
   getVerifiedIdentity(): Promise<SsoIssuerVerifiedIdentity | null>;
   /** Ask the server for a code. Only reached after every local gate. */
@@ -201,7 +203,13 @@ export function createSsoAuthorizationHandler(ops: SsoAuthorizationOps) {
       //    driver: a perfectly valid way to use WB-S, and precisely the
       //    state that must NOT be silently upgraded into cloud authority
       //    for another app.
-      const reconciliation = ops.getReconciliationState();
+      const epochBeforeReconciliation = ops.currentIdentityEpoch();
+      const reconciliation = ops.resolveReconciliation
+        ? await ops.resolveReconciliation(local)
+        : ops.getReconciliationState();
+      if (ops.currentIdentityEpoch() !== epochBeforeReconciliation) {
+        return errorOut('superseded', 'identity changed during reconciliation', request.state, aud);
+      }
       if (reconciliation === 'unavailable' || reconciliation === 'verifying') {
         return errorOut('unavailable', `reconciliation ${reconciliation}`, request.state, aud);
       }

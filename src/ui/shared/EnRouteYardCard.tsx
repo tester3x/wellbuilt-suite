@@ -12,7 +12,8 @@ import {
   Animated,
   Linking,
   Platform,
-  Alert,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, radius, typography } from '@/core/theme';
@@ -48,33 +49,26 @@ export default function EnRouteYardCard({ returnStartTime, onArrived }: EnRouteY
   // at all and kept tapping — the same silent dead end that Return to Yard had
   // in v49. The divert still leaves the return state intact on failure.
   const divertBusy = useRef(false);
+  const [showDivert, setShowDivert] = useState(false);
+  const [divertError, setDivertError] = useState<string | null>(null);
+  const [divertSubmitting, setDivertSubmitting] = useState(false);
   const handleDivert = useCallback(() => {
-    Alert.alert(
-      'Back to work?',
-      'Cancel the drive to The Yard and keep your shift open for a new job. This does not mark you arrived or end your shift.',
-      [
-        { text: 'Keep returning', style: 'cancel' },
-        {
-          text: 'Back to work',
-          onPress: () => {
-            if (divertBusy.current) return;
-            divertBusy.current = true;
-            void (async () => {
-              try {
-                const result = await abandonReturn();
-                if (!result.ok) {
-                  Alert.alert('Still returning to the yard', returnDivertMessage(result.reason));
-                }
-              } catch {
-                Alert.alert('Still returning to the yard', returnDivertMessage('return_failed'));
-              } finally {
-                divertBusy.current = false;
-              }
-            })();
-          },
-        },
-      ],
-    );
+    if (divertBusy.current) return;
+    divertBusy.current = true;
+    setDivertSubmitting(true);
+    setDivertError(null);
+    void (async () => {
+      try {
+        const result = await abandonReturn();
+        if (!result.ok) setDivertError(returnDivertMessage(result.reason));
+        else setShowDivert(false);
+      } catch {
+        setDivertError(returnDivertMessage('return_failed'));
+      } finally {
+        divertBusy.current = false;
+        setDivertSubmitting(false);
+      }
+    })();
   }, [abandonReturn]);
   const [elapsed, setElapsed] = useState('0:00');
   const [yardLocation, setYardLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -154,10 +148,26 @@ export default function EnRouteYardCard({ returnStartTime, onArrived }: EnRouteY
       </Pressable>
 
       {/* Back to work — divert when a new job arrives (no arrival, no close) */}
-      <Pressable onPress={handleDivert} style={s.divertButton}>
+      <Pressable onPress={() => { setDivertError(null); setShowDivert(true); }} style={s.divertButton}>
         <MaterialCommunityIcons name="briefcase-arrow-left-right-outline" size={16} color="#F59E0B" />
         <Text style={s.divertText}>Back to Work (new job)</Text>
       </Pressable>
+      <Modal visible={showDivert} transparent animationType="fade" onRequestClose={() => { if (!divertBusy.current) setShowDivert(false); }}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <MaterialCommunityIcons name="truck-fast" size={36} color="#F59E0B" style={s.modalIcon} />
+            <Text style={s.modalTitle}>{divertError ? 'Still returning to the yard' : 'Back to work?'}</Text>
+            <Text style={s.modalMessage}>{divertError || 'Cancel the drive to The Yard and keep your shift open for a new job. This does not mark you arrived or end your shift.'}</Text>
+            {!divertError && <Pressable accessibilityRole="button" disabled={divertSubmitting} onPress={handleDivert} style={[s.modalPrimary, divertSubmitting && s.modalDisabled]}>
+              {divertSubmitting && <ActivityIndicator size="small" color="#000" />}
+              <Text style={s.modalPrimaryText}>{divertSubmitting ? 'Working…' : 'Back to work'}</Text>
+            </Pressable>}
+            <Pressable accessibilityRole="button" disabled={divertSubmitting} onPress={() => setShowDivert(false)} style={s.modalSecondary}>
+              <Text style={s.modalSecondaryText}>{divertError ? 'Close' : 'Keep returning'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -259,4 +269,14 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16 },
+  modalCard: { width: '100%', maxWidth: 420, backgroundColor: colors.bg.card, borderWidth: 1, borderColor: 'rgba(245,158,11,0.35)', borderRadius: radius.lg, padding: 24 },
+  modalIcon: { alignSelf: 'center', marginBottom: 8 },
+  modalTitle: { color: '#fff', fontSize: 22, fontWeight: '700', textAlign: 'center' },
+  modalMessage: { color: colors.text.muted, fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 8, marginBottom: 20 },
+  modalPrimary: { backgroundColor: '#F59E0B', borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  modalDisabled: { opacity: 0.65 },
+  modalPrimaryText: { color: '#000', fontSize: 16, fontWeight: '700' },
+  modalSecondary: { paddingVertical: 14, alignItems: 'center' },
+  modalSecondaryText: { color: colors.text.muted, fontSize: 14, fontWeight: '600' },
 });

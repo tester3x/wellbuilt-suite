@@ -73,6 +73,42 @@ function harness(over: Partial<World> = {}) {
 }
 
 describe('WB-S issuance gates', () => {
+  it('waits for foreground reconciliation before issuing', async () => {
+    const { w } = harness({ reconciliation: 'verifying' });
+    let settle!: (state: World['reconciliation']) => void;
+    const resolution = new Promise<World['reconciliation']>((resolve) => { settle = resolve; });
+    const handler = createSsoAuthorizationHandler({
+      getLocalIdentity: async () => w.local,
+      getReconciliationState: () => w.reconciliation,
+      resolveReconciliation: async () => resolution,
+      getVerifiedIdentity: async () => w.verified,
+      requestCode: async (req) => { w.requests.push(req); return { code: 'c'.repeat(43) }; },
+      currentIdentityEpoch: () => w.epoch,
+    });
+    const pending = handler.authorize(request());
+    await Promise.resolve();
+    assert.equal(w.requests.length, 0);
+    settle('verified');
+    const out = await pending;
+    assert.equal(out.callback.status, 'success');
+    assert.equal(w.requests.length, 1);
+  });
+
+  it('does not issue if the driver changes while reconciliation settles', async () => {
+    const { w } = harness({ reconciliation: 'verifying' });
+    const handler = createSsoAuthorizationHandler({
+      getLocalIdentity: async () => w.local,
+      getReconciliationState: () => w.reconciliation,
+      resolveReconciliation: async () => { w.epoch += 1; return 'verified'; },
+      getVerifiedIdentity: async () => w.verified,
+      requestCode: async (req) => { w.requests.push(req); return { code: 'c'.repeat(43) }; },
+      currentIdentityEpoch: () => w.epoch,
+    });
+    const out = await handler.authorize(request());
+    assert.equal(out.callback.status, 'error');
+    if (out.callback.status === 'error') assert.equal(out.callback.errorCode, 'superseded');
+    assert.equal(w.requests.length, 0);
+  });
   it('a verified matching session may issue a JSA code without client shiftBinding', async () => {
     const { w, handler } = harness();
     const out = await handler.authorize(request({ audience: SSO_AUDIENCE_JSA }));

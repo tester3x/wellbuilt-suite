@@ -41,6 +41,8 @@ const core = createReconciliationCore({
   signOut: () => signOutOwned(getFirebaseApp()),
 });
 
+let reconciliationInFlight: Promise<AuthReconciliationState> | null = null;
+
 /** Current state. Read at the point of use — never cached by callers. */
 export function getAuthReconciliationState(): AuthReconciliationState {
   return core.getState();
@@ -69,6 +71,7 @@ export function isVerifiedReady(): boolean {
  */
 export function invalidateReconciliation(): void {
   core.invalidate();
+  reconciliationInFlight = null;
 }
 
 /**
@@ -121,7 +124,27 @@ export async function readLocalIdentity(): Promise<LocalIdentity> {
 export function reconcileRestoredSession(
   local: LocalIdentity | null,
 ): Promise<AuthReconciliationState> {
-  return core.reconcile(local);
+  const pending = core.reconcile(local);
+  reconciliationInFlight = pending;
+  void pending.then(() => {
+    if (reconciliationInFlight === pending) reconciliationInFlight = null;
+  }, () => {
+    if (reconciliationInFlight === pending) reconciliationInFlight = null;
+  });
+  return pending;
+}
+
+/** Let a handoff use the restored session after foreground verification settles. */
+export async function resolveReconciliationForHandoff(local: LocalIdentity): Promise<AuthReconciliationState> {
+  let state = core.getState();
+  if (state === 'verifying') {
+    state = reconciliationInFlight
+      ? await reconciliationInFlight
+      : await reconcileRestoredSession(local);
+  }
+  // A transient network failure must not remain latched for the whole app session.
+  if (state === 'unavailable') state = await reconcileRestoredSession(local);
+  return state;
 }
 
 /** Test-only: take a fresh generation between cases. */

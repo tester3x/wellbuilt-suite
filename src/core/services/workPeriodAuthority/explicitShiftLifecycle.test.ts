@@ -68,7 +68,8 @@ test('wiring: ActionCardRow gates checklist and Pre-Trip on claim ok', () => {
   assert.ok(row.includes('mayOpenStartShiftChecklist'));
   assert.ok(row.includes('ensurePreTripGate'));
   assert.ok(row.includes('isExplicitStartShiftSuccess'));
-  assert.ok(row.includes('Checking shift status'));
+  assert.ok(row.includes("disabled={shiftDisabled && shiftAuthorityUi.kind === 'checking'}"));
+  assert.ok(row.includes('ShiftUnavailableModal'));
   assert.ok(row.includes('refreshShiftAuthority'));
 });
 

@@ -11,7 +11,7 @@ import { Linking } from 'react-native';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getFirebaseApp, FIREBASE_REGION } from './firebaseApp';
 import { getOwnedVerifiedIdentity } from './firebaseAuthBoundary';
-import { getAuthReconciliationState, readLocalIdentity } from './authReconciliation';
+import { getAuthReconciliationState, readLocalIdentity, resolveReconciliationForHandoff } from './authReconciliation';
 import { createSsoAuthorizationHandler } from './ssoAuthorizationCore';
 import { createSsoRouteAdapter, type SsoRouteAdapter } from './ssoRouteAdapter';
 import {
@@ -66,6 +66,7 @@ export function getSsoRouteAdapter(
       return { driverId: local.driverId, companyId: local.companyId };
     },
     getReconciliationState: () => getAuthReconciliationState(),
+    resolveReconciliation: (local) => resolveReconciliationForHandoff(local),
     // forceRefresh: verify the server's CURRENT view, not a cached one.
     getVerifiedIdentity: () => getOwnedVerifiedIdentity(getFirebaseApp(), true),
     // Wall clock for refresh-duration telemetry only. Nothing is bounded,
