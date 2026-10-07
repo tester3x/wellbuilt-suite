@@ -218,6 +218,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * so stale results never mutate a newer session.
    */
   const authorityGenRef = useRef(createGenerationClock());
+  const shiftAuthorityRetryAttemptRef = useRef(0);
+  const shiftAuthorityRetryInFlightRef = useRef(false);
   const startShiftInFlightRef = useRef(false);
   /**
    * Single-owner latch for the return divert. "Back to work" is a modal button
@@ -1487,15 +1489,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user?.companyId) return;
     const gen = authorityGenRef.current.current();
     try {
-      const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { postLoginEnforcedRestore }] =
+      const [{ loadCompanyConfigResult }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { postLoginEnforcedRestore }] =
         await Promise.all([
           import('../services/companyConfig'),
           import('../services/workPeriodAuthority/suiteShiftAuthority'),
           import('../services/workPeriodAuthority/postLoginShiftRestoration'),
           import('../services/workPeriodAuthority/explicitShiftLifecycle'),
         ]);
-      const cfg = await fetchCompanyConfig(user.companyId);
-      const enforcement = parseSuiteEnforcement(cfg ?? undefined);
+      const configResult = await loadCompanyConfigResult(user.companyId);
+      if (configResult.kind === 'unavailable') {
+        if (authorityGenRef.current.isCurrent(gen)) {
+          setShiftAuthorityUi({ kind: 'unavailable', reason: 'company_config_unavailable' });
+        }
+        return;
+      }
+      const enforcement = parseSuiteEnforcement(configResult.config);
       if (!isEnforcedExplicitShift(enforcement)) {
         if (!authorityGenRef.current.isCurrent(gen)) return;
         setShiftAuthorityUi({ kind: 'legacy' });
@@ -1517,6 +1525,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, [user]);
+
+  // A phone waking up can reach the shift callable before its connection or
+  // Firebase Auth session is ready. The failed resolve must still block Start
+  // Shift, but it should recover without asking the driver to tap Retry.
+  useEffect(() => {
+    if (!user?.driverId || !user.companyId) {
+      shiftAuthorityRetryAttemptRef.current = 0;
+      return;
+    }
+    if (shiftAuthorityUi.kind !== 'unavailable') {
+      if (shiftAuthorityUi.kind === 'open' || shiftAuthorityUi.kind === 'none' || shiftAuthorityUi.kind === 'legacy') {
+        shiftAuthorityRetryAttemptRef.current = 0;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const retry = () => {
+      if (cancelled || AppState.currentState === 'background' || shiftAuthorityRetryInFlightRef.current) return;
+      shiftAuthorityRetryInFlightRef.current = true;
+      shiftAuthorityRetryAttemptRef.current += 1;
+      void refreshShiftAuthority().finally(() => {
+        shiftAuthorityRetryInFlightRef.current = false;
+      });
+    };
+    const delayMs = Math.min(30_000, 1_500 * 2 ** Math.min(shiftAuthorityRetryAttemptRef.current, 5));
+    const timer = setTimeout(retry, delayMs);
+    const foreground = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        clearTimeout(timer);
+        retry();
+      }
+    });
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      foreground.remove();
+    };
+  }, [user?.driverId, user?.companyId, shiftAuthorityUi, refreshShiftAuthority]);
 
   return (
     <AuthContext.Provider value={{

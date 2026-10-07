@@ -21,6 +21,7 @@ import {
 import ShiftStartModal, { type ShiftStartData } from './ShiftStartModal';
 import ShiftEndModal from './ShiftEndModal';
 import ShiftArrivalModal from './ShiftArrivalModal';
+import ShiftUnavailableModal from './ShiftUnavailableModal';
 import EnRouteYardCard from './EnRouteYardCard';
 import { subscribeEtcNotice } from '@/core/services/etcStart/etcNoticeStore';
 import { runReturnTap, createReturnTapLatch, type ReturnStartResult } from '@/core/services/returnStart';
@@ -101,6 +102,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [dotColor, setDotColor] = useState('#34D399');
   const [showStartModal, setShowStartModal] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
+  const [showShiftUnavailableModal, setShowShiftUnavailableModal] = useState(false);
   const [returnBusy, setReturnBusy] = useState(false);
   const returnTapLatch = useRef(createReturnTapLatch());
   const [returnError, setReturnError] = useState<string | null>(null);
@@ -115,6 +117,10 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [jsaBlock, setJsaBlock] = useState<BlockedJsaClose | null>(null);
   const [retainedOdometer, setRetainedOdometer] = useState<string | undefined>(undefined);
   const markArrivedBusy = useRef(false);
+
+  useEffect(() => {
+    if (shiftAuthorityUi.kind !== 'unavailable') setShowShiftUnavailableModal(false);
+  }, [shiftAuthorityUi.kind]);
 
   /**
    * Mark Arrived now records a durable arrival and launches the governed
@@ -229,18 +235,10 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     } else {
       // Authority must clear before checklist (enforced explicit_shift).
       if (shiftAuthorityUi.kind === 'checking') {
-        Alert.alert('Shift status', 'Checking shift status…');
         return;
       }
       if (shiftAuthorityUi.kind === 'unavailable') {
-        Alert.alert(
-          'Shift unavailable',
-          'Could not verify shift status. Check your connection and try again.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Retry', onPress: () => { void refreshShiftAuthority(); } },
-          ],
-        );
+        setShowShiftUnavailableModal(true);
         return;
       }
       if (shiftAuthorityUi.kind === 'open') {
@@ -496,6 +494,11 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         busy={returnBusy}
         error={returnError}
         shiftStartTime={shiftStartTime}
+      />
+      <ShiftUnavailableModal
+        visible={showShiftUnavailableModal && shiftAuthorityUi.kind === 'unavailable'}
+        onClose={() => setShowShiftUnavailableModal(false)}
+        onRetry={() => { void refreshShiftAuthority(); }}
       />
     </View>
   );
