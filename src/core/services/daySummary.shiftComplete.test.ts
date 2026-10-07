@@ -264,6 +264,7 @@ test('an unknown or missing mode is treated as not required, never as pending', 
 
 const DRIVER_ID = '2cad521c-13ac-4b6c-b1ab-07843c6bf06f';
 const PASSCODE_HASH = 'a91f00b2c3d4e5f60718293a4b5c6d7e';
+const testAuthHeaders = async () => ({ Authorization: 'Bearer test-token' });
 
 test('identity keys cover both stable values and exclude display names', () => {
   const keys = driverIdentityKeys({ driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH });
@@ -327,6 +328,7 @@ test('PHOTO 2: loads stamped with the passcodeHash are counted', async () => {
   const r = await fetchCompletedLoads({
     identity: { driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH },
     companyId: 'liquid-gold',
+    authHeaders: testAuthHeaders,
   });
   assert.equal(r.ok, true);
   assert.equal(r.ok && r.invoices.length, 2, 'driverId-only matching would have returned zero');
@@ -343,6 +345,7 @@ test('canceled and other drivers rows are dropped from a company-scoped query', 
   const r = await fetchCompletedLoads({
     identity: { driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH },
     companyId: 'liquid-gold',
+    authHeaders: testAuthHeaders,
   });
   assert.equal(r.ok, true);
   assert.equal(r.ok && r.invoices.length, 1);
@@ -355,6 +358,7 @@ test('PHOTO 1: a driver with no records reports a true zero, not unavailable', a
   const r = await fetchCompletedLoads({
     identity: { driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH },
     companyId: 'liquid-gold',
+    authHeaders: testAuthHeaders,
   });
   assert.equal(r.ok, true, 'a successful empty query is a real zero');
   assert.equal(r.ok && r.invoices.length, 0);
@@ -365,12 +369,13 @@ test('a FAILED query is unavailable, never zero completed loads', async () => {
   const denied = await fetchCompletedLoads({
     identity: { driverId: DRIVER_ID },
     companyId: 'liquid-gold',
+    authHeaders: testAuthHeaders,
   });
   assert.equal(denied.ok, false);
   assert.equal(!denied.ok && denied.reason, 'query_failed_403');
 
   (globalThis as any).fetch = async () => { throw new Error('network'); };
-  const threw = await fetchCompletedLoads({ identity: { driverId: DRIVER_ID }, companyId: 'liquid-gold' });
+  const threw = await fetchCompletedLoads({ identity: { driverId: DRIVER_ID }, companyId: 'liquid-gold', authHeaders: testAuthHeaders });
   assert.equal(threw.ok, false);
   assert.equal(!threw.ok && threw.reason, 'query_error');
 });

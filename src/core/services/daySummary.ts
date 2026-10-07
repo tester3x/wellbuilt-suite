@@ -3,6 +3,9 @@
 // and calculates daily summary stats for the end-of-day screen.
 // Pure calculation functions ported from Dashboard's driverLogs.ts.
 
+import { getFirebaseApp } from './firebaseApp';
+import { getOwnedIdToken, waitForAuthReady } from './firebaseAuthBoundary';
+
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -151,6 +154,15 @@ function firestoreQueryUrl(): string {
   return `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents:runQuery?key=${FIREBASE_API_KEY}`;
 }
 
+/** Firestore REST still enforces Security Rules; the API key is not a login. */
+export async function firestoreRestHeaders(): Promise<Record<string, string>> {
+  const app = getFirebaseApp();
+  await waitForAuthReady(app);
+  const token = await getOwnedIdToken(app);
+  if (!token) throw new Error('shift_summary_auth_unavailable');
+  return { Authorization: `Bearer ${token}` };
+}
+
 /** Parse a Firestore REST field value to JS. */
 function parseFirestoreValue(val: any): any {
   if (!val) return null;
@@ -191,11 +203,14 @@ export async function fetchTodayInvoices(
   window?: { startIso: string; endIso: string },
   /** Extra stable identity values (e.g. passcodeHash). */
   identity?: DriverIdentity,
+  /** Supplied only by focused fetch tests; production uses owned Firebase Auth. */
+  authHeaders?: () => Promise<Record<string, string>>,
 ): Promise<DaySummaryInvoice[]> {
   const result = await fetchCompletedLoads({
     identity: { driverId, ...(identity || {}) },
     companyId,
     window,
+    authHeaders,
   });
   return result.ok ? result.invoices : [];
 }
@@ -217,6 +232,7 @@ export async function fetchCompletedLoads(opts: {
   identity: DriverIdentity;
   companyId?: string;
   window?: { startIso: string; endIso: string };
+  authHeaders?: () => Promise<Record<string, string>>;
 }): Promise<InvoiceFetchResult> {
   const keys = driverIdentityKeys(opts.identity);
   if (!keys.length) {
@@ -275,11 +291,12 @@ export async function fetchCompletedLoads(opts: {
       '[daySummary] Querying invoices — companyScoped:', !!opts.companyId,
       'identityKeys:', keys.length, 'window:', startOfDay, '->', endOfDay,
     );
+    const headers = { 'Content-Type': 'application/json', ...await (opts.authHeaders ?? firestoreRestHeaders)() };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     const resp = await fetch(firestoreQueryUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -362,17 +379,17 @@ export async function fetchShiftDocForDate(
   const url = firestoreDocUrl('driver_shifts', docId);
 
   try {
+    const headers = await firestoreRestHeaders();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
-    const resp = await fetch(url, { signal: controller.signal });
+    const resp = await fetch(url, { signal: controller.signal, headers });
     clearTimeout(timer);
 
     if (!resp.ok) {
       // Previously `return null` with no log at all, so an unreadable shift
       // record was indistinguishable from a shift that had no events — and the
       // screen blanked its times either way with nothing in the log to explain
-      // it. Note these Firestore reads carry only an API key and no
-      // Authorization header, so a rules-protected collection answers 403 here.
+      // it. Authenticated Firestore reads can still fail due to rules or network.
       const errText = await resp.text().catch(() => '');
       console.warn(
         '[daySummary] driver_shifts read failed:', resp.status,

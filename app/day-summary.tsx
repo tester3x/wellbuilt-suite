@@ -30,6 +30,7 @@ import {
   jsaCardPresentation,
   fetchTodayShift,
   fetchShiftDocForDate,
+  firestoreRestHeaders,
   resolveShiftSummaryDate,
   calculateDaySummary,
   type DaySummary,
@@ -334,7 +335,8 @@ export default function DaySummaryScreen() {
     const jsaP = shiftIdP.then(async (scope) => {
       // First try the legacy single-doc path: `{driverId}_{shiftId}` (also
       // catches pre-rollout date-keyed docs).
-      const directDoc = await fetch(`${BASE}/jsa_day_status/${user.driverId}_${scope}?key=${API_KEY}`)
+      const headers = await firestoreRestHeaders();
+      const directDoc = await fetch(`${BASE}/jsa_day_status/${user.driverId}_${scope}?key=${API_KEY}`, { headers })
         .then(r => r.ok ? r.json() : null).catch(() => null);
 
       // Then query the collection for any operator-scoped docs in this shift.
@@ -358,7 +360,7 @@ export default function DaySummaryScreen() {
       // like a driver who owed nothing.
       const queryResults: any[] | null = await fetch(`${BASE}:runQuery?key=${API_KEY}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(queryBody),
       }).then(r => r.ok ? r.json() : null).catch(() => null);
       const queryFailed = queryResults === null;
@@ -385,9 +387,9 @@ export default function DaySummaryScreen() {
       // legitimately when no legacy single doc exists, so it cannot prove a
       // failure on its own.
       return { directDoc, operatorDocs, scope, readFailed: queryFailed && !directDoc };
-    });
+    }).catch(() => ({ directDoc: null, operatorDocs: null, scope: '', readFailed: true }));
     const companyP = user.companyId
-      ? fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`)
+      ? firestoreRestHeaders().then(headers => fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`, { headers }))
           .then(r => r.ok ? r.json() : null).catch(() => null)
       : Promise.resolve(null);
 

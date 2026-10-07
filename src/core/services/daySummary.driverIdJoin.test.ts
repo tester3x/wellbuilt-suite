@@ -5,11 +5,12 @@ import assert from 'node:assert/strict';
 import { fetchTodayInvoices } from './daySummary';
 
 const DRV = '2cad521c-13ac-4b6c-b1ab-07843c6bf06f';
+const testAuthHeaders = async () => ({ Authorization: 'Bearer test-token' });
 
 function stubFetch(docs: any[]) {
   const calls: any[] = [];
   (globalThis as any).fetch = async (_url: string, init?: any) => {
-    calls.push(init ? JSON.parse(init.body) : null);
+    calls.push(init ? { body: JSON.parse(init.body), headers: init.headers } : null);
     return { ok: true, status: 200, json: async () => docs, text: async () => '' } as any;
   };
   return calls;
@@ -38,8 +39,9 @@ test('never joins by display name; scopes on company + createdAt', async () => {
   // because an invoice may be stamped with driverId OR the passcodeHash that
   // other WB apps receive as the driver `hash`.
   const calls = stubFetch([invoiceDoc('INV1', DRV)]);
-  await fetchTodayInvoices(DRV, 'liquid-gold');
-  const body = calls[0];
+  await fetchTodayInvoices(DRV, 'liquid-gold', undefined, undefined, testAuthHeaders);
+  assert.equal(calls[0].headers.Authorization, 'Bearer test-token');
+  const body = calls[0].body;
   const filters = body.structuredQuery.where.compositeFilter.filters.map((f: any) => f.fieldFilter);
   assert.equal(filters.some((f: any) => f.field.fieldPath === 'driver'), false, 'must NOT filter by driver name');
   assert.ok(filters.some((f: any) => f.field.fieldPath === 'companyId'), 'company boundary kept');
@@ -49,8 +51,8 @@ test('never joins by display name; scopes on company + createdAt', async () => {
 test('without a company scope it still falls back to driverId equality', async () => {
   // No safe axis to broaden into, so the query must stay narrow.
   const calls = stubFetch([]);
-  await fetchTodayInvoices(DRV);
-  const filters = calls[0].structuredQuery.where.compositeFilter.filters.map((f: any) => f.fieldFilter);
+  await fetchTodayInvoices(DRV, undefined, undefined, undefined, testAuthHeaders);
+  const filters = calls[0].body.structuredQuery.where.compositeFilter.filters.map((f: any) => f.fieldFilter);
   const driverIdFilter = filters.find((f: any) => f.field.fieldPath === 'driverId');
   assert.ok(driverIdFilter, 'driverId equality retained without a company scope');
   assert.equal(driverIdFilter.value.stringValue, DRV);
@@ -59,13 +61,13 @@ test('without a company scope it still falls back to driverId equality', async (
 
 test('Z Fold: closed invoices under this driverId ARE returned', async () => {
   stubFetch([invoiceDoc('XzDNUjqP', DRV), invoiceDoc('QmgsgIrI', DRV)]);
-  const invoices = await fetchTodayInvoices(DRV, 'liquid-gold');
+  const invoices = await fetchTodayInvoices(DRV, 'liquid-gold', undefined, undefined, testAuthHeaders);
   assert.equal(invoices.length, 2);
   assert.equal(invoices[0].totalBBL, 140);
 });
 
 test('S24 with no invoice records → zero loads (only what its invoices back)', async () => {
   stubFetch([]); // no invoices synced for this driverId
-  const invoices = await fetchTodayInvoices('99ff4b35-51ab-4d45-8d54-18b3b8515c9b', 'liquid-gold');
+  const invoices = await fetchTodayInvoices('99ff4b35-51ab-4d45-8d54-18b3b8515c9b', 'liquid-gold', undefined, undefined, testAuthHeaders);
   assert.equal(invoices.length, 0);
 });

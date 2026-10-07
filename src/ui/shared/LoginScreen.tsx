@@ -253,7 +253,9 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { flex: 1 },
-  scrollContent: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, justifyContent: 'center' },
+  // Keep the sign-in action above the Android keyboard instead of recentering
+  // the whole form when the viewport shrinks.
+  scrollContent: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingTop: 36, paddingBottom: spacing.xxl },
   logoSection: { alignItems: 'center', marginBottom: spacing.xl },
   logo: { width: 64, height: 64, marginBottom: spacing.sm },
   brandName: { ...typography.h2, color: colors.text.primary, letterSpacing: 1 },
