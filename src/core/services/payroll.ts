@@ -1,6 +1,8 @@
 // src/core/services/payroll.ts
 // Fetches invoice data for driver timesheet view via Firestore REST API.
-// Mirrors Dashboard payroll logic: fetches all company invoices, filters by driver client-side.
+// Queries company invoices and matches the driver's stable identity client-side.
+
+import { driverIdentityKeys, firestoreRestHeaders, invoiceMatchesDriver, type DriverIdentity } from './daySummary';
 
 const FIRESTORE_PROJECT = 'wellbuilt-sync';
 const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
@@ -161,16 +163,20 @@ function formatShortDate(date: Date): string {
  * Matches Dashboard payroll approach exactly.
  */
 export async function fetchDriverInvoices(
-  displayName: string,
-  companyId: string | undefined,
+  identity: DriverIdentity,
+  companyId: string,
   start: Date,
   end: Date,
+  /** Focused fetch tests supply a token; production uses the owned SDK session. */
+  authHeaders: () => Promise<Record<string, string>> = firestoreRestHeaders,
 ): Promise<TimesheetInvoice[]> {
+  const identityKeys = driverIdentityKeys(identity);
+  if (!identityKeys.length || !companyId) throw new Error('payroll_identity_unavailable');
   const startISO = start.toISOString();
   const endISO = end.toISOString();
 
-  // Only filter by createdAt range in the query — driver filtering done client-side.
-  // This avoids the composite index requirement that was causing empty results.
+  // Company and time window match the working shift-summary query. Driver
+  // filtering stays client-side to avoid an additional composite index.
   const body = {
     structuredQuery: {
       from: [{ collectionId: 'invoices' }],
@@ -192,10 +198,18 @@ export async function fetchDriverInvoices(
                 value: { timestampValue: endISO },
               },
             },
+            {
+              fieldFilter: {
+                field: { fieldPath: 'companyId' },
+                op: 'EQUAL',
+                value: { stringValue: companyId },
+              },
+            },
           ],
         },
       },
-      orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'ASCENDING' }],
+      // The day summary uses this same company + createdAt query without
+      // orderBy so a composite ordering index is not needed.
     },
   };
 
@@ -204,7 +218,7 @@ export async function fetchDriverInvoices(
     const timer = setTimeout(() => controller.abort(), 15000);
     const resp = await fetch(firestoreQueryUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...await authHeaders() },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -212,7 +226,7 @@ export async function fetchDriverInvoices(
 
     if (!resp.ok) {
       console.warn('[payroll] Firestore query failed:', resp.status);
-      return [];
+      throw new Error(`payroll_invoices_${resp.status}`);
     }
 
     const results = await resp.json();
@@ -225,17 +239,17 @@ export async function fetchDriverInvoices(
       const docId = nameParts[nameParts.length - 1];
 
       const driver = parseFirestoreValue(f.driver) || '';
-      const driverDispName = parseFirestoreValue(f.driverDisplayName) || '';
       const invoiceCompanyId = parseFirestoreValue(f.companyId) || '';
       const status = parseFirestoreValue(f.status) || 'open';
 
-      // Client-side filters:
-      // 1. Match driver name (case-insensitive) — check both driver (legalName) and driverDisplayName
-      const dn = displayName.toLowerCase();
-      if (driver.toLowerCase() !== dn && driverDispName.toLowerCase() !== dn) continue;
-      // 2. Match company if specified
-      if (companyId && invoiceCompanyId && invoiceCompanyId !== companyId) continue;
-      // 3. Skip open/in-progress (match Dashboard: only closed+ count for pay)
+      // WB-T stores the canonical name while Suite may display a login alias.
+      // Match the stable driver identity, as the shift summary does.
+      const invoiceIdentity = Object.fromEntries(
+        ['driverId', 'driverHash', 'driverUid', 'driverKey'].map(key => [key, parseFirestoreValue(f[key])]),
+      );
+      if (!invoiceMatchesDriver(invoiceIdentity, identityKeys)) continue;
+      if (invoiceCompanyId !== companyId) continue;
+      // Skip open/in-progress (match Dashboard: only closed+ count for pay)
       // But keep them visible so driver sees pay building in real-time
       // We'll mark them differently in the UI instead
 
@@ -279,10 +293,10 @@ export async function fetchDriverInvoices(
       });
     }
 
-    return invoices;
+    return invoices.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   } catch (err) {
     console.warn('[payroll] Failed to fetch invoices:', err);
-    return [];
+    throw err;
   }
 }
 
@@ -294,11 +308,13 @@ export async function fetchPayConfig(companyId: string): Promise<PayConfig | nul
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
     const resp = await fetch(firestoreDocUrl(`companies/${companyId}`), {
+      headers: await firestoreRestHeaders(),
       signal: controller.signal,
     });
     clearTimeout(timer);
 
-    if (!resp.ok) return null;
+    if (resp.status === 404) return null;
+    if (!resp.ok) throw new Error(`payroll_config_${resp.status}`);
 
     const doc = await resp.json();
     const fields = doc.fields || {};
@@ -323,7 +339,7 @@ export async function fetchPayConfig(companyId: string): Promise<PayConfig | nul
     };
   } catch (err) {
     console.warn('[payroll] Failed to fetch pay config:', err);
-    return null;
+    throw err;
   }
 }
 
@@ -458,7 +474,7 @@ export async function buildWellCountyMap(operators: string[]): Promise<Map<strin
       const timer = setTimeout(() => controller.abort(), 15000);
       const resp = await fetch(firestoreQueryUrl(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...await firestoreRestHeaders() },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
@@ -541,6 +557,7 @@ export async function fetchInvoiceDetail(invoiceId: string): Promise<InvoiceDeta
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
     const resp = await fetch(firestoreDocUrl(`invoices/${invoiceId}`), {
+      headers: await firestoreRestHeaders(),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -618,7 +635,7 @@ export async function fetchTicketDetails(ticketNumbers: string[]): Promise<Ticke
       const timer = setTimeout(() => controller.abort(), 10000);
       const resp = await fetch(firestoreQueryUrl(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...await firestoreRestHeaders() },
         body: JSON.stringify(body),
         signal: controller.signal,
       });

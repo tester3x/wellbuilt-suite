@@ -423,6 +423,7 @@ export default function TimesheetScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [noRateSheet, setNoRateSheet] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   // Invoice detail modal state
   const [detailInvoice, setDetailInvoice] = useState<InvoiceDetail | null>(null);
@@ -434,13 +435,16 @@ export default function TimesheetScreen() {
   const loadData = useCallback(async (showLoader = true) => {
     if (!user) return;
     if (showLoader) setLoading(true);
+    setLoadError(false);
 
     try {
       const { start, end, label } = getPeriodDates(selectedPeriod);
+      const companyId = user.companyId;
+      if (!companyId) throw new Error('payroll_company_unavailable');
 
       const [invoices, payConfig] = await Promise.all([
-        fetchDriverInvoices(user.legalName || user.displayName, user.companyId, start, end),
-        user.companyId ? fetchPayConfig(user.companyId) : Promise.resolve(null),
+        fetchDriverInvoices({ driverId: user.driverId, passcodeHash: user.passcodeHash }, companyId, start, end),
+        fetchPayConfig(companyId),
       ]);
 
       setNoRateSheet(!payConfig?.rateSheets || Object.keys(payConfig.rateSheets).length === 0);
@@ -453,6 +457,8 @@ export default function TimesheetScreen() {
       setSummary(result);
     } catch (err) {
       console.warn('[Timesheet] Failed to load:', err);
+      setSummary(null);
+      setLoadError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -639,7 +645,12 @@ export default function TimesheetScreen() {
           </>
         ) : (
           <View style={s.emptyState}>
-            <Text style={s.emptyText}>{t('timesheet.error')}</Text>
+            <Text style={s.emptyText}>{loadError ? 'Timesheet unavailable' : t('timesheet.error')}</Text>
+            {loadError && (
+              <Pressable onPress={() => void loadData()}>
+                <Text style={s.emptySubtext}>Could not load your pay records. Tap to retry.</Text>
+              </Pressable>
+            )}
           </View>
         )}
       </ScrollView>
