@@ -107,6 +107,15 @@ export interface TimesheetSummary {
   periodEnd: string;
 }
 
+/** A known nonpayable status is not an unresolved payroll calculation. */
+export function payrollRowGroup(row: TimesheetRow): 'paid' | 'in_progress' | 'excluded' | 'needs_review' {
+  if (row.payable) return 'paid';
+  const status = row.status.trim().toLowerCase();
+  if (['open', 'in_progress', 'in-progress', 'paused'].includes(status)) return 'in_progress';
+  if (['cancelled', 'void', 'transferred', 'transfer_pending'].includes(status)) return 'excluded';
+  return 'needs_review';
+}
+
 export type PeriodType = 'today' | 'this-week' | 'last-week' | 'biweekly';
 
 // ── Firestore REST helpers ───────────────────────────────────────────────────
@@ -526,6 +535,8 @@ export async function buildWellCountyMap(operators: string[]): Promise<Map<strin
 export interface InvoiceDetail {
   docId: string;
   invoiceNumber: string;
+  ticketNumber: string;
+  companyId: string;
   operator: string;
   wellName: string;
   hauledTo: string;
@@ -536,6 +547,8 @@ export interface InvoiceDetail {
   date: string;
   driver: string;
   tickets: string[];
+  ticketSummaries: Array<{ ticketNumber?: string; ticketDocId?: string; docId?: string }>;
+  photos: Array<string | { uri?: string; remoteUrl?: string; type?: string; location?: string; takenAt?: string }>;
   ticketCount: number;
   truckNumber: string;
   trailer: string;
@@ -553,6 +566,8 @@ export interface TicketDetail {
   hauledTo: string;
   type: string;
   qty: string;
+  pickupBbls: string;
+  dropoffBbls: string;
   date: string;
   timeGauged: string;
   company: string;
@@ -568,6 +583,10 @@ export interface TicketDetail {
   stopTime: string;
   hours: string;
   disposalApiNo: string;
+  disposalGpsLat: string;
+  disposalGpsLng: string;
+  hauledToLegalDesc: string;
+  hauledToCounty: string;
 }
 
 /**
@@ -590,9 +609,14 @@ export async function fetchInvoiceDetail(invoiceId: string): Promise<InvoiceDeta
 
     const timeline = parseFirestoreValue(f.timeline) || [];
 
+    const parsedTickets = parseFirestoreValue(f.tickets);
+    const parsedSummaries = parseFirestoreValue(f.ticketSummaries);
+    const parsedPhotos = parseFirestoreValue(f.photos);
     return {
       docId: invoiceId,
       invoiceNumber: parseFirestoreValue(f.invoiceNumber) || '',
+      ticketNumber: String(parseFirestoreValue(f.ticketNumber) || (Array.isArray(parsedTickets) ? parsedTickets[0] : '') || (Array.isArray(parsedSummaries) ? parsedSummaries[0]?.ticketNumber : '') || ''),
+      companyId: String(parseFirestoreValue(f.companyId) || ''),
       operator: parseFirestoreValue(f.operator) || '',
       wellName: parseFirestoreValue(f.wellName) || '',
       hauledTo: parseFirestoreValue(f.hauledTo) || '',
@@ -602,8 +626,10 @@ export async function fetchInvoiceDetail(invoiceId: string): Promise<InvoiceDeta
       commodityType: parseFirestoreValue(f.commodityType) || '',
       date: parseFirestoreValue(f.date) || '',
       driver: parseFirestoreValue(f.driver) || '',
-      tickets: parseFirestoreValue(f.tickets) || [],
-      ticketCount: (parseFirestoreValue(f.tickets) || []).length,
+      tickets: Array.isArray(parsedTickets) ? parsedTickets.map(String) : [],
+      ticketSummaries: Array.isArray(parsedSummaries) ? parsedSummaries : [],
+      photos: Array.isArray(parsedPhotos) ? parsedPhotos : [],
+      ticketCount: Math.max(Array.isArray(parsedTickets) ? parsedTickets.length : 0, Array.isArray(parsedSummaries) ? parsedSummaries.length : 0),
       truckNumber: parseFirestoreValue(f.truckNumber) || '',
       trailer: parseFirestoreValue(f.trailer) || '',
       startTime: parseFirestoreValue(f.startTime) || null,
@@ -618,11 +644,99 @@ export async function fetchInvoiceDetail(invoiceId: string): Promise<InvoiceDeta
   }
 }
 
+/** Prefer the canonical ticket's invoiceDocId link. Older jobs may only have
+ * a number on the invoice, so retain the numbered lookup as a fallback. */
+export async function fetchInvoiceTicketDetails(
+  invoice: InvoiceDetail,
+  authHeaders: () => Promise<Record<string, string>> = firestoreRestHeaders,
+): Promise<TicketDetail[]> {
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: 'tickets' }],
+      where: { fieldFilter: {
+        field: { fieldPath: 'invoiceDocId' }, op: 'EQUAL',
+        value: { stringValue: invoice.docId },
+      } },
+      limit: 20,
+    },
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  let linkError: unknown = null;
+  try {
+    const resp = await fetch(firestoreQueryUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...await authHeaders() },
+      body: JSON.stringify(body), signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error(`invoice_tickets_${resp.status}`);
+    const result = await resp.json();
+    const linked = (Array.isArray(result) ? result : [])
+      .filter((entry: any) => entry.document && parseFirestoreValue(entry.document.fields?.companyId) === invoice.companyId)
+      .map((entry: any) => mapTicketDetail(entry.document));
+    if (linked.length > 0) return linked;
+  } catch (err) {
+    linkError = err;
+  } finally {
+    clearTimeout(timer);
+  }
+  const docIds = [...new Set(invoice.ticketSummaries
+    .map(summary => summary.ticketDocId || summary.docId || '')
+    .filter(id => /^[A-Za-z0-9_-]+$/.test(id)))];
+  const byId: TicketDetail[] = [];
+  for (const id of docIds) {
+    try {
+      const resp = await fetch(firestoreDocUrl(`tickets/${id}`), { headers: await authHeaders() });
+      if (!resp.ok) continue;
+      const document = await resp.json();
+      if (parseFirestoreValue(document.fields?.companyId) === invoice.companyId) {
+        byId.push(mapTicketDetail(document));
+      }
+    } catch { /* A stale summary must not block the remaining links. */ }
+  }
+  if (byId.length > 0) return byId;
+  const numbers = [...new Set([
+    ...invoice.tickets.map(String), invoice.ticketNumber,
+    ...invoice.ticketSummaries.map(summary => String(summary.ticketNumber || '')),
+  ].filter(Boolean))];
+  if (numbers.length > 0) return fetchTicketDetails(numbers, invoice.companyId);
+  if (linkError) throw linkError;
+  return [];
+}
+
+function mapTicketDetail(document: any): TicketDetail {
+  const f = document.fields || {};
+  const nameParts = String(document.name || '').split('/');
+  return {
+    docId: nameParts[nameParts.length - 1],
+    ticketNumber: String(parseFirestoreValue(f.ticketNumber) || ''),
+    location: parseFirestoreValue(f.wellName) || parseFirestoreValue(f.location) || '',
+    hauledTo: parseFirestoreValue(f.hauledTo) || parseFirestoreValue(f.disposal) || '',
+    type: parseFirestoreValue(f.type) || '',
+    qty: String(parseFirestoreValue(f.bbls) ?? parseFirestoreValue(f.qty) ?? ''),
+    pickupBbls: String(parseFirestoreValue(f.pickupBbls) ?? parseFirestoreValue(f.bbls) ?? parseFirestoreValue(f.qty) ?? ''),
+    dropoffBbls: String(parseFirestoreValue(f.dropoffBbls) ?? parseFirestoreValue(f.bbls) ?? parseFirestoreValue(f.qty) ?? ''),
+    date: parseFirestoreValue(f.date) || '',
+    timeGauged: parseFirestoreValue(f.timeGauged) || '',
+    company: parseFirestoreValue(f.operator) || parseFirestoreValue(f.company) || '',
+    top: parseFirestoreValue(f.top) || '', bottom: parseFirestoreValue(f.bottom) || '',
+    notes: parseFirestoreValue(f.notes) || '', apiNo: parseFirestoreValue(f.apiNo) || '',
+    gpsLat: parseFirestoreValue(f.gpsLat) || '', gpsLng: parseFirestoreValue(f.gpsLng) || '',
+    legalDesc: parseFirestoreValue(f.legalDesc) || '', county: parseFirestoreValue(f.county) || '',
+    startTime: parseFirestoreValue(f.startTime) || '', stopTime: parseFirestoreValue(f.stopTime) || '',
+    hours: parseFirestoreValue(f.hours) || '', disposalApiNo: parseFirestoreValue(f.disposalApiNo) || '',
+    disposalGpsLat: String(parseFirestoreValue(f.disposalGpsLat) || ''),
+    disposalGpsLng: String(parseFirestoreValue(f.disposalGpsLng) || ''),
+    hauledToLegalDesc: parseFirestoreValue(f.hauledToLegalDesc) || '',
+    hauledToCounty: parseFirestoreValue(f.hauledToCounty) || '',
+  };
+}
+
 /**
  * Fetch water ticket details by ticket numbers via Firestore REST API.
  * Firestore REST 'in' filter limited to 30 values per query — chunk accordingly.
  */
-export async function fetchTicketDetails(ticketNumbers: string[]): Promise<TicketDetail[]> {
+export async function fetchTicketDetails(ticketNumbers: string[], companyId: string): Promise<TicketDetail[]> {
   if (!ticketNumbers.length) return [];
 
   const details: TicketDetail[] = [];
@@ -667,33 +781,8 @@ export async function fetchTicketDetails(ticketNumbers: string[]): Promise<Ticke
       const results = await resp.json();
       for (const result of results) {
         if (!result.document) continue;
-        const f = result.document.fields || {};
-        const nameParts = result.document.name.split('/');
-        const docId = nameParts[nameParts.length - 1];
-
-        details.push({
-          docId,
-          ticketNumber: String(parseFirestoreValue(f.ticketNumber) || ''),
-          location: parseFirestoreValue(f.wellName) || parseFirestoreValue(f.location) || '',
-          hauledTo: parseFirestoreValue(f.hauledTo) || parseFirestoreValue(f.disposal) || '',
-          type: parseFirestoreValue(f.type) || '',
-          qty: parseFirestoreValue(f.bbls) || parseFirestoreValue(f.qty) || '',
-          date: parseFirestoreValue(f.date) || '',
-          timeGauged: parseFirestoreValue(f.timeGauged) || '',
-          company: parseFirestoreValue(f.operator) || parseFirestoreValue(f.company) || '',
-          top: parseFirestoreValue(f.top) || '',
-          bottom: parseFirestoreValue(f.bottom) || '',
-          notes: parseFirestoreValue(f.notes) || '',
-          apiNo: parseFirestoreValue(f.apiNo) || '',
-          gpsLat: parseFirestoreValue(f.gpsLat) || '',
-          gpsLng: parseFirestoreValue(f.gpsLng) || '',
-          legalDesc: parseFirestoreValue(f.legalDesc) || '',
-          county: parseFirestoreValue(f.county) || '',
-          startTime: parseFirestoreValue(f.startTime) || '',
-          stopTime: parseFirestoreValue(f.stopTime) || '',
-          hours: parseFirestoreValue(f.hours) || '',
-          disposalApiNo: parseFirestoreValue(f.disposalApiNo) || '',
-        });
+        if (parseFirestoreValue(result.document.fields?.companyId) !== companyId) continue;
+        details.push(mapTicketDetail(result.document));
       }
     } catch {
       // Skip chunk on error
@@ -817,7 +906,7 @@ export function buildTimesheetSummary(
     totalLoads: payableRows.length,
     totalBBLs: payableRows.reduce((s, r) => s + (r.qtyUnit === 'bbl' && r.qtyValue != null ? r.qtyValue : 0), 0),
     totalTons: payableRows.reduce((s, r) => s + (r.qtyUnit === 'ton' && r.qtyValue != null ? r.qtyValue : 0), 0),
-    unresolvedCount: rows.filter(r => r.amountUnresolved).length,
+    unresolvedCount: rows.filter(r => payrollRowGroup(r) === 'needs_review').length,
     totalHours: Math.round(payableRows.reduce((s, r) => s + r.hours, 0) * 100) / 100,
     totalGross: Math.round(payableRows.reduce((s, r) => s + moneyContribution(r.gross, r.amountUnresolved), 0) * 100) / 100,
     totalPay: Math.round(payableRows.reduce((s, r) => s + moneyContribution(r.employeePay, r.amountUnresolved), 0) * 100) / 100,

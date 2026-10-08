@@ -13,6 +13,8 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
+  Image,
+  Linking,
   Platform,
   StatusBar,
 } from 'react-native';
@@ -32,9 +34,10 @@ import {
   getPeriodDates,
   buildTimesheetSummary,
   formatTimesheetMoney,
+  payrollRowGroup,
   buildWellCountyMap,
   fetchInvoiceDetail,
-  fetchTicketDetails,
+  fetchInvoiceTicketDetails,
 } from '@/core/services/payroll';
 
 const MONO = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
@@ -44,6 +47,15 @@ const ANDROID_TOP = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) 
 
 function formatCurrency(amount: number): string {
   return '$' + amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function paperPhotoUrl(uri: string): string {
+  if (!uri.includes('firebasestorage.googleapis.com')) return uri;
+  const object = uri.match(/\/o\/(.+?)(\?|$)/);
+  const bucket = uri.match(/\/b\/([^/]+)\//);
+  if (!object || !bucket) return uri;
+  try { return `https://storage.googleapis.com/${bucket[1]}/${decodeURIComponent(object[1])}`; }
+  catch { return uri; }
 }
 
 function statusColor(status: string): string {
@@ -124,7 +136,7 @@ function StatCard({ label, value, color, icon }: {
   return (
     <View style={s.statCard}>
       <MaterialCommunityIcons name={icon as any} size={18} color={color} />
-      <Text style={[s.statValue, { color }]}>{value}</Text>
+      <Text style={[s.statValue, { color }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{value}</Text>
       <Text style={s.statLabel}>{label}</Text>
     </View>
   );
@@ -185,7 +197,10 @@ function InvoiceDetailModal({
               </View>
             </View>
 
-            <PaperRow label="Invoice #" value={invoice.invoiceNumber} mono />
+            <PaperRow label="Invoice #" value={invoice.invoiceNumber || invoice.ticketNumber || tickets[0]?.ticketNumber || '—'} mono />
+            {(invoice.ticketNumber || tickets[0]?.ticketNumber) ? (
+              <PaperRow label="Ticket #" value={`#${invoice.ticketNumber || tickets[0]?.ticketNumber}`} mono />
+            ) : null}
             <PaperRow label="Date" value={invoice.date} />
             {invoice.commodityType ? <PaperRow label="Type" value={invoice.commodityType} /> : null}
 
@@ -219,12 +234,12 @@ function InvoiceDetailModal({
             <View style={p.divider} />
 
             {/* ─── Water Tickets ─── */}
-            <Text style={p.sectionTitle}>{t('timesheet.waterTickets')}</Text>
+            <Text style={p.sectionTitle}>LINE ITEMS</Text>
 
             {loadingTickets ? (
               <ActivityIndicator size="small" color={colors.brand.primary} style={{ paddingVertical: 20 }} />
             ) : tickets.length === 0 ? (
-              <Text style={p.noData}>{t('timesheet.noTickets')}</Text>
+              <Text style={p.noData}>{invoice.ticketNumber ? `Ticket #${invoice.ticketNumber} — details unavailable` : t('timesheet.noTickets')}</Text>
             ) : (
               tickets.map((tk) => (
                 <View key={tk.docId} style={p.ticket}>
@@ -246,7 +261,8 @@ function InvoiceDetailModal({
                   {/* Measurements row */}
                   <View style={p.ticketMeasurements}>
                     <MeasureBox label="TYPE" value={tk.type || '—'} />
-                    <MeasureBox label="QTY (BBL)" value={tk.qty || '—'} mono />
+                    <MeasureBox label="PICKUP BBL" value={tk.pickupBbls || '—'} mono />
+                    <MeasureBox label="DROP-OFF BBL" value={tk.dropoffBbls || '—'} mono />
                     {tk.top ? <MeasureBox label="TOP" value={tk.top} mono /> : null}
                     {tk.bottom ? <MeasureBox label="BOTTOM" value={tk.bottom} mono /> : null}
                   </View>
@@ -254,6 +270,7 @@ function InvoiceDetailModal({
                   {/* Legal info (smaller) */}
                   {(tk.apiNo || tk.county || tk.legalDesc) && (
                     <View style={p.ticketLegal}>
+                      <Text style={p.legalText}>PICKUP</Text>
                       {tk.apiNo ? <Text style={p.legalText}>API# {tk.apiNo}</Text> : null}
                       {tk.county ? <Text style={p.legalText}>County: {tk.county}</Text> : null}
                       {tk.legalDesc ? <Text style={p.legalText}>Legal: {tk.legalDesc}</Text> : null}
@@ -262,6 +279,15 @@ function InvoiceDetailModal({
                       ) : null}
                     </View>
                   )}
+                  {(tk.disposalApiNo || tk.disposalGpsLat || tk.hauledToLegalDesc || tk.hauledToCounty) ? (
+                    <View style={p.ticketLegal}>
+                      <Text style={p.legalText}>DROP-OFF</Text>
+                      {tk.disposalApiNo ? <Text style={p.legalText}>API# {tk.disposalApiNo}</Text> : null}
+                      {tk.disposalGpsLat && tk.disposalGpsLng ? <Text style={p.legalText}>GPS: {tk.disposalGpsLat}, {tk.disposalGpsLng}</Text> : null}
+                      {tk.hauledToLegalDesc ? <Text style={p.legalText}>{tk.hauledToLegalDesc}</Text> : null}
+                      {tk.hauledToCounty ? <Text style={p.legalText}>{tk.hauledToCounty} County</Text> : null}
+                    </View>
+                  ) : null}
 
                   {/* Hours (service work) */}
                   {(tk.startTime || tk.stopTime || tk.hours) && (
@@ -313,6 +339,32 @@ function InvoiceDetailModal({
               </>
             ) : null}
 
+            {/* Same invoice-owned photo source used by Dashboard's paper view. */}
+            {invoice.photos.length > 0 ? (
+              <>
+                <View style={p.divider} />
+                <Text style={p.sectionTitle}>PHOTOS ({invoice.photos.filter(photo => typeof photo === 'string' || photo.type !== 'jsa').length})</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={p.photoStrip}>
+                  {invoice.photos.map((photo, index) => {
+                    const rawUri = typeof photo === 'string' ? photo : photo.remoteUrl || photo.uri;
+                    if (!rawUri || !/^https:\/\//i.test(rawUri)) return null;
+                    const uri = paperPhotoUrl(rawUri);
+                    const isJsa = typeof photo !== 'string' && photo.type === 'jsa';
+                    return (
+                      <Pressable key={`${uri}-${index}`} onPress={() => void Linking.openURL(uri)} style={p.photoItem}>
+                        {isJsa
+                          ? <View style={p.jsaTile}><Text style={p.jsaText}>JSA</Text></View>
+                          : <Image source={{ uri }} style={p.photoImage} />}
+                        {typeof photo !== 'string' && photo.location ? (
+                          <Text style={p.photoCaption} numberOfLines={1}>{photo.location}</Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            ) : null}
+
             {/* ─── Totals ─── */}
             <View style={p.totalsDivider} />
             <View style={p.totalsSection}>
@@ -326,7 +378,7 @@ function InvoiceDetailModal({
               </View>
               <View style={p.totalsRow}>
                 <Text style={p.totalsLabel}>Tickets</Text>
-                <Text style={[p.totalsValue, p.mono]}>{invoice.ticketCount}</Text>
+                <Text style={[p.totalsValue, p.mono]}>{Math.max(invoice.ticketCount, tickets.length, invoice.ticketNumber ? 1 : 0)}</Text>
               </View>
             </View>
 
@@ -376,6 +428,7 @@ function PayrollRow({ row, onTap }: {
   onTap: () => void;
 }) {
   const sColor = statusColor(row.status);
+  const group = payrollRowGroup(row);
   const rateLabel = row.amountUnresolved
     ? formatTimesheetMoney(row.rate, row.amountUnresolved)
     : row.rateMethod === 'per_bbl'
@@ -386,34 +439,21 @@ function PayrollRow({ row, onTap }: {
     <Pressable onPress={onTap} style={s.payrollRow}>
       <View style={s.rowHeader}>
         <View style={s.rowLeft}>
-          <View style={[s.statusDot, { backgroundColor: sColor }]} />
-          <Text style={s.rowDate}>{row.date}</Text>
-          <Text style={s.rowInvoice}>#{row.invoiceNumber}</Text>
-          <Text style={s.miniDot}>·</Text>
-          <Text style={s.miniText}>{row.operator}</Text>
-          <Text style={s.miniDot}>·</Text>
-          <Text style={s.miniText}>{rateLabel}</Text>
-          {row.qtyDisplay ? (
-            <>
-              <Text style={s.miniDot}>·</Text>
-              <Text style={s.miniText}>{row.qtyDisplay}</Text>
-            </>
-          ) : null}
-          {row.hoursDisplay ? (
-            <>
-              <Text style={s.miniDot}>·</Text>
-              <Text style={s.miniText}>{row.hoursDisplay}</Text>
-            </>
-          ) : null}
-          {row.amountUnresolved ? (
-            <>
-              <Text style={s.miniDot}>·</Text>
-              <Text style={s.miniText}>{formatTimesheetMoney(row.employeePay, row.amountUnresolved)}</Text>
-            </>
-          ) : null}
+          <View style={s.rowIdentity}>
+            <View style={[s.statusDot, { backgroundColor: sColor }]} />
+            <Text style={s.rowDate}>{row.date}</Text>
+            <Text style={s.rowInvoice} numberOfLines={1}>#{row.invoiceNumber}</Text>
+          </View>
+          <Text style={s.rowOperator} numberOfLines={1}>{row.operator || 'Operator unavailable'}</Text>
+          <Text style={s.rowFacts} numberOfLines={1}>
+            {[group === 'paid' ? rateLabel : null, row.qtyDisplay, row.hoursDisplay].filter(Boolean).join('  ·  ')}
+          </Text>
+          {group !== 'paid' ? <Text style={s.rowState}>{group === 'in_progress' ? 'In progress' : group === 'excluded' ? `Excluded · ${row.status}` : 'Needs review'}</Text> : null}
         </View>
         <View style={s.rowRight}>
-          <Text style={s.rowPay}>{row.amountUnresolved ? formatTimesheetMoney(row.employeePay, row.amountUnresolved) : formatCurrency(row.employeePay)}</Text>
+          <Text style={s.rowPay} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+            {group === 'paid' ? formatCurrency(row.employeePay) : '—'}
+          </Text>
           <MaterialCommunityIcons name="chevron-right" size={16} color={colors.text.muted} />
         </View>
       </View>
@@ -442,6 +482,7 @@ export default function TimesheetScreen() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingTickets, setLoadingTickets] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
+  const [showOtherActivity, setShowOtherActivity] = useState(false);
 
   const loadData = useCallback(async (showLoader = true) => {
     if (!user) return;
@@ -518,11 +559,10 @@ export default function TimesheetScreen() {
         setDetailInvoice(detail);
         setLoadingDetail(false);
 
-        // Load tickets
-        if (detail.tickets.length > 0) {
-          const tickets = await fetchTicketDetails(detail.tickets);
-          setDetailTickets(tickets);
-        }
+        // The invoice's tickets[] may be empty even when a canonical ticket
+        // links back by invoiceDocId. Read that link before number fallbacks.
+        const tickets = await fetchInvoiceTicketDetails(detail);
+        setDetailTickets(tickets);
       } else {
         setLoadingDetail(false);
       }
@@ -542,8 +582,9 @@ export default function TimesheetScreen() {
   if (!user) return null;
 
   // Count closed vs in-progress
-  const closedCount = summary?.rows.filter(r => r.status !== 'open').length || 0;
-  const openCount = summary?.rows.filter(r => r.status === 'open').length || 0;
+  const paidRows = summary?.rows.filter(r => payrollRowGroup(r) === 'paid') || [];
+  const otherRows = summary?.rows.filter(r => payrollRowGroup(r) !== 'paid') || [];
+  const openCount = otherRows.filter(r => payrollRowGroup(r) === 'in_progress').length;
 
   return (
     <SafeAreaView style={s.container}>
@@ -668,14 +709,14 @@ export default function TimesheetScreen() {
               <Text style={s.sectionCount}>{summary.totalLoads} total</Text>
             </View>
 
-            {summary.rows.length === 0 ? (
+            {paidRows.length === 0 ? (
               <View style={s.emptyState}>
                 <MaterialCommunityIcons name="clipboard-text-outline" size={40} color={colors.text.muted} />
-                <Text style={s.emptyText}>No jobs for this period</Text>
+                <Text style={s.emptyText}>No payable jobs for this period</Text>
                 <Text style={s.emptySubtext}>Completed jobs will appear here</Text>
               </View>
             ) : (
-              summary.rows.map(row => (
+              paidRows.map(row => (
                 <PayrollRow
                   key={row.invoiceId}
                   row={row}
@@ -683,6 +724,17 @@ export default function TimesheetScreen() {
                 />
               ))
             )}
+            {otherRows.length > 0 ? (
+              <>
+                <Pressable style={s.otherActivityHeader} onPress={() => setShowOtherActivity(current => !current)}>
+                  <Text style={s.otherActivityTitle}>Other activity ({otherRows.length})</Text>
+                  <MaterialCommunityIcons name={showOtherActivity ? 'chevron-up' : 'chevron-down'} size={20} color={colors.text.muted} />
+                </Pressable>
+                {showOtherActivity ? otherRows.map(row => (
+                  <PayrollRow key={row.invoiceId} row={row} onTap={() => handleInvoiceTap(row)} />
+                )) : null}
+              </>
+            ) : null}
           </>
         ) : (
           <View style={s.emptyState}>
@@ -852,11 +904,13 @@ const s = StyleSheet.create({
   },
   statsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginBottom: spacing.lg,
   },
   statCard: {
-    flex: 1,
+    width: '48%',
+    minHeight: 88,
     backgroundColor: colors.bg.card,
     borderRadius: radius.md,
     padding: spacing.sm + 2,
@@ -865,9 +919,10 @@ const s = StyleSheet.create({
     alignItems: 'center',
   },
   statValue: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
     marginTop: 4,
+    textAlign: 'center',
   },
   statLabel: {
     fontSize: 10,
@@ -909,11 +964,14 @@ const s = StyleSheet.create({
     paddingVertical: spacing.sm + 2,
   },
   rowLeft: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
+  },
+  rowIdentity: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
     gap: 6,
-    flexWrap: 'wrap',
   },
   statusDot: {
     width: 8,
@@ -929,16 +987,45 @@ const s = StyleSheet.create({
     fontSize: 12,
     color: colors.brand.primary,
     fontFamily: MONO,
+    flexShrink: 1,
+  },
+  rowOperator: {
+    fontSize: 12,
+    color: colors.text.muted,
+    marginTop: 4,
+  },
+  rowFacts: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 3,
+  },
+  rowState: {
+    fontSize: 11,
+    color: colors.status.warning,
+    marginTop: 4,
   },
   rowRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexShrink: 0,
   },
   rowPay: {
     fontSize: 16,
     fontWeight: '700',
     color: colors.status.online,
+  },
+  otherActivityHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  otherActivityTitle: {
+    color: colors.text.muted,
+    fontSize: 13,
+    fontWeight: '700',
   },
   miniDetail: {
     flexDirection: 'row',
@@ -1091,6 +1178,38 @@ const p = StyleSheet.create({
     textAlign: 'center',
     paddingVertical: 16,
     fontStyle: 'italic',
+  },
+  photoStrip: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  photoItem: {
+    width: 84,
+  },
+  photoImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 4,
+    backgroundColor: '#eee',
+  },
+  photoCaption: {
+    color: '#777',
+    fontSize: 9,
+    marginTop: 3,
+  },
+  jsaTile: {
+    width: 80,
+    height: 80,
+    borderWidth: 1,
+    borderColor: '#D4A017',
+    borderRadius: 4,
+    backgroundColor: '#FFF8DF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  jsaText: {
+    color: '#8A6500',
+    fontWeight: '800',
   },
 
   // ── Water Ticket Stubs ──
