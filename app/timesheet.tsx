@@ -2,7 +2,7 @@
 // Basic payroll summary matching Dashboard Payroll data.
 // Tapping an invoice row opens the full WB T-style paper invoice detail.
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/core/context/AuthContext';
+import { onAuthReconciliationChange } from '@/core/services/authReconciliation';
 import { colors, spacing, radius } from '@/core/theme';
 import {
   type TimesheetSummary,
@@ -433,6 +434,8 @@ export default function TimesheetScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [noRateSheet, setNoRateSheet] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [loadErrorCode, setLoadErrorCode] = useState<string | null>(null);
+  const loadRequestId = useRef(0);
 
   // Invoice detail modal state
   const [detailInvoice, setDetailInvoice] = useState<InvoiceDetail | null>(null);
@@ -443,8 +446,10 @@ export default function TimesheetScreen() {
 
   const loadData = useCallback(async (showLoader = true) => {
     if (!user) return;
+    const requestId = ++loadRequestId.current;
     if (showLoader) setLoading(true);
     setLoadError(false);
+    setLoadErrorCode(null);
 
     try {
       const { start, end, label } = getPeriodDates(selectedPeriod);
@@ -456,6 +461,7 @@ export default function TimesheetScreen() {
         fetchPayConfig(companyId),
       ]);
 
+      if (requestId !== loadRequestId.current) return;
       setNoRateSheet(!payConfig?.rateSheets || Object.keys(payConfig.rateSheets).length === 0);
 
       // Build well→county map from NDIC data for frost rate calculation
@@ -463,20 +469,35 @@ export default function TimesheetScreen() {
       const countyMap = operators.length > 0 ? await buildWellCountyMap(operators) : new Map();
 
       const result = buildTimesheetSummary(invoices, payConfig, label, start, end, countyMap);
-      setSummary(result);
+      if (requestId === loadRequestId.current) setSummary(result);
     } catch (err) {
+      if (requestId !== loadRequestId.current) return;
       console.warn('[Timesheet] Failed to load:', err);
       setSummary(null);
       setLoadError(true);
+      // Keep the server/auth failure identifiable without exposing tokens,
+      // document paths, or a raw network response in the driver UI.
+      const code = err instanceof Error ? err.message : '';
+      setLoadErrorCode(/^(payroll_(?:invoices|config)_\d{3}|payroll_(?:identity|company)_unavailable|shift_summary_auth_unavailable)$/.test(code)
+        ? code : 'payroll_network_unavailable');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === loadRequestId.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [user, selectedPeriod]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Local Suite entry may complete before the persisted Firebase session is
+  // verified. If payroll's first read loses that race, retry automatically
+  // when the owned session becomes ready instead of making the driver tap.
+  useEffect(() => onAuthReconciliationChange(state => {
+    if (state === 'verified') void loadData(false);
+  }), [loadData]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -668,7 +689,7 @@ export default function TimesheetScreen() {
             <Text style={s.emptyText}>{loadError ? 'Timesheet unavailable' : t('timesheet.error')}</Text>
             {loadError && (
               <Pressable onPress={() => void loadData()}>
-                <Text style={s.emptySubtext}>Could not load your pay records. Tap to retry.</Text>
+                <Text style={s.emptySubtext}>Could not load your pay records. Tap to retry.{loadErrorCode ? ` (${loadErrorCode})` : ''}</Text>
               </Pressable>
             )}
           </View>
