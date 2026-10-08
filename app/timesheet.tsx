@@ -21,6 +21,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/core/context/AuthContext';
 import { onAuthReconciliationChange } from '@/core/services/authReconciliation';
+import { fetchOwnDriverPayroll } from '@/core/services/driverPayrollClient';
 import { colors, spacing, radius } from '@/core/theme';
 import {
   type TimesheetSummary,
@@ -29,8 +30,6 @@ import {
   type InvoiceDetail,
   type TicketDetail,
   getPeriodDates,
-  fetchDriverInvoices,
-  fetchPayConfig,
   buildTimesheetSummary,
   formatTimesheetMoney,
   buildWellCountyMap,
@@ -456,10 +455,7 @@ export default function TimesheetScreen() {
       const companyId = user.companyId;
       if (!companyId) throw new Error('payroll_company_unavailable');
 
-      const [invoices, payConfig] = await Promise.all([
-        fetchDriverInvoices({ driverId: user.driverId, passcodeHash: user.passcodeHash }, companyId, start, end),
-        fetchPayConfig(companyId),
-      ]);
+      const { invoices, payConfig } = await fetchOwnDriverPayroll(start, end);
 
       if (requestId !== loadRequestId.current) return;
       setNoRateSheet(!payConfig?.rateSheets || Object.keys(payConfig.rateSheets).length === 0);
@@ -478,8 +474,12 @@ export default function TimesheetScreen() {
       // Keep the server/auth failure identifiable without exposing tokens,
       // document paths, or a raw network response in the driver UI.
       const code = err instanceof Error ? err.message : '';
-      setLoadErrorCode(/^(payroll_(?:invoices|config)_\d{3}|payroll_(?:identity|company)_unavailable|shift_summary_auth_unavailable)$/.test(code)
-        ? code : 'payroll_network_unavailable');
+      const functionCode = typeof (err as { code?: unknown })?.code === 'string'
+        ? (err as { code: string }).code : '';
+      setLoadErrorCode(/^(payroll_(?:invoices|config)_\d{3}|payroll_(?:identity|company)_unavailable|shift_summary_auth_unavailable|payroll_response_invalid)$/.test(code)
+        ? code
+        : /^functions\/(permission-denied|unauthenticated|failed-precondition|unavailable|deadline-exceeded|internal|not-found|resource-exhausted)$/.test(functionCode)
+          ? functionCode : 'payroll_network_unavailable');
     } finally {
       if (requestId === loadRequestId.current) {
         setLoading(false);
