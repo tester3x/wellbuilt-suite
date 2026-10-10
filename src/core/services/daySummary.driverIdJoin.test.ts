@@ -2,7 +2,7 @@
 // not by display name. Run: npx tsx --test src/core/services/daySummary.driverIdJoin.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchTodayInvoices } from './daySummary';
+import { fetchCompletedLoads, fetchTodayInvoices } from './daySummary';
 
 const DRV = '2cad521c-13ac-4b6c-b1ab-07843c6bf06f';
 const testAuthHeaders = async () => ({ Authorization: 'Bearer test-token' });
@@ -46,6 +46,35 @@ test('never joins by display name; scopes on company + createdAt', async () => {
   assert.equal(filters.some((f: any) => f.field.fieldPath === 'driver'), false, 'must NOT filter by driver name');
   assert.ok(filters.some((f: any) => f.field.fieldPath === 'companyId'), 'company boundary kept');
   assert.equal(filters.filter((f: any) => f.field.fieldPath === 'createdAt').length, 2, 'start+end boundary kept');
+  assert.equal(calls.length, 2, 'ISO string and Firestore timestamp date fields both queried');
+  const dateTypes = calls.map(call => {
+    const dateFilter = call.body.structuredQuery.where.compositeFilter.filters.find((f: any) => f.fieldFilter.field.fieldPath === 'createdAt');
+    return Object.keys(dateFilter.fieldFilter.value)[0];
+  });
+  assert.deepEqual(dateTypes.sort(), ['stringValue', 'timestampValue']);
+});
+
+test('WB-T ISO string createdAt invoices are fetched and duplicate rows are counted once', async () => {
+  const doc = invoiceDoc('WB-T-STRING', DRV);
+  const calls: any[] = [];
+  (globalThis as any).fetch = async (_url: string, init: any) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    const dateFilter = body.structuredQuery.where.compositeFilter.filters.find((f: any) => f.fieldFilter.field.fieldPath === 'createdAt');
+    const isStringQuery = 'stringValue' in dateFilter.fieldFilter.value;
+    // The real Firestore query returns this string-date invoice only from the
+    // string-typed range. Repeat it there to verify document-ID deduplication.
+    return { ok: true, status: 200, json: async () => isStringQuery ? [doc, doc] : [], text: async () => '' } as any;
+  };
+  const result = await fetchCompletedLoads({
+    identity: { driverId: DRV },
+    companyId: 'liquid-gold',
+    window: { startIso: '2026-09-24T00:00:00.000Z', endIso: '2026-09-25T00:00:00.000Z' },
+    authHeaders: testAuthHeaders,
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.invoices.map(invoice => invoice.id), ['WB-T-STRING']);
 });
 
 test('without a company scope it still falls back to driverId equality', async () => {

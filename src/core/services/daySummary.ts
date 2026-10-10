@@ -241,50 +241,39 @@ export async function fetchCompletedLoads(opts: {
   }
   const { startIso: startOfDay, endIso: endOfDay } = opts.window ?? invoiceQueryWindow(null);
 
-  const filters: any[] = [
-    {
-      fieldFilter: {
-        field: { fieldPath: 'createdAt' },
-        op: 'GREATER_THAN_OR_EQUAL',
-        value: { timestampValue: startOfDay },
-      },
-    },
-    {
-      fieldFilter: {
-        field: { fieldPath: 'createdAt' },
-        op: 'LESS_THAN_OR_EQUAL',
-        value: { timestampValue: endOfDay },
-      },
-    },
-  ];
-
-  if (opts.companyId) {
-    filters.push({
+  const scopeFilter = opts.companyId
+    ? {
       fieldFilter: {
         field: { fieldPath: 'companyId' },
         op: 'EQUAL',
         value: { stringValue: opts.companyId },
       },
-    });
-  } else {
-    filters.push({
+    }
+    : {
       fieldFilter: {
         field: { fieldPath: 'driverId' },
         op: 'EQUAL',
         value: { stringValue: opts.identity.driverId || '' },
       },
-    });
-  }
+    };
 
-  const body = {
+  // WB-T creates invoices with ISO string dates. Other writers/older records
+  // may use Firestore timestamps. Firestore range comparisons are typed, so a
+  // timestampValue bound silently misses every WB-T stringValue createdAt.
+  // Query both representations under the same company/driver scope.
+  const queryForDateType = (dateType: 'stringValue' | 'timestampValue') => ({
     structuredQuery: {
       from: [{ collectionId: 'invoices' }],
-      where: { compositeFilter: { op: 'AND', filters } },
+      where: { compositeFilter: { op: 'AND', filters: [
+        { fieldFilter: { field: { fieldPath: 'createdAt' }, op: 'GREATER_THAN_OR_EQUAL', value: { [dateType]: startOfDay } } },
+        { fieldFilter: { field: { fieldPath: 'createdAt' }, op: 'LESS_THAN_OR_EQUAL', value: { [dateType]: endOfDay } } },
+        scopeFilter,
+      ] } },
       // No orderBy — avoids needing a composite index (see de7cd0c, which
       // removed an orderBy that made this query fail and show all zeros).
       // Results are sorted client-side in calculateDaySummary().
     },
-  };
+  });
 
   try {
     console.log(
@@ -292,33 +281,39 @@ export async function fetchCompletedLoads(opts: {
       'identityKeys:', keys.length, 'window:', startOfDay, '->', endOfDay,
     );
     const headers = { 'Content-Type': 'application/json', ...await (opts.authHeaders ?? firestoreRestHeaders)() };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
-    const resp = await fetch(firestoreQueryUrl(), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      console.warn('[daySummary] Firestore query failed:', resp.status, errText.substring(0, 300));
-      if (resp.status === 400 && errText.includes('index')) {
-        console.error('[daySummary] ⚠️ MISSING FIRESTORE INDEX — deploy firestore.indexes.json');
+    const runQuery = async (dateType: 'stringValue' | 'timestampValue'): Promise<any[]> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        const resp = await fetch(firestoreQueryUrl(), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(queryForDateType(dateType)),
+          signal: controller.signal,
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          console.warn('[daySummary] Firestore query failed:', dateType, resp.status, errText.substring(0, 300));
+          if (resp.status === 400 && errText.includes('index')) {
+            console.error('[daySummary] ⚠️ MISSING FIRESTORE INDEX — deploy firestore.indexes.json');
+          }
+          throw new Error(`query_failed_${resp.status}`);
+        }
+        return resp.json();
+      } finally {
+        clearTimeout(timer);
       }
-      // A failed read is unavailable, not an empty shift.
-      return { ok: false, reason: `query_failed_${resp.status}` };
-    }
-
-    const results = await resp.json();
+    };
+    const queryResults = await Promise.all([runQuery('stringValue'), runQuery('timestampValue')]);
     const invoices: DaySummaryInvoice[] = [];
+    const seenDocNames = new Set<string>();
     let identityRejected = 0;
     let statusRejected = 0;
 
-    for (const result of results) {
+    for (const result of queryResults.flat()) {
       if (!result.document) continue;
+      if (seenDocNames.has(result.document.name)) continue;
+      seenDocNames.add(result.document.name);
       const fields = result.document.fields || {};
       const row: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(fields)) row[k] = parseFirestoreValue(v);
@@ -361,7 +356,10 @@ export async function fetchCompletedLoads(opts: {
     return { ok: true, invoices };
   } catch (err) {
     console.warn('[daySummary] Failed to fetch invoices:', err);
-    return { ok: false, reason: 'query_error' };
+    const reason = err instanceof Error && /^query_failed_\d+$/.test(err.message)
+      ? err.message
+      : 'query_error';
+    return { ok: false, reason };
   }
 }
 
