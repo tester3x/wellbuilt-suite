@@ -46,8 +46,8 @@ test('never joins by display name; scopes on company + createdAt', async () => {
   assert.equal(filters.some((f: any) => f.field.fieldPath === 'driver'), false, 'must NOT filter by driver name');
   assert.ok(filters.some((f: any) => f.field.fieldPath === 'companyId'), 'company boundary kept');
   assert.equal(filters.filter((f: any) => f.field.fieldPath === 'createdAt').length, 2, 'start+end boundary kept');
-  assert.equal(calls.length, 2, 'ISO string and Firestore timestamp date fields both queried');
-  const dateTypes = calls.map(call => {
+  assert.equal(calls.length, 4, 'creation and completion dates are queried in both Firestore date representations');
+  const dateTypes = calls.slice(0, 2).map(call => {
     const dateFilter = call.body.structuredQuery.where.compositeFilter.filters.find((f: any) => f.fieldFilter.field.fieldPath === 'createdAt');
     return Object.keys(dateFilter.fieldFilter.value)[0];
   });
@@ -61,7 +61,7 @@ test('WB-T ISO string createdAt invoices are fetched and duplicate rows are coun
     const body = JSON.parse(init.body);
     calls.push(body);
     const dateFilter = body.structuredQuery.where.compositeFilter.filters.find((f: any) => f.fieldFilter.field.fieldPath === 'createdAt');
-    const isStringQuery = 'stringValue' in dateFilter.fieldFilter.value;
+    const isStringQuery = !!dateFilter && 'stringValue' in dateFilter.fieldFilter.value;
     // The real Firestore query returns this string-date invoice only from the
     // string-typed range. Repeat it there to verify document-ID deduplication.
     return { ok: true, status: 200, json: async () => isStringQuery ? [doc, doc] : [], text: async () => '' } as any;
@@ -72,7 +72,7 @@ test('WB-T ISO string createdAt invoices are fetched and duplicate rows are coun
     window: { startIso: '2026-09-24T00:00:00.000Z', endIso: '2026-09-25T00:00:00.000Z' },
     authHeaders: testAuthHeaders,
   });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 4);
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.invoices.map(invoice => invoice.id), ['WB-T-STRING']);
 });

@@ -31,6 +31,7 @@ interface DaySummaryInvoice {
   status: string;
   timeline: TimelineEvent[];
   createdAt: string;
+  closedAt?: string;
 }
 
 export interface WellStat {
@@ -218,15 +219,18 @@ export async function fetchTodayInvoices(
 /**
  * Completed loads for the driver, with a truthful failure mode.
  *
- * Query shape: scope on the axes that are reliable — companyId and the
- * createdAt window — then match the driver CLIENT-side against every stable
- * identity key. This is the part of WB-T History's approach that applies here
+ * Query invoices created during the shift and invoices CLOSED during the shift.
+ * Dispatch can create a job before the driver starts this shift, so createdAt
+ * alone cannot find every load finished here. Match the driver CLIENT-side
+ * against every stable identity key. This is the part of WB-T History's approach
+ * that applies here
  * (rowMatchesDriverIdentity); its on-device closed-job ledger and archive union
  * are deliberately NOT copied, since WB-S cannot read WB-T's local storage and
  * cross-app storage coupling is not wanted.
  *
- * Without a companyId there is no safe scope to broaden into, so the query
- * falls back to driverId equality rather than reading the whole collection.
+ * Without a companyId the createdAt query falls back to driverId equality.
+ * The closedAt query is bounded by date and status, then checked for driver
+ * and company ownership below.
  */
 export async function fetchCompletedLoads(opts: {
   identity: DriverIdentity;
@@ -275,25 +279,42 @@ export async function fetchCompletedLoads(opts: {
     },
   });
 
+  // Dashboard config defines an invoices index (status ASC, closedAt DESC). This bounded
+  // query finds a load even when dispatch created its invoice on an earlier
+  // day. Company and driver are checked below before any row is counted.
+  const queryClosedForDateType = (dateType: 'stringValue' | 'timestampValue') => ({
+    structuredQuery: {
+      from: [{ collectionId: 'invoices' }],
+      where: { compositeFilter: { op: 'AND', filters: [
+        { fieldFilter: { field: { fieldPath: 'status' }, op: 'IN', value: {
+          arrayValue: { values: Array.from(COMPLETED_LOAD_STATUSES, value => ({ stringValue: value })) },
+        } } },
+        { fieldFilter: { field: { fieldPath: 'closedAt' }, op: 'GREATER_THAN_OR_EQUAL', value: { [dateType]: startOfDay } } },
+        { fieldFilter: { field: { fieldPath: 'closedAt' }, op: 'LESS_THAN_OR_EQUAL', value: { [dateType]: endOfDay } } },
+      ] } },
+      orderBy: [{ field: { fieldPath: 'closedAt' }, direction: 'DESCENDING' }],
+    },
+  });
+
   try {
     console.log(
       '[daySummary] Querying invoices — companyScoped:', !!opts.companyId,
       'identityKeys:', keys.length, 'window:', startOfDay, '->', endOfDay,
     );
     const headers = { 'Content-Type': 'application/json', ...await (opts.authHeaders ?? firestoreRestHeaders)() };
-    const runQuery = async (dateType: 'stringValue' | 'timestampValue'): Promise<any[]> => {
+    const runQuery = async (body: object, source: string): Promise<any[]> => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
       try {
         const resp = await fetch(firestoreQueryUrl(), {
           method: 'POST',
           headers,
-          body: JSON.stringify(queryForDateType(dateType)),
+          body: JSON.stringify(body),
           signal: controller.signal,
         });
         if (!resp.ok) {
           const errText = await resp.text().catch(() => '');
-          console.warn('[daySummary] Firestore query failed:', dateType, resp.status, errText.substring(0, 300));
+          console.warn('[daySummary] Firestore query failed:', source, resp.status, errText.substring(0, 300));
           if (resp.status === 400 && errText.includes('index')) {
             console.error('[daySummary] ⚠️ MISSING FIRESTORE INDEX — deploy firestore.indexes.json');
           }
@@ -304,19 +325,29 @@ export async function fetchCompletedLoads(opts: {
         clearTimeout(timer);
       }
     };
-    const queryResults = await Promise.all([runQuery('stringValue'), runQuery('timestampValue')]);
+    const queryResults = await Promise.all([
+      runQuery(queryForDateType('stringValue'), 'createdAt/string'),
+      runQuery(queryForDateType('timestampValue'), 'createdAt/timestamp'),
+      runQuery(queryClosedForDateType('stringValue'), 'closedAt/string'),
+      runQuery(queryClosedForDateType('timestampValue'), 'closedAt/timestamp'),
+    ]);
     const invoices: DaySummaryInvoice[] = [];
     const seenDocNames = new Set<string>();
     let identityRejected = 0;
     let statusRejected = 0;
 
-    for (const result of queryResults.flat()) {
+    for (const [sourceIndex, results] of queryResults.entries()) {
+      for (const result of results) {
       if (!result.document) continue;
       if (seenDocNames.has(result.document.name)) continue;
       seenDocNames.add(result.document.name);
       const fields = result.document.fields || {};
       const row: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(fields)) row[k] = parseFirestoreValue(v);
+
+      // The closedAt index has no companyId component. Keep its bounded
+      // cross-company results from leaking into this company's summary.
+      if (sourceIndex >= 2 && opts.companyId && row.companyId !== opts.companyId) continue;
 
       if (!invoiceMatchesDriver(row, keys)) { identityRejected += 1; continue; }
 
@@ -346,7 +377,9 @@ export async function fetchCompletedLoads(opts: {
         status,
         timeline,
         createdAt: (row.createdAt as string) || (row.invoiceStartedAt as string) || '',
+        closedAt: (row.closedAt as string) || '',
       });
+      }
     }
 
     console.log(
@@ -715,18 +748,18 @@ export function calculateDaySummary(
   const loginEvt = bookends.startIso ? { timestamp: bookends.startIso } : null;
   const logoutEvt = bookends.endIso ? { timestamp: bookends.endIso } : null;
 
-  // Filter invoices to only those within the shift window.
-  // Without a shift, show all (backwards compat). With a shift, only count
-  // invoices created between start and end (or now if shift still open).
+  // Attribute a finished load to the shift in which it CLOSED. Older records
+  // without closedAt can use their close event, then creation as a last resort.
   const shiftStartMs = loginEvt ? new Date(loginEvt.timestamp).getTime() : 0;
   const shiftEndMs = logoutEvt ? new Date(logoutEvt.timestamp).getTime() : Date.now();
   const shiftInvoices = loginEvt
     ? invoices.filter(inv => {
-        // Use createdAt, fall back to first timeline event timestamp
-        const createdStr = inv.createdAt || inv.timeline[0]?.timestamp || '';
-        const created = new Date(createdStr).getTime();
-        if (isNaN(created)) return true; // Can't filter without a date — include it
-        return created >= shiftStartMs && created <= shiftEndMs;
+        const finishedStr = inv.closedAt
+          || inv.timeline.slice().reverse().find(evt => evt.type === 'close')?.timestamp
+          || inv.createdAt || inv.timeline[0]?.timestamp || '';
+        const finished = new Date(finishedStr).getTime();
+        if (isNaN(finished)) return false; // Unknown time cannot prove shift membership.
+        return finished >= shiftStartMs && finished <= shiftEndMs;
       })
     : invoices;
 
@@ -751,6 +784,10 @@ export function calculateDaySummary(
 
   for (const inv of shiftInvoices) {
     for (const evt of inv.timeline) {
+      const evtMs = new Date(evt.timestamp).getTime();
+      if (isNaN(evtMs)) continue;
+      if (loginEvt && evtMs < shiftStartMs) continue;
+      if (logoutEvt && evtMs > shiftEndMs) continue;
       timeline.push({
         type: evt.type,
         timestamp: evt.timestamp,

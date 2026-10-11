@@ -198,6 +198,24 @@ test('loads outside the shift window are NOT counted', () => {
   assert.equal(summary.wellStats[0].name, 'Well inside');
 });
 
+test('a load created before this shift belongs to the shift where it closed', () => {
+  const early = {
+    ...invoice('early', '2026-09-28T12:00:00.000Z'),
+    closedAt: '2026-09-30T18:40:00.000Z',
+    timeline: [
+      { type: 'accept', timestamp: '2026-09-28T12:00:00.000Z', lat: null, lng: null },
+      { type: 'arrive', timestamp: '2026-09-28T13:00:00.000Z', lat: null, lng: null },
+      { type: 'close', timestamp: '2026-09-30T18:40:00.000Z', lat: null, lng: null },
+    ],
+  };
+  const late = { ...invoice('late', '2026-09-30T18:40:00.000Z'), closedAt: '2026-10-01T02:40:00.000Z' };
+  const summary = calculateDaySummary([early, late], SERVER_AUTHORED_EVENTS);
+  assert.equal(summary.totalLoads, 1);
+  assert.equal(summary.wellStats[0].name, 'Well early');
+  assert.equal(summary.driveMinutes, calculateDaySummary([], SERVER_AUTHORED_EVENTS).driveMinutes,
+    'earlier-shift invoice events cannot inflate this shift');
+});
+
 test('PHOTO 1: a device with no jobs still reports none, and still shows its times', () => {
   const summary = calculateDaySummary([], SERVER_AUTHORED_EVENTS, undefined);
   assert.equal(summary.totalLoads, 0);
@@ -205,6 +223,14 @@ test('PHOTO 1: a device with no jobs still reports none, and still shows its tim
   assert.deepEqual(summary.wellsVisited, []);
   assert.equal(summary.shiftStart, '2026-09-29T13:09:14.000Z', 'times do not depend on loads');
   assert.equal(summary.shiftEnd, '2026-10-01T01:05:00.000Z');
+});
+
+test('a closed load still counts when its pickup name is missing', () => {
+  const unnamed = { ...invoice('unnamed', '2026-09-30T18:40:00.000Z'), wellName: '' };
+  const summary = calculateDaySummary([unnamed], SERVER_AUTHORED_EVENTS);
+  assert.equal(summary.totalLoads, 1);
+  assert.equal(summary.totalBBL, 100);
+  assert.deepEqual(summary.wellStats, []);
 });
 
 test('a shift document that could not be read yields no times and no invented ones', () => {
@@ -332,6 +358,31 @@ test('PHOTO 2: loads stamped with the passcodeHash are counted', async () => {
   });
   assert.equal(r.ok, true);
   assert.equal(r.ok && r.invoices.length, 2, 'driverId-only matching would have returned zero');
+});
+
+test('closedAt query finds an earlier-created job and rejects another company', async () => {
+  const seenQueries: any[] = [];
+  (globalThis as any).fetch = async (_url: string, init: { body: string }) => {
+    const query = JSON.parse(init.body);
+    seenQueries.push(query);
+    const filters = query.structuredQuery.where.compositeFilter.filters;
+    const closedAtQuery = filters.some((f: any) => f.fieldFilter.field.fieldPath === 'closedAt');
+    return {
+      ok: true,
+      json: async () => closedAtQuery ? [
+        doc('earlier', { companyId: 'liquid-gold', status: 'closed', driverHash: PASSCODE_HASH, closedAt: '2026-09-30T18:40:00Z', createdAt: '2026-09-28T12:00:00Z' }),
+        doc('other-company', { companyId: 'other-company', status: 'closed', driverHash: PASSCODE_HASH, closedAt: '2026-09-30T18:40:00Z', createdAt: '2026-09-28T12:00:00Z' }),
+      ] : [],
+    };
+  };
+  const result = await fetchCompletedLoads({
+    identity: { driverId: DRIVER_ID, passcodeHash: PASSCODE_HASH },
+    companyId: 'liquid-gold',
+    authHeaders: testAuthHeaders,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.ok && result.invoices.map(inv => inv.id), ['earlier']);
+  assert.equal(seenQueries.length, 4, 'string and timestamp queries for both dates');
 });
 
 test('canceled and other drivers rows are dropped from a company-scoped query', async () => {

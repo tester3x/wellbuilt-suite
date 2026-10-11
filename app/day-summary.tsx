@@ -685,15 +685,17 @@ export default function DaySummaryScreen() {
             })()}
 
             {/* ── Wells card ─────────────────────────────────────── */}
-            {summary.wellStats && summary.wellStats.length > 0 && (
+            {summary.totalLoads > 0 && (
               <View style={s.timeSection}>
                 <View style={s.cardHeader}>
-                  <Text style={s.sectionTitle}><MaterialCommunityIcons name="oil" size={14} color={colors.text.secondary} />  WELLS</Text>
+                  <Text style={s.sectionTitle}><MaterialCommunityIcons name="oil" size={14} color={colors.text.secondary} />  LOADS</Text>
                   <Text style={s.cardTotal}>
                     {summary.totalLoads} loads · {Math.round(summary.totalBBL)} BBL
                   </Text>
                 </View>
-                {summary.wellStats.map((well, idx) => {
+                {summary.wellStats.length === 0 ? (
+                  <Text style={{ color: colors.text.secondary }}>Pickup names are unavailable for these loads.</Text>
+                ) : summary.wellStats.map((well, idx) => {
                   const pct = summary.totalBBL > 0 ? Math.max((well.bbls / summary.totalBBL) * 100, 3) : 0;
                   const wellColors = ['#f59e0b', '#3b82f6', '#22c55e', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
                   const color = wellColors[idx % wellColors.length];
