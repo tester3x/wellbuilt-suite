@@ -7,3 +7,5 @@ Normal Equipment card and switcher now start Equipment's PKCE general-access flo
 Validation: 6 new core tests, 110 SSO tests, 110 regression tests passed. No TypeScript diagnostics in changed service/route files; existing baseline diagnostics remain.
 
 Build/install and authenticated phone verification pending. No shift or inspection completion fabricated. No Shop staff role granted without a specified account.
+
+Source checkpoint 9c2b2a0 committed and pushed. EAS Android preview build 3c5b769a-a2a7-4df7-a728-ccd7d5d48981 submitted as Suite 61 using existing remote signing credentials. Installation and authenticated verification remain pending build completion. ZFold RFGL23VJCED connected at submission.
