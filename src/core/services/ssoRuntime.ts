@@ -35,6 +35,7 @@ import {
  * for a driver who has since left is never delivered.
  */
 let identityEpoch = 1;
+export function currentSsoIdentityEpoch(): number { return identityEpoch; }
 
 export function bumpSsoIdentityEpoch(): void {
   identityEpoch += 1;

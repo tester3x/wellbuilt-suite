@@ -1,3 +1,4 @@
+import { isEquipmentAppTarget } from '../services/equipmentAppAccessCore';
 import { useCallback, useMemo } from 'react';
 import {
   canLaunchApp,
@@ -40,9 +41,12 @@ export function useAppLauncher() {
   // WB-T is not intercepted for DVIR here. Pre-Trip stays on a successful
   // shift start, and Post-Trip stays on return-to-yard, both in ActionCardRow.
   const launchWB = useCallback(async (options: WBAppLaunchOptions) => {
+    if (isEquipmentAppTarget(options.scheme, options.androidPackage)) {
+      return launchWBApp({ ...options, scheme: 'wbequipment', sso: undefined, startHost: 'app-start' });
+    }
     // Credential-free launch: WB-T and WB-M. Each mints its own PKCE
     // attempt. WB-T's audience and start host stay exactly as before.
-    // JSA and eQuipment still receive the legacy params.
+    // Equipment uses its separate credential-free general app flow.
     if (isCredentialFreeLaunchTarget(options.scheme)) {
       const audience = (credentialFreeAudience(options.scheme) || SSO_AUDIENCE_WBT) as SsoAudience;
       // CONTINUOUS HANDOFF OVERLAY — armed BEFORE openURL, then one

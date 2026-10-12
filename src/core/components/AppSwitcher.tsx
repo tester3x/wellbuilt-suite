@@ -1,3 +1,4 @@
+import { isEquipmentAppTarget, EQUIPMENT_APP_START } from '../services/equipmentAppAccessCore';
 // AppSwitcher — floating draggable button for switching between WB ecosystem apps.
 // Tap = open app grid. Double-tap = jump to WB Suite hub. Long-hold + drag = reposition.
 // Apps loaded from Firestore app_registry, filtered by company tier.
@@ -320,6 +321,11 @@ export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getI
 
   const launchApp = useCallback(async (app: AppEntry) => {
     setIsOpen(false);
+    if (isEquipmentAppTarget(app.deepLinkScheme, app.androidPackage)) {
+      try { await Linking.openURL(EQUIPMENT_APP_START); }
+      catch { Alert.alert('Not Installed', `${app.name} is not installed on this device.`); }
+      return;
+    }
     try {
       let url = `${app.deepLinkScheme}://`;
 

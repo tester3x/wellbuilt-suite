@@ -1,3 +1,4 @@
+import { isEquipmentAppTarget, EQUIPMENT_APP_START } from './equipmentAppAccessCore';
 import { Linking, Alert, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import i18n from '../localization/i18n';
@@ -110,6 +111,23 @@ export async function canLaunchApp(scheme?: string): Promise<boolean> {
 export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
   const { name, scheme, androidPackage, webUrl, sso, startHost } = options;
   const t = i18n.t.bind(i18n);
+  if (isEquipmentAppTarget(scheme, androidPackage)) {
+    try {
+      await Linking.openURL(EQUIPMENT_APP_START);
+      await trackSSOApp('wbequipment');
+      return;
+    } catch {
+      if (Platform.OS === 'android') {
+        try {
+          await Linking.openURL('intent://app-start#Intent;scheme=wbequipment;package=com.wellbuilt.equipment;end');
+          await trackSSOApp('wbequipment');
+          return;
+        } catch {}
+      }
+      Alert.alert(name, t('appDetail.launch.notInstalled', { name }), [{ text: t('common.ok') }]);
+      return;
+    }
+  }
 
   // Web apps open in the browser
   if (!scheme && webUrl) {
