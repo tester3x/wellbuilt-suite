@@ -42,13 +42,7 @@
  * outlives its welcome) falls to the bounded stale timeout and clears to
  * ordinary Home — no retry, no route action; recovery is the ordinary tap.
  */
-import {
-  SSO_AUDIENCE_EQUIPMENT,
-  SSO_AUDIENCE_JSA,
-  SSO_AUDIENCE_WBT,
-  SSO_AUDIENCE_WBM,
-  type SsoAudience,
-} from './ssoProtocol.generated';
+import { type SsoAudience } from './ssoProtocol.generated';
 
 export type SsoHandoffPhase = 'idle' | 'opening' | 'authorizing' | 'callback_launched';
 
@@ -198,6 +192,11 @@ export function noteSsoHandoffLaunchFailure(): void {
   if (phase === 'opening') set('idle', null, null);
 }
 
+/** A normal app-switcher return to Suite has no SSO callback to close the overlay. */
+export function noteSsoHandoffHubReturn(): void {
+  if (phase !== 'idle') set('idle', null, null);
+}
+
 /**
  * AppState observation — ALWAYS RECORDED, phase-gated for clearing.
  *
@@ -242,13 +241,7 @@ export function __resetSsoHandoffForTests(): void {
   listeners.clear();
 }
 
-/** Driver-facing copy — audience-aware, total over phases that render. */
-export function ssoHandoffCopy(p: SsoHandoffPhase, aud: SsoAudience | null): string {
-  const app =
-    aud === SSO_AUDIENCE_WBT ? 'WellBuilt Tickets'
-      : aud === SSO_AUDIENCE_EQUIPMENT ? 'WellBuilt eQuipment'
-        : aud === SSO_AUDIENCE_JSA ? 'WellBuilt JSA'
-          : aud === SSO_AUDIENCE_WBM ? 'WellBuilt Mobile'
-          : 'WellBuilt app';
-  return p === 'opening' ? `Opening ${app}…` : `Authorizing ${app}…`;
+/** Driver-facing copy is direction-neutral across outbound and return legs. */
+export function ssoHandoffCopy(_p: SsoHandoffPhase, _aud: SsoAudience | null): string {
+  return 'Switching apps…';
 }

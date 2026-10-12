@@ -19,6 +19,7 @@ import {
   noteSsoHandoffAppState,
   noteSsoHandoffCallbackLaunched,
   noteSsoHandoffClaim,
+  noteSsoHandoffHubReturn,
   noteSsoHandoffLaunchFailure,
   noteSsoHandoffTerminalError,
   noteSsoHandoffTimeoutCheck,
@@ -251,18 +252,26 @@ test('timeout still clears callback_launched when the foreground never transfers
   assert.equal(getSsoHandoffState().phase, 'idle');
 });
 
-test('audience copy is total and audience-aware', () => {
-  assert.match(ssoHandoffCopy('opening', SSO_AUDIENCE_WBT), /Opening WellBuilt Tickets/);
-  assert.match(ssoHandoffCopy('authorizing', SSO_AUDIENCE_WBT), /Authorizing WellBuilt Tickets/);
-  assert.match(ssoHandoffCopy('callback_launched', SSO_AUDIENCE_EQUIPMENT), /WellBuilt eQuipment/);
-  assert.match(ssoHandoffCopy('opening', null), /WellBuilt app/);
+test('handoff copy stays correct in either direction', () => {
+  assert.equal(ssoHandoffCopy('opening', SSO_AUDIENCE_WBT), 'Switching apps…');
+  assert.equal(ssoHandoffCopy('authorizing', SSO_AUDIENCE_WBT), 'Switching apps…');
+  assert.equal(ssoHandoffCopy('callback_launched', SSO_AUDIENCE_EQUIPMENT), 'Switching apps…');
+  assert.equal(ssoHandoffCopy('opening', null), 'Switching apps…');
+});
+
+test('a bare Suite hub return clears an outbound overlay without waiting for stale timeout', () => {
+  __resetSsoHandoffForTests();
+  armSsoHandoffOutbound(SSO_AUDIENCE_WBT, 1_000);
+  noteSsoHandoffAppState('background');
+  noteSsoHandoffHubReturn();
+  assert.equal(getSsoHandoffState().phase, 'idle');
 });
 
 // ── Wiring assertions (source-level, same discipline as WB-T's harnesses) ──
 
 test('outbound launch arms BEFORE openURL, with one committed frame between', () => {
   const src = strip(read('src/core/hooks/useAppLauncher.ts'));
-  const arm = src.indexOf('armSsoHandoffOutbound(SSO_AUDIENCE_WBT');
+  const arm = src.indexOf('armSsoHandoffOutbound(audience');
   const frame = src.indexOf('requestAnimationFrame');
   const launch = src.indexOf('launchWBApp({ ...options, sso: undefined');
   assert.ok(arm > -1 && frame > -1 && launch > -1);

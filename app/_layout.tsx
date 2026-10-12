@@ -17,6 +17,7 @@ import { startConnectivityMonitor, stopConnectivityMonitor } from '@/core/servic
 import { createSuiteDvirGate, makeDvirSsoGetter } from '@/core/services/dvirGate';
 import DvirHandoffHost from '@/ui/shared/DvirHandoffHost';
 import SsoHandoffOverlay from '@/core/components/SsoHandoffOverlay';
+import { noteSsoHandoffHubReturn } from '@/core/services/ssoHandoffOverlayStore';
 
 // Keep the native splash screen visible until we're ready
 // This prevents the black flicker between native splash and React render
@@ -87,6 +88,9 @@ function DvirReceiptListener() {
     // same URL arriving on both paths.
     const route = async (url: string | null | undefined) => {
       if (!url) return;
+      // Tickets' back arrow and app switcher use the bare Suite hub URL.
+      // They do not produce an SSO callback, so dismiss any outbound overlay.
+      if (/^wellbuilt-suite:\/\/\/?$/i.test(url)) noteSsoHandoffHubReturn();
       const { dispatchSsoUrl, isSsoRouteClaimed } = await import('../src/core/services/ssoRuntime');
       // Full adapter outcome; claimed = any SSO kind (including duplicate/busy).
       const sso = await dispatchSsoUrl(url);
