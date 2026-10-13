@@ -81,7 +81,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
   const [trailerNumber, setTrailerNumber] = useState('');
   const [startOdometer, setStartOdometer] = useState('');
   const [cdlMedCard, setCdlMedCard] = useState(false);
-  const [preTripDone, setPreTripDone] = useState(false);
+
   const [vehicleOk, setVehicleOk] = useState(false);
   const [loading, setLoading] = useState(true);
   const [jsaMode, setJsaMode] = useState<JsaModeCanonical>('off');
@@ -92,7 +92,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
     setLoading(true);
     // Reset checklist each shift start
     setCdlMedCard(false);
-    setPreTripDone(false);
+
     setVehicleOk(false);
 
     (async () => {
@@ -130,7 +130,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
     })();
   }, [visible, user]);
 
-  const allChecked = cdlMedCard && preTripDone && vehicleOk;
+  const allChecked = cdlMedCard && vehicleOk;
 
   const handleConfirm = useCallback(async () => {
     if (confirming || loading) return;
@@ -151,9 +151,9 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
       truckNumber: truckNumber.trim(),
       trailerNumber: trailerNumber.trim(),
       startOdometer: startOdometer.trim(),
-      preTrip: { cdlMedCard, preTripDone, vehicleOk },
+      preTrip: { cdlMedCard, preTripDone: false, vehicleOk },
     });
-  }, [selectedPkg, truckNumber, trailerNumber, startOdometer, cdlMedCard, preTripDone, vehicleOk, user, onConfirm, confirming, loading]);
+  }, [selectedPkg, truckNumber, trailerNumber, startOdometer, cdlMedCard, vehicleOk, user, onConfirm, confirming, loading]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={confirming ? () => {} : onClose}>
@@ -275,11 +275,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
                   checked={cdlMedCard}
                   onToggle={() => setCdlMedCard(v => !v)}
                 />
-                <CheckItem
-                  label="Pre-trip vehicle inspection completed"
-                  checked={preTripDone}
-                  onToggle={() => setPreTripDone(v => !v)}
-                />
+                <Text style={s.inputLabel}>Your required pre-trip inspection opens after you start the shift.</Text>
                 <CheckItem
                   label="Vehicle in safe operating condition"
                   checked={vehicleOk}
