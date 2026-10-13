@@ -20,7 +20,7 @@ export default function EquipmentAccess(){
  },[state,challenge]);
  return <View style={{flex:1,backgroundColor:colors.bg.primary,justifyContent:'center',padding:28,gap:20}}>
  <Text style={{color:colors.text.primary,fontSize:20}}>{failure==='session_missing'||failure==='session_unverified'?'Sign in to Suite again to connect Equipment. Your saved work is unchanged.':failure?'Could not connect to Equipment. Return to Suite and retry.':'Connecting to Equipment…'}</Text>
- {failure?<Text style={{color:colors.text.secondary}}>Code: {failure}</Text>:<ActivityIndicator color={colors.brand.accent}/>}
+ {failure?<><Text style={{color:colors.text.secondary}}>Code: {failure}</Text><Pressable accessibilityRole="button" hitSlop={12} onPress={()=>{cancelled.current=true;router.replace('/verify-session');}}><Text style={{color:colors.brand.accent,fontSize:17}}>Verify Suite sign-in</Text></Pressable></>:<ActivityIndicator color={colors.brand.accent}/>}
  <Pressable accessibilityRole="button" onPress={leave} hitSlop={12}><Text style={{color:colors.brand.accent,fontSize:17}}>Return to Suite</Text></Pressable>
  </View>;
 }
