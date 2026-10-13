@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AppState, Platform, View, StyleSheet, Linking } from 'react-native';
@@ -111,7 +111,16 @@ function DvirReceiptListener() {
   return null;
 }
 
+/** All cold-start routes must release the splash after the shared content is ready.
+ * Direct links skip app/index.tsx, so index cannot be the only splash owner. */
+function SplashVisibilityGate({laidOut}:{laidOut:boolean}) {
+  const {loading}=useAuth();
+  useEffect(()=>{if(laidOut&&!loading)void SplashScreen.hideAsync().catch(()=>{});},[laidOut,loading]);
+  return null;
+}
+
 export default function RootLayout() {
+  const [laidOut,setLaidOut]=useState(false);
   useEffect(() => {
     // Full-screen immersive mode — hide Android navigation bar
     const hideNavBar = () => {
@@ -136,7 +145,8 @@ export default function RootLayout() {
       <SkinProvider skins={allSkins} defaultSkinId={defaultSkinId}>
         <AuthProvider>
           <FirstLaunchProvider>
-            <View style={styles.container}>
+            <View style={styles.container} onLayout={()=>setLaidOut(true)}>
+              <SplashVisibilityGate laidOut={laidOut}/>
               <StatusBar style="light" />
               <OfflineBanner />
               <DvirReceiptListener />
