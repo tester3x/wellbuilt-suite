@@ -13,7 +13,7 @@ import java.security.MessageDigest
 /**
  * Binder bridge to the configured ETC suitehos provider.
  *
- * SUITE_ETC_DISPATCH_ENABLED is compiled false. Authority, package, and
+ * Dispatch uses the verified generated build target. Authority, package, and
  * certificate come from BuildConfig. A configured fingerprint does not
  * place a call. Wire keys are String payload and Parcelable startIntent.
  */

@@ -31,13 +31,12 @@ function retargetEtcQueries(xml, target) {
 }
 
 function propertiesText(target) {
-  const fieldTest = target.profile === 'field-test';
   const lines = [
     `profile=${target.profile}`,
     `authority=${target.authority}`,
-    `package=${fieldTest ? target.etcPackageName || '' : ''}`,
-    `cert=${fieldTest ? target.etcCertSha256 || '' : ''}`,
-    'dispatch=false',
+    `package=${target.etcPackageName || ''}`,
+    `cert=${target.etcCertSha256 || ''}`,
+    `dispatch=${target.dispatchEnabled === true}`,
     '',
   ];
   return lines.join('\n');
@@ -80,7 +79,7 @@ if (require.main === module) {
   process.stdout.write(`${JSON.stringify({
     profile: result.target.profile,
     authority: result.target.authority,
-    dispatchEnabled: false,
+    dispatchEnabled: result.target.dispatchEnabled === true,
     sha256,
     manifestChanged: result.manifestChanged,
     propsPath: result.propsPath,

@@ -13,6 +13,7 @@ def suiteEtcProfile = 'production'
 def suiteEtcAuthority = 'com.wellbuilt.electronictimecard.suitehos'
 def suiteEtcPackage = ''
 def suiteEtcCert = ''
+def suiteEtcDispatch = false
 if (suiteEtcPropsFile.exists()) {
   def suiteEtcProps = new Properties()
   suiteEtcPropsFile.withInputStream { suiteEtcProps.load(it) }
@@ -20,6 +21,7 @@ if (suiteEtcPropsFile.exists()) {
   suiteEtcAuthority = suiteEtcProps.getProperty('authority', suiteEtcAuthority) ?: suiteEtcAuthority
   suiteEtcPackage = suiteEtcProps.getProperty('package', '') ?: ''
   suiteEtcCert = suiteEtcProps.getProperty('cert', '') ?: ''
+  suiteEtcDispatch = suiteEtcProps.getProperty('dispatch', 'false') == 'true'
 }
 def suiteEtcFieldTest = System.getenv('SUITE_ETC_FIELD_TEST') == '1'
 if (suiteEtcFieldTest && suiteEtcProfile != 'field-test') {
@@ -41,6 +43,6 @@ android {
     buildConfigField "String", "SUITE_ETC_AUTHORITY", "\"${suiteEtcAuthority}\""
     buildConfigField "String", "SUITE_ETC_PACKAGE", "\"${suiteEtcPackage}\""
     buildConfigField "String", "SUITE_ETC_CERT_SHA256", "\"${suiteEtcCert}\""
-    buildConfigField "boolean", "SUITE_ETC_DISPATCH_ENABLED", "false"
+    buildConfigField "boolean", "SUITE_ETC_DISPATCH_ENABLED", "${suiteEtcDispatch}"
   }
 }

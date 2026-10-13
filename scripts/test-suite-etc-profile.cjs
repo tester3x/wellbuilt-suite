@@ -85,7 +85,7 @@ test('manifest retarget keeps unrelated packages and is idempotent', () => {
   assert.equal(retargetEtcQueries(regular, PRODUCTION_ETC_TARGET), regular);
 });
 
-test('properties carry the field-test provider only for that profile', () => {
+test('properties carry each exact provider and only enable verified production', () => {
   const field = propertiesText(FIELD_TEST_ETC_TARGET);
   assert.match(field, /^profile=field-test/m);
   assert.match(field, new RegExp(`^authority=${FIELD_AUTHORITY}$`, 'm'));
@@ -95,9 +95,9 @@ test('properties carry the field-test provider only for that profile', () => {
   const regular = propertiesText(PRODUCTION_ETC_TARGET);
   assert.match(regular, /^profile=production/m);
   assert.match(regular, /^authority=com\.wellbuilt\.electronictimecard\.suitehos$/m);
-  assert.match(regular, /^package=$/m);
-  assert.match(regular, /^cert=$/m);
-  assert.equal(regular.includes(CERT), false);
+  assert.match(regular, /^package=com\.wellbuilt\.electronictimecard$/m);
+  assert.match(regular, new RegExp(`^cert=${CERT}$`, 'm'));
+  assert.match(regular, /^dispatch=true$/m);
   assert.equal(regular.includes('fieldtest'), false);
 });
 
@@ -117,14 +117,14 @@ test('sync writes properties and retargets an existing manifest without touching
   assert.equal(regular.manifestChanged, true);
   const props = fs.readFileSync(regular.propsPath, 'utf8');
   assert.match(props, /^profile=production/m);
-  assert.equal(props.includes(CERT), false);
+  assert.equal(props.includes(CERT), true);
   const xml = fs.readFileSync(manifestPath, 'utf8');
   assert.match(xml, /com\.wellbuilt\.electronictimecard\.suitehos/);
   assert.equal(xml.includes('fieldtest'), false);
   assert.match(xml, /com\.waze/);
 });
 
-test('app config keeps the Suite package and forces dispatch off for either target', () => {
+test('app config keeps Suite identity and enables only the verified production target', () => {
   const previous = process.env.SUITE_ETC_FIELD_TEST;
   function load(fieldTest) {
     if (fieldTest) process.env.SUITE_ETC_FIELD_TEST = '1';
@@ -149,10 +149,9 @@ test('app config keeps the Suite package and forces dispatch off for either targ
     assert.equal(regular.expo.android.package, 'com.wellbuilt.suite');
     assert.equal(regular.expo.extra.suiteEtc.profile, 'production');
     assert.equal(regular.expo.extra.suiteEtc.authority, 'com.wellbuilt.electronictimecard.suitehos');
-    assert.equal(regular.expo.extra.suiteEtc.etcPackageName, null);
-    assert.equal(regular.expo.extra.suiteEtc.etcCertSha256, null);
-    assert.equal(regular.expo.extra.suiteEtc.dispatchEnabled, false);
-    assert.equal(JSON.stringify(regular.expo.extra.suiteEtc).includes(CERT), false);
+    assert.equal(regular.expo.extra.suiteEtc.etcPackageName, 'com.wellbuilt.electronictimecard');
+    assert.equal(regular.expo.extra.suiteEtc.etcCertSha256, CERT);
+    assert.equal(regular.expo.extra.suiteEtc.dispatchEnabled, true);
   } finally {
     if (previous === undefined) delete process.env.SUITE_ETC_FIELD_TEST;
     else process.env.SUITE_ETC_FIELD_TEST = previous;

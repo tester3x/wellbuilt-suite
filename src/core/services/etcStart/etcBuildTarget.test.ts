@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { attachEtcHandoff } from './attachEtcHandoff';
-import { isEtcDispatchConfigured, ETC_RELEASE_IDENTITY } from './etcReleaseIdentity';
+import { isEtcDispatchConfigured } from './etcReleaseIdentity';
 import { listEtcStartsForDriver, memoryEtcKv } from './etcStartOutbox';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -63,7 +63,7 @@ function enabledField(): Target {
   return { ...FIELD_TEST_ETC_TARGET, dispatchEnabled: true };
 }
 
-test('shipped targets keep production fail-closed and field-test dispatch off', () => {
+test('verified production signer is enabled while field-test dispatch stays off', () => {
   assert.equal(Object.isFrozen(PRODUCTION_ETC_TARGET), true);
   assert.equal(Object.isFrozen(FIELD_TEST_ETC_TARGET), true);
   assert.equal(Object.isFrozen(ETC_TARGETS), true);
@@ -71,18 +71,18 @@ test('shipped targets keep production fail-closed and field-test dispatch off', 
   assert.equal(production.profile, 'production');
   assert.equal(production.authority, 'com.wellbuilt.electronictimecard.suitehos');
   assert.equal(production.visibilityPackage, 'com.wellbuilt.electronictimecard');
-  assert.equal(production.etcPackageName, null);
-  assert.equal(production.etcCertSha256, null);
-  assert.equal(production.dispatchEnabled, false);
-  assert.deepEqual(identityForTarget(production), ETC_RELEASE_IDENTITY);
-  assert.equal(isEtcDispatchConfigured(identityForTarget(production)), false);
+  assert.equal(production.etcPackageName, 'com.wellbuilt.electronictimecard');
+  assert.equal(production.etcCertSha256, CERT);
+  assert.equal(production.dispatchEnabled, true);
+  assert.equal(identityForTarget(production).verified, true);
+  assert.equal(isEtcDispatchConfigured(identityForTarget(production)), true);
   assert.deepEqual(planEtcProviderCall(production, {
     expectedPackage: FIELD_PACKAGE,
     expectedCertSha256: CERT,
     signatureMatches: true,
     method: 'prepareStart',
     creatorPackage: FIELD_PACKAGE,
-  }), { ok: false, reason: 'dispatch_disabled' });
+  }), { ok: false, reason: 'package_mismatch' });
 
   const field = etcTargetForEnv({ SUITE_ETC_FIELD_TEST: '1' });
   assert.equal(field.profile, 'field-test');
@@ -104,9 +104,9 @@ test('shipped targets keep production fail-closed and field-test dispatch off', 
   assert.equal(extra.dispatchEnabled, false);
   assert.equal(extra.authority, FIELD_AUTHORITY);
   assert.equal(extra.etcCertSha256, CERT);
-  assert.equal(suiteEtcExtra(production).dispatchEnabled, false);
-  assert.equal(suiteEtcExtra(production).etcPackageName, null);
-  assert.equal(suiteEtcExtra(production).etcCertSha256, null);
+  assert.equal(suiteEtcExtra(production).dispatchEnabled, true);
+  assert.equal(suiteEtcExtra(production).etcPackageName, 'com.wellbuilt.electronictimecard');
+  assert.equal(suiteEtcExtra(production).etcCertSha256, CERT);
 });
 
 test('an enabled clone routes one field-test call and rejects signer or creator mismatches', () => {
@@ -243,7 +243,7 @@ test('native and gradle sources agree on BuildConfig and do not bake the field-t
   }
   assert.ok(kt.indexOf('fail("dispatch_disabled")') < kt.indexOf('contentResolver.call'));
   assert.ok(kt.indexOf('creator != configuredPackage') < kt.indexOf('pending.send()'));
-  assert.match(gradle, /buildConfigField "boolean", "SUITE_ETC_DISPATCH_ENABLED", "false"/);
+  assert.match(gradle, /buildConfigField "boolean", "SUITE_ETC_DISPATCH_ENABLED", "\$\{suiteEtcDispatch\}"/);
   assert.equal(gradle.includes(CERT), false);
   assert.equal(gradle.includes('fieldtest'), false);
   assert.match(gradle, /suiteEtcProfile != 'field-test'/);

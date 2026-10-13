@@ -1,17 +1,17 @@
 /**
  * ETC targets Suite may be built against.
  * Visibility and the expected provider identity are not permission to call.
- * Shipped profiles keep dispatchEnabled false. Tests may clone a target
- * with dispatch enabled; they must not flip these frozen objects.
+ * Production identity verified from ETC111's installed APK. Field-test
+ * dispatch remains disabled. Targets are immutable build inputs.
  */
 const PRODUCTION_ETC_TARGET = Object.freeze({
   profile: 'production',
   visibilityPackage: 'com.wellbuilt.electronictimecard',
   authority: 'com.wellbuilt.electronictimecard.suitehos',
-  etcPackageName: null,
-  etcCertSha256: null,
-  etcVersionCode: null,
-  dispatchEnabled: false,
+  etcPackageName: 'com.wellbuilt.electronictimecard',
+  etcCertSha256: '349bac3a8a8462a223d9eeb8dc4511fb5091a81a3d48e819b94d46bf68ea75b7',
+  etcVersionCode: 111,
+  dispatchEnabled: true,
 });
 
 const FIELD_TEST_ETC_TARGET = Object.freeze({
@@ -52,7 +52,7 @@ function identityForTarget(target) {
 /**
  * Decides whether a provider call is allowed.
  * expected: { expectedPackage, expectedCertSha256, signatureMatches, creatorPackage, method }
- * Shipped targets stop at dispatch_disabled before any fingerprint is trusted.
+ * Disabled targets stop before dispatch; enabled targets still verify the signer.
  */
 function planEtcProviderCall(target, expected) {
   if (target?.dispatchEnabled !== true) {
@@ -85,7 +85,7 @@ function planEtcProviderCall(target, expected) {
   };
 }
 
-/** Values embedded in Expo extra. Dispatch stays off in this artifact. */
+/** Values embedded in Expo extra reflect the selected native build target. */
 function suiteEtcExtra(target) {
   return {
     profile: target.profile,
@@ -94,7 +94,7 @@ function suiteEtcExtra(target) {
     etcPackageName: target.etcPackageName,
     etcCertSha256: target.etcCertSha256,
     etcVersionCode: target.etcVersionCode ?? null,
-    dispatchEnabled: false,
+    dispatchEnabled: target.dispatchEnabled === true,
   };
 }
 

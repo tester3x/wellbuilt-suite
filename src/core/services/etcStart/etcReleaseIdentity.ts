@@ -1,13 +1,7 @@
 /**
- * Release package and signing identity for the ETC provider call.
- *
- * Both stay empty on purpose. The ETC receiver allowlist
- * `etc_suite_hos_trusted_callers` is empty, and Suite has not verified
- * ETC's installed package name or current signing certificate. An empty
- * identity disables dispatch. Do not fill these with ETC's source
- * application id or an unverified fingerprint. `app.json`'s package is
- * Suite's declared id, not proof of the installed signer. Manifest
- * queries may name ETC so a later check can see it; that is not trust.
+ * Fail-closed fallback if the verified build target cannot be loaded.
+ * The production target is verified separately from installed APK certificates;
+ * manifest visibility alone is never permission to call a provider.
  */
 export interface EtcReleaseIdentity {
   verified: boolean;
