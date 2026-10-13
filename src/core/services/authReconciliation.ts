@@ -37,7 +37,20 @@ const core = createReconciliationCore({
     initializePersistentAuth(getFirebaseApp(), AsyncStorage);
   },
   waitForAuthReady: () => waitForAuthReady(getFirebaseApp()),
-  getVerifiedIdentity: () => getOwnedVerifiedIdentity(getFirebaseApp()),
+  getVerifiedIdentity: async () => {
+    const identity = await getOwnedVerifiedIdentity(getFirebaseApp());
+    const local = await readLocalIdentity();
+    const reason = !identity ? 'no_sdk_user'
+      : !local.driverId ? 'local_missing'
+      : identity.kind !== 'driver' ? 'wrong_kind'
+      : identity.app ? 'foreign_app'
+      : identity.driverId !== local.driverId ? 'driver_mismatch'
+      : local.companyId && identity.companyId !== local.companyId ? 'company_mismatch'
+      : 'owner_match';
+    // Closed reason only: no names, identifiers, credentials, or token claims.
+    console.info(`[SuiteSession] reconciliation=${reason}`);
+    return identity;
+  },
   signOut: () => signOutOwned(getFirebaseApp()),
 });
 

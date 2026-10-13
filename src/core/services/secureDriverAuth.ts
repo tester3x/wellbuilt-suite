@@ -315,23 +315,3 @@ export async function getSecureIdToken(): Promise<string | null> {
   return getOwnedIdToken(getFirebaseApp());
 }
 
-/** Verify only the existing local account, without login/logout or any shift writers. */
-export async function reverifyCurrentSuiteAccount(passcode:string, active:()=>boolean=()=>true):Promise<void>{
- const {getDriverSession}=await import('./driverAuth');
- const {getCurrentShiftId}=await import('./shiftTracking');
- const {currentSsoIdentityEpoch}=await import('./ssoRuntime');
- const {reconcileRestoredSession}=await import('./authReconciliation');
- const {reverifySameAccount}=await import('./sameAccountReverifyCore');
- const authEpoch=authSession.captureEpoch();
- const local=async()=>{const s=await getDriverSession();return s?.driverId&&s.companyId?{driverId:s.driverId,companyId:s.companyId,displayName:s.displayName,shiftId:await getCurrentShiftId()}:null;};
- const session=await local();if(!session)throw Error('verification_required');
- const key='reverify/'+await attemptKey(session.displayName,passcode);
- const attempt=authSession.singleFlight(key,()=>reverifySameAccount({
-  epoch:currentSsoIdentityEpoch,local,
-  authenticate:(displayName,credential)=>callCallable('authenticateDriver',{displayName,passcode:credential}),
-  establish:async(token,owner)=>{await authSession.establish(token,{driverId:owner.driverId,companyId:owner.companyId},authEpoch);},
-  reconcile:async(owner)=>(await reconcileRestoredSession(owner))==='verified',
- },passcode,active));
- if(attempt.kind==='busy')throw Error('verification_busy');
- await attempt.promise;
-}
