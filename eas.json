@@ -23,6 +23,12 @@
     },
     "production": {
       "autoIncrement": true
+    },
+    "device-preview": {
+      "android": {
+        "gradleCommand": ":app:assembleRelease -PreactNativeArchitectures=arm64-v8a"
+      },
+      "extends": "preview"
     }
   },
   "submit": {
