@@ -5,6 +5,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
+import { endEtcForSuiteShift, retryEtcEnds } from '../services/etcStart/etcEndDispatch';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -241,6 +242,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const gen = authorityGenRef.current.current();
     let cancelled = false;
     const reconcile = () => {
+      if (AppState.currentState === 'active') void retryEtcEnds(user).catch(() => {});
       if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
       void import('../services/etcStart/attachEtcHandoff')
         .then(async ({ reconcileEtcOnResume }) => {
@@ -1169,6 +1171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           writeOdometerMiles(user.driverId, odometerMiles, { enforcedExplicit: false }).catch(() => {}));
       }
     }
+    if (shiftEndOk) await endEtcForSuiteShift(user, periodId).catch(error => console.warn('[ETC] End remains pending:', String(error)));
     // NOTE: shiftId is intentionally NOT cleared here. Day Summary needs
     // it to scope the JSA query (jsa_day_status WHERE shiftId == X).
     // Real cleanup happens on full logout (logoutWithCascade / logout below).
@@ -1254,6 +1257,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (isEnforcedExplicitShift(enforcement)) {
           const periodId = await getCurrentShiftId();
           const closed = await closeEnforcedExplicit({ periodId });
+          if (closed.ok) await endEtcForSuiteShift(user, periodId).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!closed.ok) {
             console.warn('[logoutWithCascade] closeDriverShift failed:', closed.reason);
           }
@@ -1267,6 +1271,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             undefined,
             { enforcedExplicit: false, allowDirectWrite: true },
           ).catch(() => false);
+          if (shiftEndOk) await endEtcForSuiteShift(user, await getCurrentShiftId()).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!shiftEndOk) {
             console.warn('[logoutWithCascade] logout shift event did not persist after retry');
           }
@@ -1375,6 +1380,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (isEnforcedExplicitShift(enforcement)) {
           const periodId = await getCurrentShiftId();
           const closed = await closeEnforcedExplicit({ periodId });
+          if (closed.ok) await endEtcForSuiteShift(user, periodId).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!closed.ok) {
             console.warn('[logout] closeDriverShift failed:', closed.reason);
           }
@@ -1388,6 +1394,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             undefined,
             { enforcedExplicit: false, allowDirectWrite: true },
           ).catch(() => false);
+          if (shiftEndOk) await endEtcForSuiteShift(user, await getCurrentShiftId()).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!shiftEndOk) {
             console.warn('[logout] logout shift event did not persist after retry');
           }

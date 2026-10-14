@@ -22,7 +22,7 @@ export const ETC_REQUEST_MAX_FUTURE_SKEW_MS = 30 * 1000;
 export const ETC_DISPATCH_TIMEOUT_MS = 4000;
 
 export const ETC_METHODS = ['capabilities', 'prepareStart', 'getStartStatus', 'cancelStart'] as const;
-export type EtcMethod = (typeof ETC_METHODS)[number];
+export type EtcMethod = (typeof ETC_METHODS)[number] | 'prepareEnd' | 'getEndStatus';
 
 export const ETC_STATES = ['prepared', 'processing', 'completed', 'rejected', 'cancelled', 'expired'] as const;
 export const ETC_HOS = ['not_started', 'unknown', 'started', 'already_active'] as const;

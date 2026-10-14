@@ -53,7 +53,7 @@ class SuiteEtcHosModule : Module() {
     if (!signatureMatches(context.packageManager, configuredPackage, configuredCert)) {
       return fail("package_mismatch")
     }
-    if (method == "prepareStart" && !activityVisible) {
+    if ((method == "prepareStart" || method == "prepareEnd") && !activityVisible) {
       return fail("activity_not_visible")
     }
     val called = try {
@@ -82,7 +82,7 @@ class SuiteEtcHosModule : Module() {
     val body = JSONObject()
     body.put("ok", true)
     body.put("response", parsed)
-    if (method == "prepareStart") {
+    if (method == "prepareStart" || method == "prepareEnd") {
       val pending = readPendingIntent(called)
       if (pending == null) {
         body.put("startIntent", "absent")
