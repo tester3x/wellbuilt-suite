@@ -228,9 +228,8 @@ export async function fetchTodayInvoices(
  * are deliberately NOT copied, since WB-S cannot read WB-T's local storage and
  * cross-app storage coupling is not wanted.
  *
- * Without a companyId the createdAt query falls back to driverId equality.
- * The closedAt query is bounded by date and status, then checked for driver
- * and company ownership below.
+ * Firestore driver reads require BOTH canonical driverId and companyId in
+ * every query. Client-side filtering cannot authorize a broader query.
  */
 export async function fetchCompletedLoads(opts: {
   identity: DriverIdentity;
@@ -239,27 +238,29 @@ export async function fetchCompletedLoads(opts: {
   authHeaders?: () => Promise<Record<string, string>>;
 }): Promise<InvoiceFetchResult> {
   const keys = driverIdentityKeys(opts.identity);
-  if (!keys.length) {
+  if (!keys.length || !opts.identity.driverId?.trim()) {
     // Transient missing identity is "unavailable", never zero.
     return { ok: false, reason: 'no_driver_identity' };
   }
+  if (!opts.companyId?.trim()) return { ok: false, reason: 'no_company_identity' };
   const { startIso: startOfDay, endIso: endOfDay } = opts.window ?? invoiceQueryWindow(null);
 
-  const scopeFilter = opts.companyId
-    ? {
+  const scopeFilters = [
+    {
       fieldFilter: {
         field: { fieldPath: 'companyId' },
         op: 'EQUAL',
         value: { stringValue: opts.companyId },
       },
-    }
-    : {
+    },
+    {
       fieldFilter: {
         field: { fieldPath: 'driverId' },
         op: 'EQUAL',
         value: { stringValue: opts.identity.driverId || '' },
       },
-    };
+    },
+  ];
 
   // WB-T creates invoices with ISO string dates. Other writers/older records
   // may use Firestore timestamps. Firestore range comparisons are typed, so a
@@ -271,21 +272,20 @@ export async function fetchCompletedLoads(opts: {
       where: { compositeFilter: { op: 'AND', filters: [
         { fieldFilter: { field: { fieldPath: 'createdAt' }, op: 'GREATER_THAN_OR_EQUAL', value: { [dateType]: startOfDay } } },
         { fieldFilter: { field: { fieldPath: 'createdAt' }, op: 'LESS_THAN_OR_EQUAL', value: { [dateType]: endOfDay } } },
-        scopeFilter,
+        ...scopeFilters,
       ] } },
-      // No orderBy — avoids needing a composite index (see de7cd0c, which
-      // removed an orderBy that made this query fail and show all zeros).
+      // Requires the owner/company/createdAt index in firestore.summary-indexes.json.
       // Results are sorted client-side in calculateDaySummary().
     },
   });
 
-  // Dashboard config defines an invoices index (status ASC, closedAt DESC). This bounded
-  // query finds a load even when dispatch created its invoice on an earlier
-  // day. Company and driver are checked below before any row is counted.
+  // Completion time also finds dispatch jobs created before this shift.
+  // Keep the same server-enforced owner/company boundary as createdAt.
   const queryClosedForDateType = (dateType: 'stringValue' | 'timestampValue') => ({
     structuredQuery: {
       from: [{ collectionId: 'invoices' }],
       where: { compositeFilter: { op: 'AND', filters: [
+        ...scopeFilters,
         { fieldFilter: { field: { fieldPath: 'status' }, op: 'IN', value: {
           arrayValue: { values: Array.from(COMPLETED_LOAD_STATUSES, value => ({ stringValue: value })) },
         } } },
@@ -336,7 +336,7 @@ export async function fetchCompletedLoads(opts: {
     let identityRejected = 0;
     let statusRejected = 0;
 
-    for (const [sourceIndex, results] of queryResults.entries()) {
+    for (const results of queryResults) {
       for (const result of results) {
       if (!result.document) continue;
       if (seenDocNames.has(result.document.name)) continue;
@@ -345,9 +345,7 @@ export async function fetchCompletedLoads(opts: {
       const row: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(fields)) row[k] = parseFirestoreValue(v);
 
-      // The closedAt index has no companyId component. Keep its bounded
-      // cross-company results from leaking into this company's summary.
-      if (sourceIndex >= 2 && opts.companyId && row.companyId !== opts.companyId) continue;
+      if (row.companyId !== opts.companyId) continue;
 
       if (!invoiceMatchesDriver(row, keys)) { identityRejected += 1; continue; }
 

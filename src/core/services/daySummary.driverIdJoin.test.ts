@@ -21,6 +21,7 @@ function invoiceDoc(id: string, driverId: string) {
     document: {
       name: `projects/wellbuilt-sync/databases/(default)/documents/invoices/${id}`,
       fields: {
+        companyId: { stringValue: 'liquid-gold' },
         status: { stringValue: 'closed' },
         wellName: { stringValue: 'GABRIEL 5-36-25TFH' },
         totalBBL: { integerValue: '140' },
@@ -32,12 +33,9 @@ function invoiceDoc(id: string, driverId: string) {
   };
 }
 
-test('never joins by display name; scopes on company + createdAt', async () => {
-  // a03f336 asserted a driverId EQUALITY filter. The invariant it was really
-  // protecting is "never join by display name", and that still holds. The
-  // query now scopes on the reliable axes and matches identity client-side,
-  // because an invoice may be stamped with driverId OR the passcodeHash that
-  // other WB apps receive as the driver `hash`.
+test('every created/completed date query satisfies canonical driver and company read boundaries', async () => {
+  // Driver rules require both ownership fields before any rows can be read.
+  // Client-side matching cannot make a company-wide query safe to authorize.
   const calls = stubFetch([invoiceDoc('INV1', DRV)]);
   await fetchTodayInvoices(DRV, 'liquid-gold', undefined, undefined, testAuthHeaders);
   assert.equal(calls[0].headers.Authorization, 'Bearer test-token');
@@ -47,6 +45,11 @@ test('never joins by display name; scopes on company + createdAt', async () => {
   assert.ok(filters.some((f: any) => f.field.fieldPath === 'companyId'), 'company boundary kept');
   assert.equal(filters.filter((f: any) => f.field.fieldPath === 'createdAt').length, 2, 'start+end boundary kept');
   assert.equal(calls.length, 4, 'creation and completion dates are queried in both Firestore date representations');
+  for (const call of calls) {
+    const fields = call.body.structuredQuery.where.compositeFilter.filters.map((f: any) => f.fieldFilter);
+    assert.ok(fields.some((f: any) => f.field.fieldPath === 'driverId' && f.op === 'EQUAL' && f.value.stringValue === DRV));
+    assert.ok(fields.some((f: any) => f.field.fieldPath === 'companyId' && f.op === 'EQUAL' && f.value.stringValue === 'liquid-gold'));
+  }
   const dateTypes = calls.slice(0, 2).map(call => {
     const dateFilter = call.body.structuredQuery.where.compositeFilter.filters.find((f: any) => f.fieldFilter.field.fieldPath === 'createdAt');
     return Object.keys(dateFilter.fieldFilter.value)[0];
@@ -77,15 +80,11 @@ test('WB-T ISO string createdAt invoices are fetched and duplicate rows are coun
   if (result.ok) assert.deepEqual(result.invoices.map(invoice => invoice.id), ['WB-T-STRING']);
 });
 
-test('without a company scope it still falls back to driverId equality', async () => {
-  // No safe axis to broaden into, so the query must stay narrow.
+test('without a company scope it reports unavailable without issuing an unauthorized query', async () => {
   const calls = stubFetch([]);
-  await fetchTodayInvoices(DRV, undefined, undefined, undefined, testAuthHeaders);
-  const filters = calls[0].body.structuredQuery.where.compositeFilter.filters.map((f: any) => f.fieldFilter);
-  const driverIdFilter = filters.find((f: any) => f.field.fieldPath === 'driverId');
-  assert.ok(driverIdFilter, 'driverId equality retained without a company scope');
-  assert.equal(driverIdFilter.value.stringValue, DRV);
-  assert.equal(filters.some((f: any) => f.field.fieldPath === 'companyId'), false);
+  const result = await fetchCompletedLoads({identity: {driverId: DRV}, authHeaders: testAuthHeaders});
+  assert.deepEqual(result, {ok: false, reason: 'no_company_identity'});
+  assert.equal(calls.length, 0);
 });
 
 test('Z Fold: closed invoices under this driverId ARE returned', async () => {

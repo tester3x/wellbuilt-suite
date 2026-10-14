@@ -339,6 +339,7 @@ function stubQuery(docs: any[], ok = true, status = 200) {
   });
 }
 function doc(id: string, fields: Record<string, any>) {
+  fields = { companyId: 'liquid-gold', driverId: DRIVER_ID, ...fields };
   const f: Record<string, any> = {};
   for (const [k, v] of Object.entries(fields)) {
     f[k] = typeof v === 'number' ? { integerValue: String(v) } : { stringValue: String(v) };
