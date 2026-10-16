@@ -6,7 +6,7 @@
 // - Job Package (radio select)
 // - Truck # (pre-filled from saved vehicle info, editable)
 // - Trailer # (pre-filled from saved vehicle info, editable)
-// - Start Odometer (pre-filled from previous shift's end odometer)
+// - Optional actual starting odometer (never yesterday's trip distance)
 // - Pre-trip checklist (CDL/Med Card, Pre-trip done, Vehicle condition)
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -49,7 +49,7 @@ function jsaExplainer(mode: JsaModeCanonical): { title: string; body: string } |
   }
 }
 
-const ODOMETER_KEY = 'wellbuilt-last-odometer';
+
 
 interface ShiftStartModalProps {
   visible: boolean;
@@ -90,6 +90,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
   useEffect(() => {
     if (!visible) return;
     setLoading(true);
+    setStartOdometer('');
     // Reset checklist each shift start
     setCdlMedCard(false);
 
@@ -119,9 +120,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
         setTruckNumber(vehicle.truckNumber || '');
         setTrailerNumber(vehicle.trailerNumber || '');
 
-        // Load previous end odometer
-        const lastOdo = await AsyncStorage.getItem(ODOMETER_KEY);
-        setStartOdometer(lastOdo || '');
+        // Starting odometer is an optional fresh reading, never a cached trip total.
       } catch (err) {
         console.warn('[ShiftStartModal] Load error:', err);
       } finally {
@@ -141,10 +140,7 @@ export default function ShiftStartModal({ visible, onClose, onConfirm, confirmin
         trailerNumber: trailerNumber.trim(),
       }).catch(() => {});
     }
-    // Save start odometer so end-shift can compute total miles
-    if (startOdometer.trim()) {
-      await AsyncStorage.setItem('wellbuilt-shift-start-odometer', startOdometer.trim()).catch(() => {});
-    }
+    // The caller binds this optional reading to the successfully claimed shift.
 
     await onConfirm({
       packageId: selectedPkg,

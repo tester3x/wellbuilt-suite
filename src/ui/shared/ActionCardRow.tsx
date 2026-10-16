@@ -96,7 +96,7 @@ function getShiftColor(startIso: string | null): string {
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
-  const { shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
+  const { user, shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
@@ -274,6 +274,15 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         }
         return;
       }
+      const { getCurrentShiftId } = await import('@/core/services/shiftTracking');
+      const { START_ODOMETER_KEY } = await import('@/core/services/shiftMileage');
+      const kv = (await import('@react-native-async-storage/async-storage')).default;
+      const suiteShiftId = await getCurrentShiftId();
+      try {
+        if (suiteShiftId && user?.companyId && user.driverId) {
+          await kv.setItem(START_ODOMETER_KEY, JSON.stringify({ companyId: user.companyId, driverId: user.driverId, suiteShiftId, reading: data.startOdometer }));
+        } else await kv.removeItem(START_ODOMETER_KEY);
+      } catch (error) { console.warn('[ShiftMileage] Optional starting odometer was not retained:', String(error)); }
       setShowStartModal(false);
       // Force Pre-Trip only after successful claim/adoption (still under busy).
       try {
@@ -391,10 +400,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
                 // place the shift closes. The gate it replaces sat on Log Out,
                 // which runs after finalization.
                 jsaGate: suiteShiftJsaCloseGate,
-                // Promoted only after the authoritative close succeeded.
-                onPrefillOdometer: async (m) => {
-                  await AsyncStorage.setItem('wellbuilt-last-odometer', String(m)).catch(() => {});
-                },
+                // Trip distance must never become the next truck odometer.
+
               });
               if (!result.ok) {
                 setRetainedOdometer(miles !== undefined ? String(miles) : undefined);

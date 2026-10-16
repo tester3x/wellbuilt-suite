@@ -18,6 +18,8 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, radius } from '@/core/theme';
+import { useAuth } from '@/core/context/AuthContext';
+import { START_ODOMETER_KEY, readBoundStartOdometer, resolveShiftMiles } from '@/core/services/shiftMileage';
 
 interface ShiftArrivalModalProps {
   visible: boolean;
@@ -68,6 +70,9 @@ export default function ShiftArrivalModal({
   visible, onClose, onConfirm, returnStartTime,
   postTripVerified = false, initialOdometer, errorText, recoveryAction,
 }: ShiftArrivalModalProps) {
+  const { user } = useAuth();
+  const [etcMiles, setEtcMiles] = useState<number | null>(null);
+  const [readingMileage, setReadingMileage] = useState(false);
   const [endOdometer, setEndOdometer] = useState('');
   const [startOdometer, setStartOdometer] = useState('');
   const [totalMiles, setTotalMiles] = useState('');
@@ -91,25 +96,33 @@ export default function ShiftArrivalModal({
     setEndOdometer(initialOdometer || '');
     setTotalMiles('');
     setBusy(false);
+    let cancelled = false;
+    setStartOdometer(''); setEtcMiles(null); setReadingMileage(true);
     (async () => {
-      const startOdo = await AsyncStorage.getItem('wellbuilt-shift-start-odometer').catch(() => null);
-      setStartOdometer(startOdo || '');
-    })();
-  }, [visible, initialOdometer]);
+      try {
+        const { getCurrentShiftId } = await import('@/core/services/shiftTracking');
+        const suiteShiftId = await getCurrentShiftId();
+        if (!suiteShiftId || !user?.companyId || !user.driverId) return;
+        const identity = { companyId: user.companyId, driverId: user.driverId, suiteShiftId };
+        const raw = await AsyncStorage.getItem(START_ODOMETER_KEY);
+        if (!cancelled) setStartOdometer(readBoundStartOdometer(raw, identity));
+        const { readEtcShiftMiles } = await import('@/core/services/etcStart/etcMileage');
+        const miles = await readEtcShiftMiles(identity);
+        if (!cancelled) setEtcMiles(miles);
+      } finally { if (!cancelled) setReadingMileage(false); }
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, [visible, initialOdometer, user?.companyId, user?.driverId]);
 
   // Auto-calculate total miles
   useEffect(() => {
-    const start = parseFloat(startOdometer.replace(/,/g, ''));
-    const end = parseFloat(endOdometer.replace(/,/g, ''));
-    if (!isNaN(start) && !isNaN(end) && end >= start) {
-      setTotalMiles(String(Math.round(end - start)));
-    } else {
-      setTotalMiles('');
-    }
-  }, [endOdometer, startOdometer]);
+    const miles = resolveShiftMiles(initialOdometer ? '' : startOdometer, endOdometer, etcMiles);
+    setTotalMiles(miles === null ? '' : String(miles));
+  }, [endOdometer, startOdometer, etcMiles, initialOdometer]);
 
-  const hasOdometer = endOdometer.trim().length > 0;
-  const allChecked = postTripDone && paperworkDone && hasOdometer;
+  const hasOdometer = totalMiles !== '' && Number(totalMiles) <= 5000;
+  const allChecked = postTripDone && paperworkDone && hasOdometer && !readingMileage;
+
   const returnDrive = formatReturnDrive(returnStartTime);
 
   const handleConfirm = useCallback(async () => {
@@ -117,15 +130,9 @@ export default function ShiftArrivalModal({
     Keyboard.dismiss();
     setBusy(true);
     try {
-      // Save end odometer as next day's start pre-fill
-      // The next shift's prefill is promoted by the caller only after the
-      // authoritative close succeeds. Writing it here promoted a reading from
-      // a shift that might never close.
-      // Pass odometer miles to parent so it can write to Firestore shift
-      // doc. Awaiting onConfirm holds the modal open with the spinner
-      // until end-of-shift work resolves (recordShiftEvent + Firestore
-      // commits). Parent only closes the modal AFTER this returns.
-      const miles = totalMiles ? parseInt(totalMiles, 10) : undefined;
+      // Pass distance traveled, never an absolute odometer. This value must
+      // not be promoted as the next shift's starting odometer.
+      const miles = totalMiles !== '' ? Number(totalMiles) : undefined;
       await Promise.resolve(onConfirm(miles));
     } finally {
       // Don't clear busy on success — the parent will close the modal,
@@ -149,7 +156,7 @@ export default function ShiftArrivalModal({
           >
             <MaterialCommunityIcons name="map-marker-check" size={36} color={colors.status.online} style={s.headerIcon} />
             <Text style={s.title}>Arrived at Yard</Text>
-            <Text style={s.subtitle}>Record odometer and confirm end of shift</Text>
+            <Text style={s.subtitle}>Review shift miles and confirm end of shift</Text>
 
             {/* Summary cards */}
             <View style={s.summaryRow}>
@@ -166,15 +173,18 @@ export default function ShiftArrivalModal({
             </View>
 
             {/* End Odometer */}
-            <Text style={s.sectionLabel}>ODOMETER</Text>
+            <Text style={s.sectionLabel}>SHIFT MILEAGE</Text>
+            <Text style={{ color: colors.text.muted, marginBottom: 10 }}>
+              {readingMileage ? 'Reading ETC mileage…' : etcMiles !== null ? `ETC GPS: ${etcMiles.toFixed(1)} miles · this shift` : 'ETC mileage unavailable for this shift. Enter miles manually.'}
+            </Text>
             <View style={s.inputRow}>
               <View style={{ flex: 1 }}>
-                <Text style={s.inputLabel}>End Miles</Text>
+                <Text style={s.inputLabel}>{startOdometer && !initialOdometer ? 'End odometer (optional override)' : 'Shift miles (optional override)'}</Text>
                 <TextInput
                   style={s.input}
                   value={endOdometer}
                   onChangeText={setEndOdometer}
-                  placeholder="e.g., 124,590"
+                  placeholder={startOdometer && !initialOdometer ? 'e.g., 124,590' : etcMiles !== null ? `ETC: ${etcMiles.toFixed(1)} miles` : 'e.g., 240'}
                   placeholderTextColor={colors.text.muted}
                   keyboardType="numeric"
                   returnKeyType="done"

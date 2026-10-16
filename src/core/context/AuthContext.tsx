@@ -159,7 +159,7 @@ function sessionToUser(session: DriverSession): AuthUser {
  * inherit stale per-shift state. Mirrors WB T's LOGOUT_CLEAR_KEYS list.
  *
  * Intentionally NOT included:
- *   - 'wellbuilt-last-odometer' — pre-fills the next shift's start odometer.
+ *   - Legacy odometer keys are no longer read as current shift mileage.
  *     Belongs to the device + driver pairing, survives logout by design.
  *   - '@wb/suite-etc-start/v1' — durable ETC start receipt. A later session
  *     reconciles that same request and must not mint another HOS start.
@@ -173,6 +173,7 @@ const LOGOUT_ASYNCSTORAGE_KEYS: readonly string[] = [
   // Per-shift odometer cache (set in ShiftStartModal). Per-shift state,
   // not driver-survival state — wipe on logout.
   'wellbuilt-shift-start-odometer',
+  'wellbuilt-shift-start-odometer-v2',
   // Mirror of SecureStore 'shiftStartTime' written by AppSwitcher.tsx
   // for the floating-badge timer. The SecureStore copy is cleared above;
   // the AsyncStorage copy was previously surviving logout.
