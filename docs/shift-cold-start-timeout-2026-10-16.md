@@ -5,3 +5,5 @@ ZFold Suite vc71 displayed Could not start shift / callable unavailable. Device 
 Client timeout raised to 60 seconds, covering cold-start time before handler execution. Server timeout/configuration unchanged; no minimum-instance cost or automatic mutation retry added. Identity, exact payload, server authority, generation gates and single-flight guards unchanged.
 
 Validation: shiftAuthorityClient and explicitShiftLifecycle tests 20/20 pass, including simulated observed latency and one resolve/one claim transport invocation. TypeScript has existing AppSwitcher/SignaturePad diagnostics; this change adds no diagnostics in changed files. Source only: not built/installed/deployed. ZFold remains Suite vc71. A fresh driver retry was requested while checking logs; live start acceptance is pending.
+
+Live retry verified: driver retry resolved none at 08:24:55 CDT, then claim.outcome claimed=1 at 08:24:56.567 CDT. Corresponding authenticated live requests returned HTTP 200 (resolve 0.1608s, claim 0.8965s). Existing installed Suite successfully started the shift once warm. Timeout source change still awaits APK delivery.
