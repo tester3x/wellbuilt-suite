@@ -18,7 +18,9 @@ export const CLAIM_DRIVER_SHIFT = 'claimDriverShift';
 export const RECORD_DEPART_RETURN = 'recordDepartReturn';
 export const CLOSE_DRIVER_SHIFT = 'closeDriverShift';
 
-export const SHIFT_AUTHORITY_TIMEOUT_MS = 15_000;
+// Include service cold-start time, which precedes the handler's execution
+// deadline. A measured 25.6s cold start exceeded the old 15s client budget.
+export const SHIFT_AUTHORITY_TIMEOUT_MS = 60_000;
 
 /** Period id format owned by the product — client proposes, server decides. */
 export const PERIOD_ID_RE = /^\d{4}-\d{2}-\d{2}_\d{6}$/;

@@ -145,3 +145,18 @@ test('client fails closed without SDK session', async () => {
     return true;
   });
 });
+
+test('cold-start resolve can finish before client deadline without retrying a mutation', async () => {
+  const calls: string[] = [];
+  const client = createShiftAuthorityClient(async (name, payload, timeoutMs) => {
+    calls.push(name);
+    // Model the measured startup latency without a wall-clock sleep.
+    if (timeoutMs <= 25_614) throw { code: 'functions/deadline-exceeded' };
+    if (name === RESOLVE_ACTIVE_DRIVER_SHIFT) return { protocolVersion: 1, state: 'none' };
+    return { protocolVersion: 1, state: 'open', periodId: payload.periodId,
+      originLocalDate: payload.originLocalDate, claimed: true };
+  }, { requireSession: async () => true });
+  assert.equal((await client.resolve()).state, 'none');
+  assert.equal((await client.claim('2026-10-16_082200', '2026-10-16')).claimed, true);
+  assert.deepEqual(calls, [RESOLVE_ACTIVE_DRIVER_SHIFT, CLAIM_DRIVER_SHIFT]);
+});
