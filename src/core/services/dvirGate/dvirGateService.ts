@@ -197,7 +197,7 @@ export async function launchEquipmentPhase(
     if (deps.tryAndroidIntent) {
       try {
         await deps.openUrl(
-          `intent://dvir#Intent;scheme=${EQUIPMENT_SCHEME};package=${EQUIPMENT_ANDROID_PACKAGE};end`,
+          `intent://${url.slice(`${EQUIPMENT_SCHEME}://`.length)}#Intent;scheme=${EQUIPMENT_SCHEME};package=${EQUIPMENT_ANDROID_PACKAGE};end`,
         );
         emitHandoffDiag(
           buildHandoffOpenDiag({
