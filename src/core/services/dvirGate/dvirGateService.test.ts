@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   buildEquipmentDvirUrl,
+  launchEquipmentPhase,
   clearDvirRoutingAfterFinalization,
   equipmentHandoffNotice,
   ensurePostTripGate,
@@ -40,6 +41,26 @@ function memoryKv(): DvirReceiptKv {
     },
   };
 }
+
+it('Android fallback retains governed shift, phase and return context without identity', async () => {
+  for (const phase of ['pre_trip', 'post_trip'] as const) {
+    const opened: string[] = [];
+    const result = await launchEquipmentPhase({
+      kv: memoryKv(), sha256Hex, getCurrentShiftId: async () => 'synthetic-period',
+      tryAndroidIntent: true,
+      openUrl: async url => { opened.push(url); if (opened.length === 1) throw Error('scheme open failed'); },
+    }, phase, 'synthetic-period');
+    assert.equal(result.launched, true);
+    assert.equal(opened.length, 2);
+    const fallback = new URL(opened[1]!.split('#Intent;')[0]!.replace('intent://', 'wbequipment://'));
+    assert.equal(fallback.hostname, 'dvir');
+    assert.equal(fallback.searchParams.get('shiftId'), 'synthetic-period');
+    assert.equal(fallback.searchParams.get('phase'), phase);
+    assert.equal(fallback.searchParams.get('source'), 'server_binding');
+    assert.equal(fallback.searchParams.get('returnUrl'), SUITE_DVIR_RETURN_URL);
+    assert.doesNotMatch(opened[1]!, /[?&](hash|name|passcode|token)=/i);
+  }
+});
 
 async function sha256Hex(s: string): Promise<string> {
   return createHash('sha256').update(s, 'utf8').digest('hex');
