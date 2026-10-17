@@ -11,3 +11,5 @@ Validation: ETC start/build-target30, authority/lifecycle45, DVIR86, profile/nat
 Current-day HOS gap remains for driver review; no historical activity is inferred from Suite start or repaired automatically.
 
 Suite73 submitted2026-10-17 09:55CDT from8350b104d9825e6f616bce264dc86f14e854aa58, device-preview, EAS0819a2ff-73db-4e0a-be15-ec1ac327a03a. Submitted only; not installed or verified on phone. ZFold remains Suite72/ETC115. No HOS edits performed.
+
+Suite73 completed and installed on ZFold RFGL23VJCED on2026-10-17. Update install success with existing data preserved; package version73 confirmed and MainActivity starts successfully. APK SHA256186004B0D5C2FF12EDB4B16BBBD34E8D0764FF112B8DF2845883F1929B84B1D2. No shift/HOS history edited. Actual ETC auto-start still requires field testing with a future real shift.
