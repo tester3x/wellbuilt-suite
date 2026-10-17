@@ -59,6 +59,8 @@ export function buildEquipmentDvirUrl(opts: {
   p.set('shiftId', opts.shiftId);
   p.set('phase', opts.phase);
   p.set('returnUrl', opts.returnUrl || SUITE_DVIR_RETURN_URL);
+  // Navigation marker only; the governed broker still establishes identity.
+  p.set('source', 'server_binding');
   if (opts.hash) p.set('hash', opts.hash);
   if (opts.name) p.set('name', opts.name);
   if (opts.companyId) p.set('companyId', opts.companyId);
