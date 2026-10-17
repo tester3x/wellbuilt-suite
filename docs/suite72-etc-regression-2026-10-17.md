@@ -9,3 +9,5 @@ Reconciliation stays on codex/suite-equipment-entry-20261012 authoritative prior
 Validation: ETC start/build-target30, authority/lifecycle45, DVIR86, profile/native target6:167pass. Full TypeScript retains existing AppSwitcher/SignaturePad and ETC test narrowing diagnostics; no clean full-typecheck claim. The integrated source still needs an APK build/install and real device flow confirmation. Future Suite builds must include both the verified ETC production integration and the current DVIR fixes. Do not build from the misleadingly named codex/suite-etc-start-hos branch without reconciling it.
 
 Current-day HOS gap remains for driver review; no historical activity is inferred from Suite start or repaired automatically.
+
+Suite73 submitted2026-10-17 09:55CDT from8350b104d9825e6f616bce264dc86f14e854aa58, device-preview, EAS0819a2ff-73db-4e0a-be15-ec1ac327a03a. Submitted only; not installed or verified on phone. ZFold remains Suite72/ETC115. No HOS edits performed.
