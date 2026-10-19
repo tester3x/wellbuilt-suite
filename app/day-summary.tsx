@@ -13,7 +13,6 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
-  Alert,
   BackHandler,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -21,13 +20,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/core/context/AuthContext';
 import { colors } from '@/core/theme';
-import { firebasePatch } from '@/core/services/driverAuth';
-import { cascadeLogoutToSSOApps } from '@/core/services/appLauncher';
 import {
   fetchCompletedLoads,
   invoiceQueryWindow,
   originDateFromPeriodId,
-  jsaCardPresentation,
   fetchTodayShift,
   fetchShiftDocForDate,
   firestoreRestHeaders,
@@ -35,20 +31,10 @@ import {
   calculateDaySummary,
   type DaySummary,
 } from '@/core/services/daySummary';
-import { acknowledgeShiftJsa } from '@/core/services/jsaShiftAck';
-import {
-  collectShiftJsaEvidence,
-  decideShiftJsaClose,
-  jsaBlocksLogout,
-  jsaCloseHeadline,
-  normalizeJsaShiftMode,
-  type JsaCloseDecision,
-} from '@/core/services/shiftJsaClose';
-import { recordsFromRestDocs } from '@/core/services/shiftJsaCloseGate';
-import { wbDiagLog } from '@/core/services/wbDiagLog';
+import {loadShiftJsaSummary} from '@/core/services/shiftJsaSummaryClient';
+import type {ShiftJsaSummary} from '@/core/services/shiftJsaSummaryCore';
 import { getCurrentShiftId, getCurrentShiftOriginDate } from '@/core/services/shiftTracking';
 import { originDateFromShiftId } from '@/core/services/workPeriodAuthority/postLoginShiftRestoration';
-import JsaCloseModal from '@/ui/shared/JsaCloseModal';
 import type { ShiftDvirSummary } from '@/core/services/dvirGate';
 import {
   hydrateShiftDvirSummaryIfMissing,
@@ -159,41 +145,19 @@ function randomMockSummary(): DaySummary {
 export default function DaySummaryScreen() {
   const router = useRouter();
   const { t } = useTranslation();
-  const { user, logoutWithCascade } = useAuth();
+  const { user } = useAuth();
   const [summary, setSummary] = useState<DaySummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [jsaStatus, setJsaStatus] = useState<{
-    completed: boolean;
-    completedAt: string | null;
-    pdfUrl: string | null;
-    wellCount: number;
-  } | null>(null);
-  // The company's JSA requirement. Requirement, status and optional completion
-  // are three separate things: with JSA off the summary must not present an
-  // unmet obligation. Defaults to 'off' so an unread config never invents one.
-  const [jsaMode, setJsaMode] = useState<string>('off');
+  const [jsaEvidenceState,setJsaEvidence]=useState<ShiftJsaSummary|null>(null);
+  const jsaEvidence=jsaEvidenceState?.driverId===user?.driverId&&jsaEvidenceState?.companyId===user?.companyId?jsaEvidenceState:null;
+  const [jsaCheck,setJsaCheck]=useState<'checking'|'ready'|'unavailable'>('checking');
+  const [jsaScope,setJsaScope]=useState<{driverId:string;companyId:string;shiftId:string|null}|undefined>(undefined);
+  const [jsaRetry,setJsaRetry]=useState(0);
+  const [jsaMode,setJsaMode]=useState<string>('off');
   /** True when the origin-day shift document could not be read at all. */
   const [shiftRecordMissing, setShiftRecordMissing] = useState(false);
   /** True when the invoice query failed — distinct from a genuinely empty shift. */
   const [loadsUnavailable, setLoadsUnavailable] = useState(false);
-  const [jsaGateShiftEnd, setJsaGateShiftEnd] = useState(false);
-  const [jsaGateLoaded, setJsaGateLoaded] = useState(false);
-  const [jsaAllowAcknowledge, setJsaAllowAcknowledge] = useState(true);
-  // Shift-end JSA gate state — modal opens when driver hits Log Out without
-  // jsaCompleted. Acknowledge writes jsa_day_status.jsaCompleted=true; Read
-  // deep-links to WB JSA. After Acknowledge, logout proceeds via the same
-  // confirm Alert that already exists below.
-  /**
-   * The shift JSA close decision for this shift, from the same rule the close
-   * itself uses (shiftJsaClose). Null until the reads land.
-   *
-   * This screen's gate is now a BACKSTOP. The authoritative check runs at the
-   * close, in finalizeArrival — this screen renders after finalization, so a
-   * gate here could never prevent a close, only strand a logout.
-   */
-  const [jsaDecision, setJsaDecision] = useState<JsaCloseDecision | null>(null);
-  const [showJsaModal, setShowJsaModal] = useState(false);
-  const [jsaAcknowledging, setJsaAcknowledging] = useState(false);
   const [dvirSummary, setDvirSummary] = useState<ShiftDvirSummary | null>(null);
 
   // Android back button: go to WB S home, not back to WB T
@@ -258,35 +222,24 @@ export default function DaySummaryScreen() {
     if (DEV_TEST) {
       setSummary(randomMockSummary());
       setLoading(false);
-      setJsaGateLoaded(true);
+      setJsaCheck('ready');
       return;
     }
-    if (!user) return;
+    if (!user) {setJsaEvidence(null);setSummary(null);setLoading(false);return;}
     const API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
     const BASE = 'https://firestore.googleapis.com/v1/projects/wellbuilt-sync/databases/(default)/documents';
 
-    // JSA scope is now per (shift, operator). A driver can work for two oil
-    // companies in one shift and each gets its own JSA. We query the
-    // jsa_day_status collection for ALL docs with the current shiftId, then
-    // collapse them: the gate is "complete" only if EVERY operator's doc
-    // is jsaCompleted=true. wellCount is summed across all operator docs.
-    // vc51.9C: the UTC date fallback is a LEGACY display convenience and
-    // is enforcement-gated. Under active enforcement no fabricated scope
-    // is used — the JSA card simply shows nothing rather than reading a
-    // period that was never verified. (Display only; no writes here.)
-    const shiftIdP = getCurrentShiftId().then(async (id) => {
-      if (id) return id;
-      const [{ mayUseDateFallback, parseSuiteEnforcement }, { fetchCompanyConfig }] = await Promise.all([
-        import('../src/core/services/workPeriodAuthority/suiteShiftAuthority'),
-        import('../src/core/services/companyConfig'),
-      ]);
-      const cfg = user?.companyId ? await fetchCompanyConfig(user.companyId).catch(() => null) : null;
-      return mayUseDateFallback(parseSuiteEnforcement(cfg ?? undefined))
-        ? new Date().toISOString().slice(0, 10)
-        : '';
-    });
+    let active=true;
+    setLoading(true);setJsaEvidence(null);setJsaCheck('checking');setJsaScope(undefined);
+    // A finalized DVIR receipt retains the exact shift after active storage is
+    // cleared. No current-date substitution for JSA, including after midnight.
+    const scopeP=(async()=>{
+      const current=await getCurrentShiftId();if(current)return current;
+      const last=await loadLastFinalizedDvirSummary({getItem:k=>AsyncStorage.getItem(k),setItem:(k,v)=>AsyncStorage.setItem(k,v),removeItem:k=>AsyncStorage.removeItem(k)});
+      return last?.shiftId||null;
+    })().catch(()=>null);
 
-    // All 4 fetches in parallel — no sequential waits
+    // Work statistics load independently of the JSA callable.
     // Join by stable driverId (not the display name — WB-T stores the canonical
     // driver name on invoices, WB-S has the login alias). driverName is still
     // used for other UI below.
@@ -294,7 +247,7 @@ export default function DaySummaryScreen() {
     // local calendar date and stamped it 'Z', so evening loads (and anything on
     // the far side of midnight) fell outside the window and the screen said
     // "No completed loads today" for a shift full of real closed loads.
-    const invoicesP = getCurrentShiftId()
+    const invoicesP = scopeP
       .then(async pid => invoiceQueryWindow(
         (await getCurrentShiftOriginDate()) || originDateFromPeriodId(pid),
       ))
@@ -312,7 +265,7 @@ export default function DaySummaryScreen() {
     // document (frozen at claim), not "calendar today" after a cross-midnight close.
     const shiftP = (async () => {
       try {
-        const periodId = await getCurrentShiftId();
+        const periodId = await scopeP;
         const origin = (await getCurrentShiftOriginDate()) || originDateFromShiftId(periodId);
         const now = new Date();
         const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -332,68 +285,19 @@ export default function DaySummaryScreen() {
         return fetchTodayShift(user.driverId).catch(() => null);
       }
     })();
-    const jsaP = shiftIdP.then(async (scope) => {
-      // First try the legacy single-doc path: `{driverId}_{shiftId}` (also
-      // catches pre-rollout date-keyed docs).
-      const headers = await firestoreRestHeaders();
-      const directDoc = await fetch(`${BASE}/jsa_day_status/${user.driverId}_${scope}?key=${API_KEY}`, { headers })
-        .then(r => r.ok ? r.json() : null).catch(() => null);
-
-      // Then query the collection for any operator-scoped docs in this shift.
-      const queryBody = {
-        structuredQuery: {
-          from: [{ collectionId: 'jsa_day_status' }],
-          where: {
-            compositeFilter: {
-              op: 'AND',
-              filters: [
-                { fieldFilter: { field: { fieldPath: 'driverHash' }, op: 'EQUAL', value: { stringValue: user.driverId } } },
-                { fieldFilter: { field: { fieldPath: 'shiftId' }, op: 'EQUAL', value: { stringValue: scope } } },
-              ],
-            },
-          },
-          limit: 50,
-        },
-      };
-      // A failed query must stay distinguishable from an empty one: the old
-      // code collapsed both to [], so an unreadable JSA read looked exactly
-      // like a driver who owed nothing.
-      const queryResults: any[] | null = await fetch(`${BASE}:runQuery?key=${API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...headers },
-        body: JSON.stringify(queryBody),
-      }).then(r => r.ok ? r.json() : null).catch(() => null);
-      const queryFailed = queryResults === null;
-      const operatorDocs = (queryResults ?? [])
-        .filter((r: any) => r.document)
-        .map((r: any) => r.document);
-
-      wbDiagLog({
-        area: 'jsa',
-        event: 'daySummary.jsaQuery',
-        source: 'day-summary.useEffect.jsaP',
-        result: 'ok',
-        reason: 'jsa_day_status query for shift-end gate',
-        driverHash: user.driverId,
-        shiftId: scope || undefined,
-        counts: {
-          directDoc: directDoc ? 1 : 0,
-          operatorDocs: operatorDocs.length,
-        },
-        extra: { scope, companyId: user.companyId || null, queryFailed },
-      });
-
-      // Both reads failing is unknown, not empty. The direct GET 404s
-      // legitimately when no legacy single doc exists, so it cannot prove a
-      // failure on its own.
-      return { directDoc, operatorDocs, scope, readFailed: queryFailed && !directDoc };
-    }).catch(() => ({ directDoc: null, operatorDocs: null, scope: '', readFailed: true }));
+    void Promise.all([shiftP,scopeP]).then(([shift,hint])=>{
+      // Prefer the actual bookend shown by this summary when a day has several shifts.
+      const login=[...(shift?.events||[])].reverse().find(e=>e.type==='login');
+      const shiftId=login?.shiftId||hint;
+      if(active)setJsaScope({driverId:user.driverId,companyId:user.companyId||'',shiftId});
+    }).catch(()=>{if(active)setJsaCheck('unavailable');});
     const companyP = user.companyId
       ? firestoreRestHeaders().then(headers => fetch(`${BASE}/companies/${user.companyId}?key=${API_KEY}`, { headers }))
           .then(r => r.ok ? r.json() : null).catch(() => null)
       : Promise.resolve(null);
 
-    Promise.all([invoicesP, shiftP, jsaP, companyP]).then(([invoiceResult, shift, jsaResult, companyDoc]) => {
+    Promise.all([invoicesP, shiftP, companyP]).then(([invoiceResult, shift, companyDoc]) => {
+      if(!active)return;
       // A failed query is "unavailable", never zero completed loads.
       const invoices = invoiceResult.ok ? invoiceResult.invoices : [];
       setLoadsUnavailable(!invoiceResult.ok);
@@ -404,108 +308,22 @@ export default function DaySummaryScreen() {
       setShiftRecordMissing(!shift);
       setSummary(result);
 
-      // JSA status — collapse possibly-many operator-scoped docs into a
-      // single screen status. Completed = ALL operator docs are
-      // jsaCompleted=true (or, if no operator docs exist, fall back to the
-      // legacy single doc). wellCount is summed across operator docs.
-      const allDocs: any[] = [];
-      if (jsaResult?.directDoc) allDocs.push(jsaResult.directDoc);
-      if (Array.isArray(jsaResult?.operatorDocs)) {
-        // Dedup by doc name in case the direct lookup also surfaced via the query.
-        const seen = new Set(allDocs.map((d: any) => d?.name).filter(Boolean));
-        for (const d of jsaResult.operatorDocs) {
-          if (d?.name && !seen.has(d.name)) {
-            allDocs.push(d);
-            seen.add(d.name);
-          }
-        }
-      }
-      // Verbose diagnostic line — shiftId, hash, doc ids, per-doc wells +
-      // locations counts, final summed count. Field-test post-mortems
-      // grep for `[jsaFix]` and reconstruct the full path from this one
-      // line. Per-doc breakdown follows.
-      const scopeUsed = jsaResult?.scope || '(unknown)';
-      const docIds = allDocs.map((d: any) => {
-        const parts = (d?.name || '').split('/');
-        return parts[parts.length - 1] || '?';
-      });
-      let totalWells = 0;
-      let totalLocations = 0;
-      const perDocBreakdown: string[] = [];
-      for (const doc of allDocs) {
-        const f = doc.fields;
-        const w = Array.isArray(f?.wells?.arrayValue?.values) ? f.wells.arrayValue.values.length : 0;
-        const l = Array.isArray(f?.locations?.arrayValue?.values) ? f.locations.arrayValue.values.length : 0;
-        const docName = (doc?.name || '').split('/').pop() || '?';
-        totalWells += w;
-        totalLocations += l;
-        perDocBreakdown.push(`${docName}:w=${w},l=${l}`);
-      }
-      // The signature is collapsed leniently (one signature per shift is the
-      // rule, so any signed record satisfies it) and the acknowledgments
-      // strictly (every stamped location must carry its own). The code this
-      // replaces collapsed BOTH leniently — Path D's "ANY doc completed" — so a
-      // signature on one operator's record satisfied the shift while another
-      // operator's stamped location sat unacknowledged. It also read only
-      // jsaCompleted, so an acknowledgment-only flag was indistinguishable from
-      // a signed JSA.
-      const jsaRecords = recordsFromRestDocs({
-        directDoc: jsaResult?.directDoc ?? null,
-        operatorDocs: jsaResult?.operatorDocs ?? null,
-        readFailed: !!jsaResult?.readFailed,
-      });
-      const evidence = collectShiftJsaEvidence({
-        records: jsaRecords,
-        shiftId: jsaResult?.scope || null,
-      });
-      console.log(
-        `[jsaFix] shiftId=${scopeUsed} driverHash=${user.driverId} docs=${allDocs.length} ` +
-        `docIds=[${docIds.join(',')}] wells=${totalWells} locations=${totalLocations} ` +
-        `final=${totalWells + totalLocations} signature=${evidence.signature} ` +
-        `outstanding=${evidence.outstandingLocations.length} artifact=${evidence.artifact} ` +
-        `recordsRead=${evidence.recordsRead}`,
-      );
-      if (perDocBreakdown.length > 0) console.log(`[jsaFix] perDoc=${perDocBreakdown.join(' | ')}`);
-      setJsaStatus({
-        completed: evidence.signature !== 'absent',
-        completedAt: evidence.completedAtIso,
-        pdfUrl: evidence.artifactUrl,
-        wellCount: totalWells + totalLocations,
-      });
-
-      // JSA gate from company config. Legacy 'per_load' / 'per_location' read
-      // as their behavior (per_load was per-job, no shift gate; per_location
-      // gated like per_shift). Per the 4/24 mode rename, only 'per_shift'
-      // gates shift end going forward.
-      //
-      // An UNREADABLE config is not 'off'. The code this replaces assigned
-      // jsaGateShiftEnd only inside `if (companyDoc)` and left the default
-      // false, so one failed company read silently removed a required
-      // company's JSA gate. The mode now normalizes to null in that case and
-      // the decision below reports it as unverifiable.
-      const allow = companyDoc?.fields?.jsaAllowAcknowledge?.booleanValue;
-      // Default true when field missing — matches Dashboard JsaCard default.
-      const allowAcknowledge = allow !== false;
-      if (companyDoc) {
-        const mode = companyDoc.fields?.jsaMode?.stringValue || 'off';
-        setJsaMode(mode);
-        setJsaGateShiftEnd(mode === 'per_shift' || mode === 'per_location');
-        setJsaAllowAcknowledge(allowAcknowledge);
-      }
-      const decision = decideShiftJsaClose({
-        mode: normalizeJsaShiftMode(companyDoc?.fields?.jsaMode?.stringValue ?? null),
-        allowAcknowledge,
-        evidence,
-      });
-      setJsaDecision(decision);
-
-      setJsaGateLoaded(true);
+      setJsaMode(companyDoc?.fields?.jsaMode?.stringValue || (companyDoc?'off':'unknown'));
       setLoading(false);
-    }).catch(() => {
-      setJsaGateLoaded(true);
-      setLoading(false);
-    });
+    }).catch(() => {if(active)setLoading(false);});
+    return ()=>{active=false;};
   }, [user]);
+
+  useEffect(()=>{
+    if(jsaScope===undefined||!user||jsaScope.driverId!==user.driverId||jsaScope.companyId!==user.companyId)return;
+    let active=true;
+    setJsaEvidence(null);setJsaCheck('checking');
+    if(!user.companyId){setJsaCheck('unavailable');return;}
+    void loadShiftJsaSummary({driverId:user.driverId,companyId:user.companyId},jsaScope.shiftId)
+      .then(evidence=>{if(active){setJsaEvidence(evidence);setJsaCheck('ready');}})
+      .catch(()=>{if(active){setJsaEvidence(null);setJsaCheck('unavailable');}});
+    return ()=>{active=false;};
+  },[user,jsaScope,jsaRetry]);
 
   const handleClose = () => {
     // Close = dismiss summary, stay logged in. No cascade logout.
@@ -513,120 +331,9 @@ export default function DaySummaryScreen() {
     router.replace('/home');
   };
 
-  const handleLogout = async () => {
-    // Day Summary is only shown after shift finalization (off-shift).
-    // Never redirect to Post-Trip from here — that was the stale-routing
-    // failure mode when a prior shiftId lingered without an active shift.
-    // Post-Trip was already required at Arrival; receipts remain durable.
-
-    // JSA gate: only block logout if rule.gateShiftEnd is true (per_shift) and
-    // jsaCompleted hasn't flipped to true today. The proper modal replaces
-    // the Alert-based shortcut so drivers get the same Read/Ack experience
-    // they see in WB T at job-close.
-    // Backstop only: the authoritative check is at the close, in
-    // finalizeArrival. This screen renders after finalization, so this gate can
-    // never prevent a close — it exists for flows that reached Shift Complete
-    // some other way. It uses the same rule, so an acknowledgment-only flag at a
-    // company that forbids acknowledgment is refused here too, and an
-    // unreadable config no longer drops the gate.
-    // UNREACHABLE TODAY — recorded here rather than silently fixed. Log Out
-    // moved to the WB S home screen (see the bottom-button comment below), so
-    // handleLogout has no caller but itself, JsaCloseModal is imported and
-    // rendered NOWHERE in the repository, showJsaModal is written and never
-    // read, and handleJsaAcknowledge/Read/Cancel are never referenced. On a
-    // required company this path would set a flag nothing renders and return —
-    // Log Out doing nothing, with no message. The rule below is corrected so
-    // the re-attachment inherits a working gate, but wiring the modal belongs
-    // with that re-attachment, not here.
-    if (jsaDecision && jsaBlocksLogout(jsaDecision)) {
-      setShowJsaModal(true);
-      return;
-    }
-
-    Alert.alert(t('daySummary.logOut'), t('daySummary.logOutConfirm'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('daySummary.logOut'),
-        style: 'destructive',
-        onPress: async () => {
-          await logoutWithCascade();
-        },
-      },
-    ]);
-  };
-
-  // ── JSA gate modal handlers ───────────────────────────────────────────
-
-  /** Acknowledge today's JSA in-place — write jsa_day_status flag, then resume logout. */
-  const handleJsaAcknowledge = async () => {
-    if (jsaAcknowledging || !user) return;
-    setJsaAcknowledging(true);
-    try {
-      const driverName = user.legalName || user.displayName || '';
-      const ok = await acknowledgeShiftJsa(
-        user.driverId,
-        driverName,
-        user.companyId || '',
-        'acknowledged',
-      );
-      if (!ok) {
-        Alert.alert('Network Issue', 'Could not record acknowledgment. Try again or tap Read JSA.');
-        return;
-      }
-      // Reflect locally so the gate doesn't re-fire on the next handleLogout call.
-      setJsaStatus(prev => prev ? { ...prev, completed: true, completedAt: new Date().toISOString() } : prev);
-      setShowJsaModal(false);
-      // Loop back into the logout-confirm Alert flow.
-      setTimeout(() => handleLogout(), 0);
-    } finally {
-      setJsaAcknowledging(false);
-    }
-  };
-
-  /** Open WB JSA via deep link. Halt logout — driver returns and re-taps Log Out. */
-  const handleJsaRead = async () => {
-    setShowJsaModal(false);
-    try {
-      const Linking = await import('expo-linking');
-      const params = new URLSearchParams({ returnTo: 'wbs' });
-      if (user?.driverId) params.set('hash', user.driverId);
-      const name = user?.legalName || user?.displayName;
-      if (name) params.set('name', name);
-      const shiftId = await getCurrentShiftId();
-      if (shiftId) params.set('shiftId', shiftId);
-      await Linking.openURL(`jsaapp://start?${params.toString()}`);
-    } catch (err) {
-      console.warn('[day-summary] Read JSA deep link failed:', err);
-      Alert.alert('JSA App Not Available', 'Could not open the WB JSA app. Tap Acknowledged or install WB JSA.');
-    }
-  };
-
-  const handleJsaCancel = () => {
-    if (jsaAcknowledging) return;
-    setShowJsaModal(false);
-  };
-
-  // Requirement-aware JSA presentation — see jsaCardPresentation.
-  /**
-   * The honest headline. 'JSA completed' is reserved for evidence that actually
-   * shows completion: an acknowledgment reads as an acknowledgment, and a bare
-   * flag whose origin this build cannot identify says so. Falls back to the
-   * requirement-aware presentation until the decision lands.
-   */
-  const jsaHeadline = (jsaDecision && jsaCloseHeadline(jsaDecision)) || null;
-  const jsaView = jsaCardPresentation({
-    mode: jsaMode,
-    completed: !!jsaStatus?.completed,
-    hasRecord: !!jsaStatus,
-    startJobPolicy: true,
-  });
-  // Amber is reserved for a genuinely unmet obligation. An optional JSA that
-  // was completed anyway reads as information, never as something outstanding.
-  const jsaTone = !jsaView.show
-    ? colors.text.muted
-    : jsaView.tone === 'pending' ? '#f59e0b'
-    : jsaView.tone === 'informational' ? colors.text.secondary
-    : '#22c55e';
+  const jsaRecorded=!!jsaEvidence?.fullReadCount;
+  const jsaTone=jsaEvidence?.status==='recorded'?'#22c55e':colors.text.secondary;
+  const showJsa=jsaMode!=='off'||jsaRecorded||!!jsaEvidence?.issues||jsaCheck!=='ready';
   const timeRange = summary
     ? (summary.shiftStart || summary.shiftEnd
         ? `${formatTime12h(summary.shiftStart)} – ${formatTime12h(summary.shiftEnd)}`
@@ -719,67 +426,31 @@ export default function DaySummaryScreen() {
             )}
 
             {/* ── JSA card ──────────────────────────────────────── */}
-            {jsaStatus && jsaView.show && (
+            {showJsa && (
               <View style={s.timeSection}>
                 <View style={s.cardHeader}>
-                  <Text style={s.sectionTitle}>
-                    <MaterialCommunityIcons
-                      name={jsaView.show && jsaView.tone === 'pending' ? 'shield-alert' : 'shield-check'}
-                      size={14}
-                      color={jsaTone}
-                    />  JSA
-                  </Text>
-                  <Text style={[s.cardTotal, { color: jsaTone }]}>
-                    {!jsaStatus.completed ? 'Unverified' : 'Completed'}
-                  </Text>
+                  <Text style={s.sectionTitle}><MaterialCommunityIcons name="shield-check" size={14} color={jsaTone}/>  JSA</Text>
+                  <Text style={[s.cardTotal,{color:jsaTone}]}>{jsaCheck==='checking'?'Checking…':jsaCheck==='unavailable'?'Unavailable':jsaEvidence?.status==='recorded'?'Recorded':jsaEvidence?.status==='partial'?'Partly verified':'No evidence'}</Text>
                 </View>
-                {/* Shift-end checklist row — explicit visible status the
-                    driver can read at a glance. Auto-checked from
-                    jsaStatus.completed (which already reflects "all
-                    operator-scoped docs jsaCompleted=true"). Status
-                    visibility only — does not gate shift end here
-                    (the JSA shift-end gate modal handles blocking when
-                    rule.gateShiftEnd is true). */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                  <MaterialCommunityIcons
-                    name={jsaStatus.completed ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                    size={22}
-                    color={jsaTone}
-                  />
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: jsaTone, flex: 1 }}>
-                    {jsaView.show ? (jsaStatus.completed ? (jsaHeadline ?? jsaView.headline) : jsaView.headline) : ''}
-                  </Text>
-                </View>
-                {!jsaStatus.completed && (
-                  <Text style={{fontSize:13,color:colors.text.secondary,marginBottom:8}}>
-                    Required reads and acknowledgements are handled at Start Job. Ending a shift does not require another JSA.
-                  </Text>
-                )}
-                {jsaStatus.completed && jsaStatus.completedAt && (
-                  <View style={s.milesRow}>
-                    <View style={s.milesStat}>
-                      <Text style={s.milesValue}>{formatTime12h(jsaStatus.completedAt)}</Text>
-                      <Text style={s.milesLabel}>completed</Text>
-                    </View>
-                    <View style={s.milesStat}>
-                      <Text style={s.milesValue}>{jsaStatus.wellCount}</Text>
-                      <Text style={s.milesLabel}>locations</Text>
-                    </View>
+                {jsaCheck==='checking'?<ActivityIndicator color={colors.brand.accent}/>:jsaCheck==='unavailable'?(
+                  <View><Text style={{color:colors.text.secondary}}>Could not verify this shift’s JSA records. This does not block shift end.</Text>
+                    <Pressable accessibilityRole="button" onPress={()=>setJsaRetry(n=>n+1)} style={{paddingVertical:12}}><Text style={{color:colors.brand.accent,fontWeight:'600'}}>Retry JSA check</Text></Pressable>
                   </View>
-                )}
-                {jsaStatus.completed && jsaStatus.pdfUrl ? (
-                  <Pressable
-                    onPress={() => {
-                      import('expo-linking').then(({ default: Linking }) => {
-                        Linking.openURL(jsaStatus.pdfUrl!).catch(() => {});
-                      });
-                    }}
-                    style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}
-                  >
-                    <MaterialCommunityIcons name="file-pdf-box" size={18} color="#ef4444" />
-                    <Text style={{ color: colors.brand.accent, fontSize: 13, fontWeight: '600' }}>View PDF</Text>
-                  </Pressable>
-                ) : null}
+                ):<>
+                  <Text style={{color:jsaTone,fontSize:14,fontWeight:'600',marginBottom:12}}>
+                    {jsaRecorded?'Signed JSA read recorded for this shift.':jsaEvidence?.status==='no_shift'?'No shift could be selected.':'No verified signed read found for this shift.'}
+                  </Text>
+                  {!!jsaEvidence&&<View style={s.milesRow}>
+                    <View style={s.milesStat}><Text style={s.milesValue}>{jsaEvidence.fullReadCount}</Text><Text style={s.milesLabel}>full reads</Text></View>
+                    <View style={s.milesStat}><Text style={s.milesValue}>{jsaEvidence.acknowledgementCount}</Text><Text style={s.milesLabel}>acknowledgements</Text></View>
+                    <View style={s.milesStat}><Text style={s.milesValue}>{jsaEvidence.jobCount}</Text><Text style={s.milesLabel}>jobs with evidence</Text></View>
+                  </View>}
+                  {!!jsaEvidence?.coveredJobCount&&<Text style={{color:colors.text.secondary,marginTop:10}}>{jsaEvidence.coveredJobCount} jobs covered by the shift read</Text>}
+                  {!!jsaEvidence?.firstReadAt&&<Text style={{color:colors.text.secondary,marginTop:10}}>First signed read: {formatTime12h(jsaEvidence.firstReadAt)}</Text>}
+                  {!!jsaEvidence?.jsaNumbers.length&&<Text numberOfLines={3} style={{color:colors.text.secondary,marginTop:10}}>JSA: {jsaEvidence.jsaNumbers.slice(0,3).join(' · ')}{jsaEvidence.jsaNumbers.length>3?` · +${jsaEvidence.jsaNumbers.length-3} more`:''}</Text>}                  {!!jsaEvidence?.shiftId&&<Text style={{color:colors.text.secondary,marginTop:10}}>Shift: {jsaEvidence.shiftId}</Text>}
+                  {jsaEvidence?.lifecycle==='finalized'&&<Text style={{color:colors.text.secondary,marginTop:10}}>Shift JSA finalized</Text>}
+                  {jsaEvidence?.status==='partial'&&<Text style={{color:colors.text.secondary,marginTop:10}}>Some records could not be verified. Counts include verified evidence only.</Text>}
+                </>}
               </View>
             )}
 

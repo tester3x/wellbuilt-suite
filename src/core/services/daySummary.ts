@@ -19,6 +19,7 @@ interface TimelineEvent {
   lng: number | null;
   source?: string;
   locationName?: string;
+  shiftId?: string;
 }
 
 interface DaySummaryInvoice {
@@ -437,6 +438,7 @@ export async function fetchShiftDocForDate(
         lat: parseFirestoreValue(f.lat) ?? null,
         lng: parseFirestoreValue(f.lng) ?? null,
         source: parseFirestoreValue(f.source),
+        shiftId: parseFirestoreValue(f.shiftId),
       };
     });
 
