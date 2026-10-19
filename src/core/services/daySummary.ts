@@ -700,6 +700,8 @@ export function jsaCardPresentation(input: {
   completed: boolean;
   /** Whether any jsa_day_status record was found at all. */
   hasRecord: boolean;
+  /** Start Job owns JSA fulfillment; a legacy summary miss is not pending work. */
+  startJobPolicy?: boolean;
 }): JsaCardView {
   const required = jsaIsRequired(input.mode);
 
@@ -720,6 +722,13 @@ export function jsaCardPresentation(input: {
 
   if (input.completed) {
     return { show: true, required: true, tone: 'complete', headline: 'JSA completed', showCompleteAction: false };
+  }
+  if (input.startJobPolicy) {
+    return {
+      show: true, required: true, tone: 'informational',
+      headline: 'Shift JSA completion could not be verified in this summary',
+      showCompleteAction: false,
+    };
   }
   return {
     show: true,

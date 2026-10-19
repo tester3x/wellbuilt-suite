@@ -438,3 +438,15 @@ test('a transiently missing identity is unavailable, not zero', async () => {
   assert.equal(r.ok, false, 'no identity yet — must not claim the shift was empty');
   assert.equal(!r.ok && r.reason, 'no_driver_identity');
 });
+
+
+test('Start Job policy never offers a post-shift completion shortcut for missing legacy evidence', () => {
+  for (const mode of ['per_shift', 'per_job', 'per_location', 'per_load']) {
+    const view = jsaCardPresentation({ mode, completed: false, hasRecord: true, startJobPolicy: true });
+    assert.ok(view.show && view.tone === 'informational');
+    assert.ok(view.show && !view.showCompleteAction);
+    assert.ok(view.show && /could not be verified/.test(view.headline));
+    const done = jsaCardPresentation({mode,completed:true,hasRecord:true,startJobPolicy:true});
+    assert.ok(done.show && done.tone === 'complete' && !done.showCompleteAction);
+  }
+});

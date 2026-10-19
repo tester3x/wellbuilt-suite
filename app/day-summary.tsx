@@ -618,6 +618,7 @@ export default function DaySummaryScreen() {
     mode: jsaMode,
     completed: !!jsaStatus?.completed,
     hasRecord: !!jsaStatus,
+    startJobPolicy: true,
   });
   // Amber is reserved for a genuinely unmet obligation. An optional JSA that
   // was completed anyway reads as information, never as something outstanding.
@@ -729,7 +730,7 @@ export default function DaySummaryScreen() {
                     />  JSA
                   </Text>
                   <Text style={[s.cardTotal, { color: jsaTone }]}>
-                    {jsaView.show && jsaView.tone === 'pending' ? 'Pending' : 'Completed'}
+                    {!jsaStatus.completed ? 'Unverified' : 'Completed'}
                   </Text>
                 </View>
                 {/* Shift-end checklist row — explicit visible status the
@@ -745,10 +746,15 @@ export default function DaySummaryScreen() {
                     size={22}
                     color={jsaTone}
                   />
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: jsaTone }}>
-                    {jsaView.show ? (jsaHeadline ?? jsaView.headline) : ''}
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: jsaTone, flex: 1 }}>
+                    {jsaView.show ? (jsaStatus.completed ? (jsaHeadline ?? jsaView.headline) : jsaView.headline) : ''}
                   </Text>
                 </View>
+                {!jsaStatus.completed && (
+                  <Text style={{fontSize:13,color:colors.text.secondary,marginBottom:8}}>
+                    Required reads and acknowledgements are handled at Start Job. Ending a shift does not require another JSA.
+                  </Text>
+                )}
                 {jsaStatus.completed && jsaStatus.completedAt && (
                   <View style={s.milesRow}>
                     <View style={s.milesStat}>
@@ -772,22 +778,6 @@ export default function DaySummaryScreen() {
                   >
                     <MaterialCommunityIcons name="file-pdf-box" size={18} color="#ef4444" />
                     <Text style={{ color: colors.brand.accent, fontSize: 13, fontWeight: '600' }}>View PDF</Text>
-                  </Pressable>
-                ) : (jsaView.show && jsaView.showCompleteAction) ? (
-                  // Only offered when the company actually requires a JSA.
-                  <Pressable
-                    onPress={() => {
-                      import('expo-linking').then(({ default: Linking }) => {
-                        Linking.openURL('jsaapp://start').catch(() => {});
-                      });
-                    }}
-                    style={{
-                      marginTop: 8, backgroundColor: '#f59e0b', borderRadius: 8,
-                      padding: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    }}
-                  >
-                    <MaterialCommunityIcons name="shield-edit-outline" size={18} color="#000" />
-                    <Text style={{ color: '#000', fontSize: 13, fontWeight: '700' }}>Complete JSA Now</Text>
                   </Pressable>
                 ) : null}
               </View>
