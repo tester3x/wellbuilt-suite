@@ -125,17 +125,17 @@ test('an enabled clone routes one field-test call and rejects signer or creator 
     etcPackageName: FIELD_PACKAGE,
     etcCertSha256: CERT,
   });
-  assert.equal(planEtcProviderCall({ ...target, etcCertSha256: null }).reason, 'signing_unverified');
-  assert.equal(planEtcProviderCall({ ...target, etcPackageName: null }).reason, 'signing_unverified');
-  assert.equal(planEtcProviderCall({ ...target, authority: '' }).reason, 'signing_unverified');
-  assert.equal(planEtcProviderCall(target, { expectedPackage: 'com.wellbuilt.electronictimecard' }).reason, 'package_mismatch');
-  assert.equal(planEtcProviderCall(target, { expectedCertSha256: 'ab'.repeat(32) }).reason, 'package_mismatch');
-  assert.equal(planEtcProviderCall(target, { signatureMatches: false }).reason, 'package_mismatch');
-  assert.equal(planEtcProviderCall(target, {
+  assert.equal(rejected(planEtcProviderCall({ ...target, etcCertSha256: null })).reason, 'signing_unverified');
+  assert.equal(rejected(planEtcProviderCall({ ...target, etcPackageName: null })).reason, 'signing_unverified');
+  assert.equal(rejected(planEtcProviderCall({ ...target, authority: '' })).reason, 'signing_unverified');
+  assert.equal(rejected(planEtcProviderCall(target, { expectedPackage: 'com.wellbuilt.electronictimecard' })).reason, 'package_mismatch');
+  assert.equal(rejected(planEtcProviderCall(target, { expectedCertSha256: 'ab'.repeat(32) })).reason, 'package_mismatch');
+  assert.equal(rejected(planEtcProviderCall(target, { signatureMatches: false })).reason, 'package_mismatch');
+  assert.equal(rejected(planEtcProviderCall(target, {
     method: 'prepareStart',
     creatorPackage: 'com.wellbuilt.electronictimecard',
     signatureMatches: true,
-  }).reason, 'pending_intent_creator_mismatch');
+  })).reason, 'pending_intent_creator_mismatch');
   const identity = identityForTarget(target);
   assert.equal(identity.verified, true);
   assert.equal(identity.etcPackageName, FIELD_PACKAGE);
@@ -271,3 +271,9 @@ test('AuthContext passes the shipped identity and still emits only from enforced
   assert.match(production, /expectedPackage: identity\.etcPackageName/);
   assert.equal(production.includes('node:module'), false);
 });
+
+function rejected(plan:Plan):Extract<Plan,{ok:false}>{
+ assert.equal(plan.ok,false);
+ if(plan.ok)throw Error('Expected ETC provider refusal');
+ return plan;
+}

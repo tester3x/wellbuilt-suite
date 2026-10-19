@@ -149,7 +149,7 @@ resize();window.addEventListener('resize',resize);
         bounces={false}
         javaScriptEnabled
         originWhitelist={['*']}
-        forceDarkAllowed={false}
+        forceDarkOn={false}
         style={{ flex: 1, backgroundColor: 'transparent' }}
       />
     </View>

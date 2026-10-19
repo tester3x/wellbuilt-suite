@@ -19,6 +19,7 @@ import {
   Alert,
   AppState,
 } from 'react-native';
+import type {QueryDocumentSnapshot,DocumentData} from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 // WB S: No Firestore client — uses props or fallback
@@ -275,7 +276,7 @@ export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getI
         if (effectiveDb) {
           const snap = await getDocs(collection(effectiveDb, 'app_registry'));
           const entries: AppEntry[] = [];
-          snap.forEach(d => {
+          snap.forEach((d:QueryDocumentSnapshot<DocumentData>) => {
             const data = d.data();
             if (data.enabled !== false) {
               entries.push({ id: d.id, ...data } as AppEntry);

@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   createShiftAuthorityClient,
-  RESOLVE_ACTIVE_DRIVER_SHIFT,
-  CLAIM_DRIVER_SHIFT,
   validateResolveResponse,
   validateClaimResponse,
   validateDepartReturnResponse,

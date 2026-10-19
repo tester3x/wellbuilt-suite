@@ -295,16 +295,16 @@ export default function SettingsScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, paddingHorizontal: 4 }}>
                   <Text style={{ color: colors.text.muted, fontSize: 12 }}>{legalName || user?.displayName || ''}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <MaterialCommunityIcons name="pencil-outline" size={12} color={colors.text.accent} />
-                    <Text style={{ color: colors.text.accent, fontSize: 12 }}>Re-sign</Text>
+                    <MaterialCommunityIcons name="pencil-outline" size={12} color={colors.brand.accent} />
+                    <Text style={{ color: colors.brand.accent, fontSize: 12 }}>Re-sign</Text>
                   </View>
                 </View>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={() => setShowSignatureModal(true)} activeOpacity={0.7}>
                 <View style={[styles.signaturePreview, { justifyContent: 'center', alignItems: 'center', height: 60 }]}>
-                  <MaterialCommunityIcons name="pencil-outline" size={18} color={colors.text.accent} />
-                  <Text style={{ color: colors.text.accent, fontSize: 13, marginLeft: 6 }}>Tap to sign</Text>
+                  <MaterialCommunityIcons name="pencil-outline" size={18} color={colors.brand.accent} />
+                  <Text style={{ color: colors.brand.accent, fontSize: 13, marginLeft: 6 }}>Tap to sign</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -418,7 +418,7 @@ export default function SettingsScreen() {
             } catch {}
           }
         }}
-        accent={colors.text.accent}
+        accent={colors.brand.accent}
       />
     </View>
   );
