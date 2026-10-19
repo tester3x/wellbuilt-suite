@@ -247,7 +247,7 @@ export type JsaBlockReason =
 export type JsaFinalizeCaveat = 'signature_not_verifiable' | 'acknowledged_not_signed' | 'artifact_absent';
 
 export type JsaCloseDecision =
-  | { kind: 'not_required'; reason: 'mode_off' | 'job_scoped' }
+  | { kind: 'not_required'; reason: 'mode_off' | 'job_scoped' | 'start_of_work' }
   | {
       kind: 'finalize';
       via: 'shift_close';

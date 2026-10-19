@@ -121,6 +121,8 @@ export async function suiteShiftJsaGateDeps(): Promise<ShiftJsaGateDeps> {
  * The gate passed to finalizeArrival. One call, one decision, no writes.
  */
 export async function suiteShiftJsaCloseGate(): Promise<JsaCloseDecision> {
-  const deps = await suiteShiftJsaGateDeps();
-  return resolveShiftJsaClose(deps);
+  // Reading/signing and job acknowledgement are enforced at Start Job.
+  // Server shift-authority lifecycle finalizes the JSA context automatically.
+  // Do not demand another read, claim a signature, or block HOS clock-out.
+  return {kind:'not_required',reason:'start_of_work'};
 }

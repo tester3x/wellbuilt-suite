@@ -37,12 +37,12 @@ function jsaExplainer(mode: JsaModeCanonical): { title: string; body: string } |
     case 'per_shift':
       return {
         title: 'JSA — Once per shift',
-        body: 'You\'ll be prompted to acknowledge or read today\'s JSA at your first job close. Your shift can\'t end until it\'s done. Tap the JSA tile any time to do it now.',
+        body: 'Read and sign the JSA before your first job. Later jobs link to that signed JSA for this shift. Shift end finalizes it automatically.',
       };
     case 'per_job':
       return {
         title: 'JSA — Once per job',
-        body: 'You\'ll be prompted at every job close. Your first JSA today becomes a template — every job after that can be acknowledged with one tap.',
+        body: 'Read and sign before the first job of your shift. Each later job has an acknowledgement, a View JSA link, and its own JSA number.',
       };
     default:
       return null;
