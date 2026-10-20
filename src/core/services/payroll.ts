@@ -475,6 +475,11 @@ function getEffectiveRate(
  * Build a map of wellName (lowercase) → county from Firestore wells collection.
  * Matches Dashboard's buildWellCountyMap() logic.
  */
+export function payrollCountyOperators(invoices: TimesheetInvoice[], config: PayConfig | null): string[] {
+  if (!config?.frostZones || Object.keys(config.frostZones).length === 0) return [];
+  return [...new Set(invoices.filter(i => !i.county?.trim()).map(i => i.operator).filter(Boolean))];
+}
+
 export async function buildWellCountyMap(operators: string[]): Promise<Map<string, string>> {
   const countyMap = new Map<string, string>();
   if (!operators.length) return countyMap;

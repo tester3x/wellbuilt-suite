@@ -1,0 +1,14 @@
+import fs from 'node:fs';import ts from 'typescript';import vm from 'node:vm';import assert from 'node:assert/strict';
+const m={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/core/services/payrollPresentationCache.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{module:m,exports:m.exports});
+const {payrollViewKey,serializePayrollView,parsePayrollView}=m.exports;
+const owner={uid:'sdk-a',driverId:'driver-a',companyId:'company-a'},period={startISO:'2026-10-19',endISO:'2026-10-25'};
+const summary={rows:[],totalLoads:0,totalBBLs:0,totalTons:0,unresolvedCount:0,totalHours:0,totalGross:0,totalPay:0,periodLabel:'This week',periodStart:'10/19',periodEnd:'10/25'};
+const raw=serializePayrollView(owner,period,{summary,noRateSheet:false,savedAtMs:100});
+assert.equal(parsePayrollView(raw,owner,period,101).summary.totalPay,0);
+for(const field of ['uid','driverId','companyId'])assert.equal(parsePayrollView(raw,{...owner,[field]:'another'},period,101),null);
+assert.equal(parsePayrollView(raw,owner,{...period,startISO:'2026-10-12'},101),null);
+assert.equal(parsePayrollView(raw,owner,period,99),null);
+assert.equal(parsePayrollView(raw,owner,period,31*86400000),null);
+assert.equal(parsePayrollView('{broken',owner,period,101),null);
+assert.notEqual(payrollViewKey(owner,period),payrollViewKey({...owner,uid:'other'},period));
+console.log('Payroll presentation cache rejects another SDK/account/period, stale/future data and corrupt JSON.');

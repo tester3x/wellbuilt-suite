@@ -17,7 +17,10 @@ export async function fetchOwnDriverPayroll(start: Date, end: Date): Promise<Pay
     'getDriverPayroll',
     { timeout: 35_000 },
   );
-  const result = await callable({ startISO: start.toISOString(), endISO: end.toISOString() });
+  const started=Date.now();
+  const result = await callable({ startISO: start.toISOString(), endISO: end.toISOString() }).finally(()=>{
+    console.info('WBPERF_SPAN '+JSON.stringify({app:'suite',category:'firebase',name:'payroll.fetch',durationMs:Math.max(0,Date.now()-started)}));
+  });
   if (!result.data || !Array.isArray(result.data.invoices)) throw new Error('payroll_response_invalid');
   return result.data;
 }

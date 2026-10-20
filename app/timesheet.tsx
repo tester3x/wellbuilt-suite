@@ -3,6 +3,7 @@
 // Tapping an invoice row opens the full WB T-style paper invoice detail.
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -24,6 +25,10 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/core/context/AuthContext';
 import { onAuthReconciliationChange } from '@/core/services/authReconciliation';
 import { fetchOwnDriverPayroll } from '@/core/services/driverPayrollClient';
+import {getFirebaseApp} from '@/core/services/firebaseApp';
+import {getOwnedUserId} from '@/core/services/firebaseAuthBoundary';
+import {classifyPlatformFailure} from '@/core/services/platformRuntime.generated';
+import {payrollViewKey,parsePayrollView,serializePayrollView} from '@/core/services/payrollPresentationCache';
 import { colors, spacing, radius } from '@/core/theme';
 import {
   type TimesheetSummary,
@@ -36,6 +41,7 @@ import {
   formatTimesheetMoney,
   payrollRowGroup,
   buildWellCountyMap,
+  payrollCountyOperators,
   fetchInvoiceDetail,
   fetchInvoiceTicketDetails,
 } from '@/core/services/payroll';
@@ -468,12 +474,19 @@ export default function TimesheetScreen() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>('this-week');
-  const [summary, setSummary] = useState<TimesheetSummary | null>(null);
+  const [summaryState, setSummary] = useState<TimesheetSummary | null>(null);
+  const [presentationScope,setPresentationScope] = useState<string|null>(null);
+  const renderUid=getOwnedUserId(getFirebaseApp());
+  const renderPeriod=getPeriodDates(selectedPeriod);
+  const renderScope=renderUid&&user?.companyId?payrollViewKey({uid:renderUid,driverId:user.driverId,companyId:user.companyId},
+    {startISO:renderPeriod.start.toISOString(),endISO:renderPeriod.end.toISOString()}):null;
+  const summary=presentationScope===renderScope?summaryState:null;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [noRateSheet, setNoRateSheet] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [loadErrorCode, setLoadErrorCode] = useState<string | null>(null);
+  const [savedView, setSavedView] = useState(false);
   const loadRequestId = useRef(0);
 
   // Invoice detail modal state
@@ -490,27 +503,54 @@ export default function TimesheetScreen() {
     if (showLoader) setLoading(true);
     setLoadError(false);
     setLoadErrorCode(null);
+    setSavedView(false);
+    let retained = false;
+    let cacheKey: string | null = null;
+    const uid = getOwnedUserId(getFirebaseApp());
+    const current = () => requestId === loadRequestId.current && getOwnedUserId(getFirebaseApp()) === uid;
 
     try {
       const { start, end, label } = getPeriodDates(selectedPeriod);
       const companyId = user.companyId;
       if (!companyId) throw new Error('payroll_company_unavailable');
+      const owner = uid ? {uid,driverId:user.driverId,companyId} : null;
+      const period = {startISO:start.toISOString(),endISO:end.toISOString()};
+      if (owner) {
+        cacheKey = payrollViewKey(owner,period);
+        const cached = parsePayrollView(await AsyncStorage.getItem(cacheKey).catch(()=>null),owner,period,Date.now());
+        if (!current()) return;
+        setPresentationScope(cacheKey);
+        if (cached) {
+          retained = true;setSummary(cached.summary);setNoRateSheet(cached.noRateSheet);
+          setSavedView(true);setLoading(false);
+        } else setSummary(null);
+      }
 
       const { invoices, payConfig } = await fetchOwnDriverPayroll(start, end);
 
-      if (requestId !== loadRequestId.current) return;
-      setNoRateSheet(!payConfig?.rateSheets || Object.keys(payConfig.rateSheets).length === 0);
+      if (!current()) return;
 
       // Build well→county map from NDIC data for frost rate calculation
-      const operators = [...new Set(invoices.map(i => i.operator).filter(Boolean))];
+      const operators = payrollCountyOperators(invoices,payConfig);
       const countyMap = operators.length > 0 ? await buildWellCountyMap(operators) : new Map();
 
       const result = buildTimesheetSummary(invoices, payConfig, label, start, end, countyMap);
-      if (requestId === loadRequestId.current) setSummary(result);
+      if (current()) {
+        setNoRateSheet(!payConfig?.rateSheets || Object.keys(payConfig.rateSheets).length === 0);
+        setPresentationScope(cacheKey);
+        setSummary(result);setSavedView(false);
+        if (owner && cacheKey) {
+          const raw=serializePayrollView(owner,period,{summary:result,noRateSheet:!payConfig?.rateSheets||Object.keys(payConfig.rateSheets).length===0,savedAtMs:Date.now()});
+          if(raw)void AsyncStorage.setItem(cacheKey,raw).catch(()=>{});
+        }
+      }
     } catch (err) {
-      if (requestId !== loadRequestId.current) return;
+      if (!current()) return;
       console.warn('[Timesheet] Failed to load:', err);
-      setSummary(null);
+      if (classifyPlatformFailure(err)==='access' || !retained) {
+        setSummary(null);setSavedView(false);
+        if(cacheKey && classifyPlatformFailure(err)==='access')void AsyncStorage.removeItem(cacheKey).catch(()=>{});
+      }
       setLoadError(true);
       // Keep the server/auth failure identifiable without exposing tokens,
       // document paths, or a raw network response in the driver UI.
@@ -522,7 +562,7 @@ export default function TimesheetScreen() {
         : /^functions\/(permission-denied|unauthenticated|failed-precondition|unavailable|deadline-exceeded|internal|not-found|resource-exhausted)$/.test(functionCode)
           ? functionCode : 'payroll_network_unavailable');
     } finally {
-      if (requestId === loadRequestId.current) {
+      if (current()) {
         setLoading(false);
         setRefreshing(false);
       }
@@ -531,6 +571,7 @@ export default function TimesheetScreen() {
 
   useEffect(() => {
     loadData();
+    return () => {loadRequestId.current++;};
   }, [loadData]);
 
   // Local Suite entry may complete before the persisted Firebase session is
@@ -650,6 +691,7 @@ export default function TimesheetScreen() {
           </View>
         ) : summary ? (
           <>
+            {savedView ? <Text style={s.emptySubtext}>{loadError?'Saved payroll · refresh unavailable':'Saved payroll · refreshing…'}</Text> : null}
             {/* Net Pay Banner */}
             <View style={s.payBanner}>
               <Text style={s.payBannerLabel}>{summary.periodLabel} Pay</Text>
