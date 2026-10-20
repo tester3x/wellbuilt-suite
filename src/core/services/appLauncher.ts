@@ -1,3 +1,4 @@
+import {PLATFORM_APP_OPEN_HOST,buildPlatformAppEntryUrl} from './platformRuntime.generated';
 import { isEquipmentAppTarget, equipmentAppEntryUrl } from './equipmentAppAccessCore';
 import { Linking, Alert, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
@@ -80,6 +81,7 @@ export interface WBAppLaunchOptions {
   startHost?: string;
   /** Noncredential owner hint used only to select a matching established app session. */
   equipmentEntryOwner?: {driverId: string; companyId: string};
+  entryOwner?: {driverId: string;companyId:string};
   /** SSO params — auto-injected by useAppLauncher hook when driver is logged in */
   sso?: {
     hash: string;
@@ -115,13 +117,13 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
   const t = i18n.t.bind(i18n);
   if (isEquipmentAppTarget(scheme, androidPackage)) {
     try {
-      await Linking.openURL(equipmentAppEntryUrl(options.equipmentEntryOwner));
+      await Linking.openURL(equipmentAppEntryUrl(options.entryOwner||options.equipmentEntryOwner));
       await trackSSOApp('wbequipment');
       return;
     } catch {
       if (Platform.OS === 'android') {
         try {
-          const entry = equipmentAppEntryUrl(options.equipmentEntryOwner).replace('wbequipment://','intent://');
+          const entry = equipmentAppEntryUrl(options.entryOwner||options.equipmentEntryOwner).replace('wbequipment://','intent://');
           await Linking.openURL(entry+'#Intent;scheme=wbequipment;package=com.wellbuilt.equipment;end');
           await trackSSOApp('wbequipment');
           return;
@@ -129,6 +131,14 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
       }
       Alert.alert(name, t('appDetail.launch.notInstalled', { name }), [{ text: t('common.ok') }]);
       return;
+    }
+  }
+
+  if(startHost===PLATFORM_APP_OPEN_HOST && !sso){
+    const entry=buildPlatformAppEntryUrl({scheme,androidPackage},options.entryOwner);
+    if(entry){
+      try{await Linking.openURL(entry);if(scheme)await trackSSOApp(scheme);return;}
+      catch{Alert.alert(name,t('appDetail.launch.notInstalled',{name}),[{text:t('common.ok')}]);return;}
     }
   }
 

@@ -65,7 +65,7 @@ describe('WB-T launches credential-free', () => {
     // (asserted positionally above). The bounded gap tolerates the overlay
     // block; a change that reordered the launch out of the guard would
     // still fail here.
-    assert.match(hook, /isCredentialFreeLaunchTarget\(options\.scheme\)\)\s*\{[\s\S]{0,900}return await launchWBApp\(\{ \.\.\.options, sso: undefined, startHost: WBT_SSO_START_HOST \}\)/);
+    assert.match(hook, /isCredentialFreeLaunchTarget\(options\.scheme\)\)\s*\{[\s\S]{0,900}return await launchWBApp\(\{ \.\.\.options, sso: undefined, startHost: PLATFORM_APP_OPEN_HOST,[\s\S]{0,200}entryOwner:[\s\S]{0,200}\}\)/);
   });
 
   it('launchWBApp builds a bare start route when startHost is set', () => {
@@ -116,10 +116,11 @@ describe('the remaining hash-debt apps are unchanged', () => {
 });
 
 describe('no shared-helper refactor removed their parameters', () => {
-  it('exactly one launch path builds the credential URL', () => {
+  it('only the legacy branch builds credentials; app-open carries account-selection hints', () => {
     const launcher = strip(read('services/appLauncher.ts'));
-    assert.equal((launcher.match(/URLSearchParams/g) || []).length, 1,
-      'more than one param builder means a refactor split the behavior');
+    assert.equal((launcher.match(/URLSearchParams/g) || []).length, 1);
+    assert.match(launcher,/buildPlatformAppEntryUrl\(\{scheme,androidPackage\},options.entryOwner\)/);
+    assert.match(launcher,/if \(sso\) \{[\s\S]*?hash: sso.hash, name: sso.name/);
   });
 
   it('the policy module itself carries no credential logic', () => {

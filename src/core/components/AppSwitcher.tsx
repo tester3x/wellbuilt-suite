@@ -1,3 +1,5 @@
+import {buildPlatformAppEntryUrl} from '../services/platformRuntime.generated';
+import {readLocalIdentity} from '../services/authReconciliation';
 import { isEquipmentAppTarget, EQUIPMENT_APP_START } from '../services/equipmentAppAccessCore';
 // AppSwitcher — floating draggable button for switching between WB ecosystem apps.
 // Tap = open app grid. Double-tap = jump to WB Suite hub. Long-hold + drag = reposition.
@@ -322,6 +324,12 @@ export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getI
 
   const launchApp = useCallback(async (app: AppEntry) => {
     setIsOpen(false);
+    const bare=buildPlatformAppEntryUrl({scheme:app.deepLinkScheme,androidPackage:app.androidPackage});
+    if(bare?.endsWith('://')){try{await Linking.openURL(bare);}catch{Alert.alert('Not Installed',`${app.name} is not installed on this device.`);}return;}
+    const local=await readLocalIdentity();
+    const general=buildPlatformAppEntryUrl({scheme:app.deepLinkScheme,androidPackage:app.androidPackage},
+      local.driverId&&local.companyId?{driverId:local.driverId,companyId:local.companyId}:undefined);
+    if(general){try{await Linking.openURL(general);}catch{Alert.alert('Not Installed',`${app.name} is not installed on this device.`);}return;}
     if (isEquipmentAppTarget(app.deepLinkScheme, app.androidPackage)) {
       try { await Linking.openURL(EQUIPMENT_APP_START); }
       catch { Alert.alert('Not Installed', `${app.name} is not installed on this device.`); }

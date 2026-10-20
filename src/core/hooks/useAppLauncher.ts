@@ -1,3 +1,4 @@
+import {PLATFORM_APP_OPEN_HOST} from '../services/platformRuntime.generated';
 import { isEquipmentAppTarget } from '../services/equipmentAppAccessCore';
 import { useCallback, useMemo } from 'react';
 import {
@@ -42,8 +43,13 @@ export function useAppLauncher() {
   // shift start, and Post-Trip stays on return-to-yard, both in ActionCardRow.
   const launchWB = useCallback(async (options: WBAppLaunchOptions) => {
     if (isEquipmentAppTarget(options.scheme, options.androidPackage)) {
-      return launchWBApp({ ...options, scheme: 'wbequipment', sso: undefined, startHost: 'app-start',
-        equipmentEntryOwner: user?.driverId && user.companyId ? {driverId:user.driverId,companyId:user.companyId} : undefined });
+      return launchWBApp({ ...options, scheme: 'wbequipment', sso: undefined, startHost: PLATFORM_APP_OPEN_HOST,
+        entryOwner: user?.driverId && user.companyId ? {driverId:user.driverId,companyId:user.companyId} : undefined });
+    }
+    // General JSA/local-tool entry is separate from governed job/shift links.
+    if (['jsaapp','wellbuilttimecard','tickettime'].includes((options.scheme||'').toLowerCase())) {
+      return launchWBApp({...options,sso:undefined,startHost:PLATFORM_APP_OPEN_HOST,
+        entryOwner:user?.driverId&&user.companyId?{driverId:user.driverId,companyId:user.companyId}:undefined});
     }
     // Credential-free launch: WB-T and WB-M. Each mints its own PKCE
     // attempt. WB-T's audience and start host stay exactly as before.
@@ -66,7 +72,8 @@ export function useAppLauncher() {
           requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       } catch { /* visual only — never block the launch */ }
       try {
-        return await launchWBApp({ ...options, sso: undefined, startHost: WBT_SSO_START_HOST });
+        return await launchWBApp({ ...options, sso: undefined, startHost: PLATFORM_APP_OPEN_HOST,
+          entryOwner: user?.driverId && user.companyId ? {driverId:user.driverId,companyId:user.companyId} : undefined });
       } catch (err) {
         // Launch failed before leaving Suite: uncover Home immediately and
         // let launchWBApp's existing alert handling stand. (Failures that

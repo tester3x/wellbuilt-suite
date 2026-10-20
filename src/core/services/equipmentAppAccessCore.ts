@@ -1,11 +1,12 @@
+import {PLATFORM_APP_OPEN_HOST,parsePlatformOwnerHint} from './platformRuntime.generated';
 /** General app access is distinct from a required, shift-bound DVIR launch. */
 export function isEquipmentAppTarget(scheme?:string,androidPackage?:string):boolean {
   return scheme === 'wbequipment' || androidPackage === 'com.wellbuilt.equipment';
 }
-export const EQUIPMENT_APP_START = 'wbequipment://app-start';
+export const EQUIPMENT_APP_START = `wbequipment://${PLATFORM_APP_OPEN_HOST}`;
 /** Routing hints only. Equipment must match them against its own verified SDK session. */
 export function equipmentAppEntryUrl(owner?: {driverId: string; companyId: string}): string {
-  if (!owner?.driverId || !owner.companyId) return EQUIPMENT_APP_START;
+  if (!owner?.driverId || !owner.companyId || !parsePlatformOwnerHint(owner).ok) return EQUIPMENT_APP_START;
   return EQUIPMENT_APP_START+'?'+new URLSearchParams({driverId:owner.driverId,companyId:owner.companyId}).toString();
 }
 export interface EquipmentAccessIdentity { uid:string;kind:string|null;driverId:string|null;companyId:string|null }

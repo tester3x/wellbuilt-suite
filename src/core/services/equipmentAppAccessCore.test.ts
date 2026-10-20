@@ -47,10 +47,10 @@ test('expired or malformed server answer never opens the destination',async()=>{
 
 test('Equipment routing hints identify only the requested account and contain no credential or shift action',()=>{
  const url=new URL(equipmentAppEntryUrl({driverId:'driver/a',companyId:'company-a'}));
- assert.equal(url.protocol,'wbequipment:');assert.equal(url.hostname,'app-start');
+ assert.equal(url.protocol,'wbequipment:');assert.equal(url.hostname,'app-open');
  assert.equal(url.searchParams.get('driverId'),'driver/a');
  assert.deepEqual([...url.searchParams.keys()].sort(),['companyId','driverId']);
- assert.equal(equipmentAppEntryUrl(),'wbequipment://app-start');
+ assert.equal(equipmentAppEntryUrl(),'wbequipment://app-open');
 });
 
 test('issuance uses the persisted SDK token without a redundant forced refresh',async()=>{

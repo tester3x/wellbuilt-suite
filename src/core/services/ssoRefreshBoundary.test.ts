@@ -87,8 +87,9 @@ test('a rejected refresh fails safely with zero issuance', async () => {
 });
 
 test('an identity epoch change DURING the refresh blocks issuance', async () => {
-  // Reads: [before-refresh, after-refresh, ...] — a driver switch mid-refresh.
-  const h = harness({ epochs: [1, 2, 2] });
+  // Reconciliation reads the epoch twice before the refresh captures its own epoch.
+  // Switch only after those checks, during the actual claims refresh.
+  const h = harness({ epochs: [1, 1, 1, 2, 2] });
   const outcome = await h.handler.authorize(request);
   assert.equal(h.issuedCount(), 0, 'a superseded attempt must not issue');
   assert.equal(outcome.callback.status, 'error');
