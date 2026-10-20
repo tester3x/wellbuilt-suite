@@ -2,18 +2,28 @@ const React=require('react');
 const {View,Text,Pressable,ActivityIndicator,AppState}=require('react-native');
 const ReadyContext=React.createContext(true);
 /** Keeps navigation mounted; native boundaries must survive opacity/overlay transitions. */
-module.exports=function AccountGate({restore,clearLocal,children}){
+module.exports=function AccountGate({restore,clearLocal,returnToHub,children}){
  const [state,setState]=React.useState({phase:'checking',error:null,generation:0});
- const active=React.useRef(true),running=React.useRef(null);
- const run=React.useCallback(()=>{
-  if(running.current)return running.current;
+ const active=React.useRef(true),running=React.useRef(null),queued=React.useRef(false),failed=React.useRef(false),reachable=React.useRef(null);
+ const {restoreWithRecovery}=require('./accountRecovery');
+ const run=React.useCallback((recheck=false)=>{
+  if(running.current){if(recheck)queued.current=true;return running.current;}
   setState(s=>({...s,phase:'checking',error:null}));
-  running.current=Promise.resolve().then(restore).then(result=>{
-   if(active.current)setState(s=>({phase:'ready',error:null,generation:s.generation+(result==='restored'?1:0)}));
-  },error=>{if(active.current)setState(s=>({...s,phase:'error',error}));})
-   .finally(()=>{running.current=null;});return running.current;
+  running.current=(async()=>{
+   do{
+    queued.current=false;
+    try{
+     const result=await restoreWithRecovery({restore,isActive:()=>active.current,wait:ms=>new Promise(resolve=>setTimeout(resolve,ms)),report:detail=>console.info('WB_ACCOUNT_GATE '+JSON.stringify(detail))});
+     if(active.current&&!queued.current){failed.current=false;setState(s=>({phase:'ready',error:null,generation:s.generation+(result==='restored'?1:0)}));}
+    }catch(error){if(active.current&&!queued.current){failed.current=true;setState(s=>({...s,phase:'error',error}));}}
+   }while(active.current&&queued.current);
+  })().finally(()=>{running.current=null;});return running.current;
  },[restore]);
- React.useEffect(()=>{active.current=true;void run();const sub=AppState.addEventListener('change',v=>{if(v==='active')void run();});const account=require('./index')?.addListener?.('accountChanged',()=>{void run();});return()=>{active.current=false;sub.remove();account?.remove();};},[run]);
+ React.useEffect(()=>{active.current=true;void run();const native=require('./index');
+  const sub=AppState.addEventListener('change',v=>{if(v==='active')void run();});
+  const account=native?.addListener?.('accountChanged',()=>{void run(true);});
+  const connection=native?.addListener?.('connectionChanged',v=>{const restored=reachable.current===false&&v.reachable;reachable.current=v.reachable;if(v.reachable&&failed.current||restored&&running.current)void run(true);});
+  return()=>{active.current=false;sub.remove();account?.remove();connection?.remove();};},[run]);
  React.useEffect(()=>{if(state.phase==='error')try{void require('expo-splash-screen').hideAsync().catch(()=>{});}catch{}},[state.phase]);
  const [pending,setPending]=React.useState(false);
  React.useEffect(()=>{let timer;const unsubscribe=require('./delivery').subscribePending(()=>{setPending(true);clearTimeout(timer);timer=setTimeout(()=>setPending(false),6000);});return()=>{unsubscribe();clearTimeout(timer);};},[]);
@@ -27,7 +37,8 @@ module.exports=function AccountGate({restore,clearLocal,children}){
    state.phase==='checking'?React.createElement(ActivityIndicator,{color:'#e5b52e',size:'large'}):React.createElement(React.Fragment,null,
     React.createElement(Text,{style:{color:'white',fontSize:21,fontWeight:'600',marginBottom:16}},state.error?.code==='platform/access-denied'?'App access unavailable':state.error?.code==='platform/signed-out'?'Signed out of WellBuilt':'Your saved work is still on this device'),
     React.createElement(Text,{style:{color:'#cbd5e1',fontSize:17,marginBottom:24}},state.error?.code?.startsWith('platform/')?state.error.message:'Unable to finish opening this account. Check the connection and retry. You do not need to enter your password again.'),
-    React.createElement(Pressable,{onPress:run,style:{padding:16,borderRadius:12,backgroundColor:'#e5b52e',marginBottom:14}},React.createElement(Text,{style:{textAlign:'center',fontWeight:'700',fontSize:17}},'Retry')),
+    React.createElement(Pressable,{onPress:()=>run(),style:{padding:16,borderRadius:12,backgroundColor:'#e5b52e',marginBottom:14}},React.createElement(Text,{style:{textAlign:'center',fontWeight:'700',fontSize:17}},'Retry')),
+    returnToHub&&React.createElement(Pressable,{onPress:returnToHub,style:{padding:16}},React.createElement(Text,{style:{color:'#a5b4fc',textAlign:'center',fontSize:17}},'Return to Suite')),
     state.error?.code==='platform/signed-out'&&clearLocal&&React.createElement(Pressable,{onPress:signIn,style:{padding:16}},React.createElement(Text,{style:{color:'white',textAlign:'center',fontSize:17}},'Sign in'))))));
 };
 
