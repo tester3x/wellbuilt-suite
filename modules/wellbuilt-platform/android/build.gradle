@@ -4,4 +4,7 @@ plugins {
 }
 group = 'expo.modules.wbplatform'
 version = '1.0.0'
-android { namespace 'expo.modules.wbplatform' }
+android {
+  namespace 'expo.modules.wbplatform'
+  defaultConfig { versionCode 1; versionName '1.0.0' }
+}
