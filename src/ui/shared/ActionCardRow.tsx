@@ -366,7 +366,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   } else if (active) {
     shiftIcon = 'clock-outline';
     shiftLabel = shiftElapsed;
-    shiftSub = t('shift.tapToEndShort');
+    shiftSub = shiftAuthorityUi.kind === 'open' && shiftAuthorityUi.offline ? 'Offline · saved shift' : t('shift.tapToEndShort');
     shiftColor = dotColor;
     shiftBorder = `${dotColor}40`;
     showDot = true;

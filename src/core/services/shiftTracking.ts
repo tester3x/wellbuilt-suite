@@ -74,10 +74,11 @@ export async function setCurrentShiftBinding(
 /** Clear the active shiftId — called on shift end / logout. */
 export async function clearCurrentShiftId(): Promise<void> {
   try {
-    await AsyncStorage.multiRemove([SHIFT_ID_KEY, SHIFT_ORIGIN_KEY]);
+    await AsyncStorage.multiRemove([SHIFT_ID_KEY, SHIFT_ORIGIN_KEY, 'wellbuilt-verified-open-shift-v1']);
   } catch {
     try { await AsyncStorage.removeItem(SHIFT_ID_KEY); } catch {}
     try { await AsyncStorage.removeItem(SHIFT_ORIGIN_KEY); } catch {}
+    try { await AsyncStorage.removeItem('wellbuilt-verified-open-shift-v1'); } catch {}
   }
 }
 

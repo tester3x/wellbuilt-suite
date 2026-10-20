@@ -6,6 +6,13 @@
  * async work never mutates local flags or bindings after logout/login.
  */
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { suiteDeviceAccount } from '../deviceAccount';
+import { getOwnedUserId } from '../firebaseAuthBoundary';
+import { getFirebaseApp } from '../firebaseApp';
+import { getDriverSession } from '../driverAuth';
+import { matchingOfflineShift, OFFLINE_SHIFT_RECEIPT_KEY, type ReceiptOwner } from './offlineShiftReceipt';
 import {
   clearCurrentShiftId,
   mintShiftId,
@@ -50,6 +57,18 @@ export function defaultShiftAuthorityClient(): ShiftAuthorityClient {
 
 function stale(gate?: GenerationGate): boolean {
   return !!(gate && !gate.isCurrent());
+}
+
+async function currentReceiptOwner(): Promise<ReceiptOwner | null> {
+  const account = await suiteDeviceAccount.read();
+  const session = await getDriverSession();
+  const owner = account?.access.owner;
+  return account && !account.revoked && owner && owner.uid === getOwnedUserId(getFirebaseApp())
+    && session?.driverId === owner.driverId && session?.companyId === owner.companyId
+    ? { ...owner, grantId: account.access.grantId } : null;
+}
+function receiptOwnersMatch(a: ReceiptOwner | null, b: ReceiptOwner | null): boolean {
+  return !!a && !!b && (['uid','driverId','companyId','grantId'] as const).every(k => a[k] === b[k]);
 }
 
 /** Apply a restore action to local storage + React setters (generation-gated). */
@@ -114,7 +133,35 @@ export async function resolveEnforcedExplicit(
   client: ShiftAuthorityClient = defaultShiftAuthorityClient(),
 ): Promise<ResolveActiveResult> {
   shiftAuthorityDiag('resolve.invoke');
-  const result = await client.resolve();
+  // Login remains owned by the shared account gate. A receipt permits only
+  // continuation of the exact server-verified period on the same device login.
+  const owner = await currentReceiptOwner();
+  const sameOwner = async () => receiptOwnersMatch(owner, await currentReceiptOwner());
+  const cached = async (): Promise<ResolveActiveResult | null> => {
+    try {
+      const raw = JSON.parse(await AsyncStorage.getItem(OFFLINE_SHIFT_RECEIPT_KEY) || 'null');
+      const match = matchingOfflineShift(raw, owner, await getCurrentShiftId());
+      return match && await sameOwner() ? { ...match, offline: true } : null;
+    } catch { return null; }
+  };
+  let result: ResolveActiveResult;
+  const network = await NetInfo.fetch().catch(() => ({isConnected: null, isInternetReachable: null}));
+  if (network.isConnected === false || network.isInternetReachable === false) {
+    const saved = await cached();
+    if (saved) { shiftAuthorityDiag('resolve.offline_continuation'); return saved; }
+  }
+  try { result = await client.resolve(); }
+  catch (error) {
+    if (error instanceof ShiftAuthorityError && error.failure === 'transport') {
+      const saved = await cached();
+      if (saved) { shiftAuthorityDiag('resolve.offline_continuation'); return saved; }
+    }
+    throw error;
+  }
+  if (await sameOwner()) {
+    if (result.state === 'open') await AsyncStorage.setItem(OFFLINE_SHIFT_RECEIPT_KEY, JSON.stringify({owner,period:result}));
+    else await AsyncStorage.removeItem(OFFLINE_SHIFT_RECEIPT_KEY);
+  }
   shiftAuthorityDiag('resolve.outcome', {
     state: result.state,
     reason: result.state === 'unverifiable' ? result.reason : null,
@@ -224,12 +271,17 @@ export async function claimEnforcedExplicitStart(deps: {
   const origin = proposalOrigin === originLocalDate ? originLocalDate : proposalOrigin;
 
   try {
+    const receiptOwner = await currentReceiptOwner();
     const claimed = await client.claim(periodId, origin);
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
     await setCurrentShiftBinding(claimed.periodId, claimed.originLocalDate);
     await SecureStore.setItemAsync('shiftStarted', 'true');
     await SecureStore.setItemAsync('shiftStartTime', startTime);
     await SecureStore.deleteItemAsync('shiftEnded');
+    if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
+    if (receiptOwnersMatch(receiptOwner, await currentReceiptOwner()) && !stale(deps.gate)) {
+      await AsyncStorage.setItem(OFFLINE_SHIFT_RECEIPT_KEY, JSON.stringify({owner:receiptOwner,period:{state:'open',periodId:claimed.periodId,originLocalDate:claimed.originLocalDate,protocolVersion:1}}));
+    }
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
     deps.flags.setShiftActive(true);
     deps.flags.setShiftStartTime(startTime);
@@ -328,6 +380,7 @@ export async function closeEnforcedExplicit(deps: {
   try {
     const result = await client.close(periodId, deps.odometerMiles);
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
+    await AsyncStorage.removeItem(OFFLINE_SHIFT_RECEIPT_KEY);
     shiftAuthorityDiag('close.outcome', {
       alreadyClosed: result.alreadyClosed ? 1 : 0,
       originPrefix: result.closedPeriodId.slice(0, 10),

@@ -36,7 +36,7 @@ export type ShiftAuthorityCallableTransport = (
 ) => Promise<unknown>;
 
 export type ResolveActiveResult =
-  | { state: 'open'; periodId: string; originLocalDate: string; protocolVersion: 1 }
+  | { state: 'open'; periodId: string; originLocalDate: string; protocolVersion: 1; offline?: true }
   | { state: 'none'; protocolVersion: 1 }
   | { state: 'unverifiable'; reason: string; protocolVersion: 1 };
 

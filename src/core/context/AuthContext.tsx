@@ -5,6 +5,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { endEtcForSuiteShift, retryEtcEnds } from '../services/etcStart/etcEndDispatch';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1539,6 +1540,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, [user]);
+
+  // Reconcile a saved verified shift when connectivity returns. No polling
+  // while offline and no shift creation; a readable closed response wins.
+  useEffect(() => {
+    if (shiftAuthorityUi.kind !== 'open' || !shiftAuthorityUi.offline) return;
+    let busy = false;
+    return NetInfo.addEventListener(state => {
+      if (state.isConnected !== true || state.isInternetReachable === false || busy || AppState.currentState !== 'active') return;
+      busy = true;
+      void refreshShiftAuthority().finally(() => { busy = false; });
+    });
+  }, [shiftAuthorityUi, refreshShiftAuthority]);
 
   // A phone waking up can reach the shift callable before its connection or
   // Firebase Auth session is ready. The failed resolve must still block Start

@@ -18,6 +18,7 @@ export type ShiftUiRestoreAction =
       originLocalDate?: string;
       /** ISO start time if known from local evidence; null → keep/leave unset */
       shiftStartTimeIso: string | null;
+      offline?: true;
     }
   | {
       kind: 'inactive_allow_start';
@@ -76,6 +77,7 @@ export function mapServerResolveToRestoreAction(resolved: ResolveActiveResult): 
       periodId: resolved.periodId,
       originLocalDate: resolved.originLocalDate,
       shiftStartTimeIso: null,
+      ...(resolved.offline ? { offline: true as const } : {}),
     };
   }
   if (resolved.state === 'none') {
@@ -262,7 +264,7 @@ export function shiftStartIsoFromShiftId(shiftId: string): string | null {
 export type ShiftAuthorityUiState =
   | { kind: 'checking' }
   | { kind: 'none' }
-  | { kind: 'open'; periodId: string; originLocalDate: string }
+  | { kind: 'open'; periodId: string; originLocalDate: string; offline?: true }
   | { kind: 'unavailable'; reason: string }
   | { kind: 'legacy' };
 
@@ -272,6 +274,7 @@ export function restoreActionToUiState(action: ShiftUiRestoreAction): ShiftAutho
       kind: 'open',
       periodId: action.periodId,
       originLocalDate: action.originLocalDate || originDateFromShiftId(action.periodId) || '',
+      ...(action.offline ? { offline: true as const } : {}),
     };
   }
   if (action.kind === 'inactive_allow_start') return { kind: 'none' };
