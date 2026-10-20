@@ -1,5 +1,5 @@
 // Generated from wellbuilt-contracts/src/runtime/platformRuntime.ts. Do not edit.
-// Source SHA256: dcee868372558608a0e79eb521cd487f9b2f5a1e6a7085c8ea301deaaba3eec6
+// Source SHA256: 9f3b47fd4e14fc9fb630bfa69ca7fa3a6ec0c93d27971b8804170cb5d9abdbad
 /** Canonical app entry and transport policy. Pure: no Firebase, React or storage.
  * Adapters provide only SDK-owned identities and server-established access.
  * URL identity hints select a session; they can never grant access.
@@ -88,4 +88,12 @@ export function buildPlatformAppEntryUrl(target:{scheme?:string;androidPackage?:
   const parsed=parsePlatformOwnerHint(owner?{driverId:owner.driverId,companyId:owner.companyId}:{});if(!parsed.ok)return null;
   const hint=parsed.owner;
   return scheme+'://'+PLATFORM_APP_OPEN_HOST+(hint?'?driverId='+encodeURIComponent(hint.driverId)+'&companyId='+encodeURIComponent(hint.companyId):'');
+}
+
+/** Queue adapters own one timer. Never poll a disconnected link or bypass an
+ * entry's existing retry deadline. No payload or account data is retained here. */
+export function platformDeliveryWakeDelay(state:PlatformConnectionState, now:number, reachable:boolean, deadlines:ReadonlyArray<number|null|undefined>):number|null {
+  if(!reachable || deadlines.length===0)return null;
+  const due=deadlines.reduce<number>((earliest,value)=>Math.min(earliest,typeof value==='number'&&Number.isFinite(value)?value:now),Infinity);
+  return Math.max(1000,Math.min(3600000,Math.max(due,state.holdUntil)-now));
 }
