@@ -1,5 +1,5 @@
 // Generated from wellbuilt-contracts/src/runtime/platformRuntime.ts. Do not edit.
-// Source SHA256: b53ce281e97d77a7e086884f2c0c1e067194d56881b18bfb29a38e2d5c8144a7
+// Source SHA256: a458f43edabf835cd75d8490f0909d5b477207110795a1457fccacb879fee0c8
 /** Canonical app entry and transport policy. Pure: no Firebase, React or storage.
  * Adapters provide only SDK-owned identities and server-established access.
  * URL identity hints select a session; they can never grant access.
@@ -78,7 +78,7 @@ export function buildPlatformAppEntryUrl(target:{scheme?:string;androidPackage?:
     'wellbuilt-tickets':'wellbuilt-tickets','waterticket':'wellbuilt-tickets','com.testerxxx.waterticket':'wellbuilt-tickets',
     'wellbuilt-mobile':'wellbuiltmobile','wellbuiltmobile':'wellbuiltmobile','com.wellbuiltmobile.app':'wellbuiltmobile',
     'jsaapp':'jsaapp','com.syconik801.jsaapp':'jsaapp',
-    'wellbuilt-equipment':'wbequipment','wellbuiltequipment':'wbequipment','wbequipment':'wbequipment','com.wellbuilt.equipment':'wbequipment',
+    'wbewallet':'wbequipment','wellbuilt-equipment':'wbequipment','wellbuiltequipment':'wbequipment','wbequipment':'wbequipment','com.wellbuilt.equipment':'wbequipment',
     'wellbuilttimecard':'wellbuilttimecard','com.wellbuilt.electronictimecard':'wellbuilttimecard',
     'tickettime':'tickettime','com.michaelburger.tickettime':'tickettime',
   };

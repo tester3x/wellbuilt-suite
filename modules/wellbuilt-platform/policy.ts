@@ -76,7 +76,7 @@ export function buildPlatformAppEntryUrl(target:{scheme?:string;androidPackage?:
     'wellbuilt-tickets':'wellbuilt-tickets','waterticket':'wellbuilt-tickets','com.testerxxx.waterticket':'wellbuilt-tickets',
     'wellbuilt-mobile':'wellbuiltmobile','wellbuiltmobile':'wellbuiltmobile','com.wellbuiltmobile.app':'wellbuiltmobile',
     'jsaapp':'jsaapp','com.syconik801.jsaapp':'jsaapp',
-    'wellbuilt-equipment':'wbequipment','wellbuiltequipment':'wbequipment','wbequipment':'wbequipment','com.wellbuilt.equipment':'wbequipment',
+    'wbewallet':'wbequipment','wellbuilt-equipment':'wbequipment','wellbuiltequipment':'wbequipment','wbequipment':'wbequipment','com.wellbuilt.equipment':'wbequipment',
     'wellbuilttimecard':'wellbuilttimecard','com.wellbuilt.electronictimecard':'wellbuilttimecard',
     'tickettime':'tickettime','com.michaelburger.tickettime':'tickettime',
   };
