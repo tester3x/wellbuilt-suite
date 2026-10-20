@@ -1,3 +1,4 @@
+import {platformDelivery} from '../platformDelivery';
 /**
  * Thin authenticated client for server-owned explicit-shift authority.
  *
@@ -460,7 +461,7 @@ export const realShiftAuthorityTransport: ShiftAuthorityCallableTransport = asyn
 ) => {
   const fns = getFunctions(getFirebaseApp(), FIREBASE_REGION);
   const callable = httpsCallable(fns, name, { timeout: timeoutMs });
-  const result = await callable(payload);
+  const result = await platformDelivery.attempt(()=>callable(payload));
   return result.data;
 };
 

@@ -1,3 +1,4 @@
+import {platformDelivery} from './platformDelivery';
 /** Secure operational callables for Suite (shifts, reference, profile). */
 const CALLABLE_BASE = 'https://us-central1-wellbuilt-sync.cloudfunctions.net';
 
@@ -6,18 +7,24 @@ async function callCallable<T>(
   data: Record<string, unknown>,
   idToken?: string | null,
 ): Promise<T> {
+  return platformDelivery.attempt(async()=>{
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
+  try {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (idToken) headers.Authorization = `Bearer ${idToken}`;
   const resp = await fetch(`${CALLABLE_BASE}/${name}`, {
+    signal:controller.signal,
     method: 'POST',
     headers,
     body: JSON.stringify({ data }),
   });
   const body = await resp.json().catch(() => ({}));
   if (!resp.ok || body.error) {
-    throw new Error(body?.error?.message || `Callable ${name} failed (${resp.status})`);
+    throw Object.assign(new Error(body?.error?.message || `Callable ${name} failed (${resp.status})`),{httpStatus:resp.status,callableStatus:body?.error?.status});
   }
   return body.result as T;
+  }finally{clearTimeout(timer);}
+  });
 }
 
 export async function secureUpsertShift(

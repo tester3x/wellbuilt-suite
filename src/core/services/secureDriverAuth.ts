@@ -315,3 +315,11 @@ export async function getSecureIdToken(): Promise<string | null> {
   return getOwnedIdToken(getFirebaseApp());
 }
 
+
+/** Device adoption and delayed revalidation share the existing SDK mutation lane. */
+export const captureSecureMutationRevision=()=>authSession.captureMutationRevision();
+export const withSecureIdentityMutation=<T>(revision:number,work:()=>Promise<T>,advance=true)=>authSession.withCurrentMutation(revision,work,advance);
+export async function installDeviceAccountToken(token:string,owner:{driverId:string;companyId:string},persist:()=>Promise<void>){
+ authSession.invalidateEpoch();const epoch=authSession.captureEpoch();
+ await authSession.establish(token,owner,epoch,persist);
+}

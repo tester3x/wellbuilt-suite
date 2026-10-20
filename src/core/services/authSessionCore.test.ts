@@ -603,3 +603,19 @@ describe('single-flight attempt ownership', () => {
     assert.equal(core.inFlightKey(), null, 'a failed login must not wedge the slot');
   });
 });
+
+describe('broker adoption and stale revalidation share the identity mutation lane',()=>{
+ it('a stale revalidation cleanup cannot erase the newly adopted identity',async()=>{
+  const {core,fake}=harness();const oldRevision=core.captureMutationRevision();
+  await core.establish('tok-B',{driverId:'driver-B'},core.captureEpoch());
+  let cleaned=false;await assert.rejects(core.withCurrentMutation(oldRevision,async()=>{cleaned=true;}),SupersededAttemptError);
+  assert.equal(cleaned,false);assert.equal(fake.uid,'uid-B');
+ });
+ it('local receipt persistence stays inside the SDK mutation lane',async()=>{
+  const {core}=harness(),gate=deferred();let persisted=false,cleanup=false;
+  const install=core.establish('tok-A',{driverId:'driver-A'},core.captureEpoch(),async()=>{await gate.promise;persisted=true;});
+  await flush();const revision=core.captureMutationRevision();
+  const next=core.withCurrentMutation(revision,async()=>{assert.equal(persisted,true);cleanup=true;});
+  await flush();assert.equal(cleanup,false);gate.resolve();await install;await next;assert.equal(cleanup,true);
+ });
+});

@@ -4,10 +4,14 @@ import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import org.json.JSONObject
 class WellbuiltPlatformModule:Module(){
+ private var accountObserver:ContentObserver?=null
  private var connectivity:ConnectivityManager?=null
  private var callback:ConnectivityManager.NetworkCallback?=null
  private fun reachable():Boolean {val m=connectivity?:context().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager;val caps=m.getNetworkCapabilities(m.activeNetwork);return caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)==true&&caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}
@@ -30,7 +34,7 @@ class WellbuiltPlatformModule:Module(){
  }
  override fun definition()=ModuleDefinition {
   Name("WellbuiltPlatform")
-  Events("connectionChanged")
+  Events("connectionChanged","accountChanged")
   OnCreate {
    val m=context().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
    connectivity=m
@@ -41,10 +45,14 @@ class WellbuiltPlatformModule:Module(){
     override fun onCapabilitiesChanged(network:Network,caps:NetworkCapabilities){changed()}
    }
    callback=cb;m.registerDefaultNetworkCallback(cb)
+   val observer=object:ContentObserver(Handler(Looper.getMainLooper())){override fun onChange(selfChange:Boolean){sendEvent("accountChanged",emptyMap<String,Any>())}}
+   accountObserver=observer
+   for(pkg in AccountTrust.pins.keys){if(pkg==context().packageName||AccountTrust.trusted(context(),pkg))try{context().contentResolver.registerContentObserver(Uri.parse("content://"+pkg+".wbplatform"),false,observer)}catch(_:Exception){}}
+
   }
-  OnDestroy {callback?.let{try{connectivity?.unregisterNetworkCallback(it)}catch(_:Exception){}};callback=null;connectivity=null}
-  AsyncFunction("connectionState"){mapOf("reachable" to reachable())}
-  AsyncFunction("readAccount"){latest(context())}
+  OnDestroy {accountObserver?.let{context().contentResolver.unregisterContentObserver(it)};accountObserver=null;callback?.let{try{connectivity?.unregisterNetworkCallback(it)}catch(_:Exception){}};callback=null;connectivity=null}
+  AsyncFunction("connectionState"){ ->mapOf("reachable" to reachable())}
+  AsyncFunction("readAccount"){ ->latest(context())}
   AsyncFunction("publishAccount"){raw:String,expectedGrant:String?->
    synchronized(AccountStore){
     val c=context();val current=latest(c);val id=current?.let{JSONObject(it).getJSONObject("access").getString("grantId")}

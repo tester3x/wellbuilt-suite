@@ -1,3 +1,4 @@
+import {captureSecureMutationRevision,withSecureIdentityMutation} from './secureDriverAuth';
 /**
  * Secure cold-start session revalidation for WB-S (production wiring).
  *
@@ -102,6 +103,7 @@ export function createProductionSecureRevalidationOps(
   hardFailCleanup: () => Promise<void>,
 ): SecureRevalidationOps {
   const app = getFirebaseApp();
+  const revision=captureSecureMutationRevision();
   return {
     initializePersistentAuth: () => {
       initializePersistentAuth(app, AsyncStorage);
@@ -112,11 +114,11 @@ export function createProductionSecureRevalidationOps(
     getIdToken: (force) => getOwnedIdToken(app, force),
     callVerifyDriverSession: productionCallVerifyDriverSession,
     wasPreviouslyVerified: wasSecureSessionVerified,
-    markVerified: async () => {
+    markVerified: async () => withSecureIdentityMutation(revision,async()=>{
       await markSessionAuthMode('secure');
       await markSecureSessionVerified();
-    },
-    hardFailCleanup,
+    },false),
+    hardFailCleanup:()=>withSecureIdentityMutation(revision,hardFailCleanup),
   };
 }
 

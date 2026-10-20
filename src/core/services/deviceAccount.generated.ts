@@ -20,12 +20,27 @@ export function createDeviceAccountClient(native:DeviceAccountNative|null,call:(
  const read=async()=>native?parseDeviceAccount(await native.readAccount()):null;
  let restoring:Promise<'absent'|'current'|'restored'>|null=null;
  const current=async(expected:DeviceAccount)=>{const r=await read();return !!r&&!r.revoked&&r.access.grantId===expected.access.grantId&&deviceOwnerMatches(r.access.owner,expected.access.owner);};
+ const refreshing=new Map<string,Promise<void>>();
+ const refreshAccess=(prior:DeviceAccount,isCurrent:()=>boolean):Promise<void>=>{
+  if(!native||Date.now()-prior.access.checkedAtMs<300000)return Promise.resolve();
+  const key=prior.access.grantId,existing=refreshing.get(key);if(existing)return existing;
+  const task=(async()=>{
+   try{
+    const result=await call('platformRefreshDeviceAccount',{version:1,grantId:key}) as {access:DeviceAccess};
+    const updated=parseDeviceAccount({...prior,access:result.access});
+    if(updated&&isCurrent()&&await current(prior)&&updated.access.grantId===key&&deviceOwnerMatches(updated.access.owner,prior.access.owner))await native.publishAccount(JSON.stringify(updated),key);
+   }catch(error){const e=error as {code?:string;message?:string};if(e.code==='functions/permission-denied'&&['device_account_unavailable','account_unavailable'].includes(e.message||'')&&isCurrent()&&await current(prior))await native.revokeAccount(key);}
+  })().finally(()=>{refreshing.delete(key);});refreshing.set(key,task);return task;
+ };
  return {
   read,
   async publish(owner:DeviceOwner,isCurrent:()=>boolean,explicit=false):Promise<void>{
    if(!native||!isCurrent())return;
    const prior=await read();
-   if(prior&&!prior.revoked&&deviceOwnerMatches(prior.access.owner,owner)&&!explicit&&Date.now()-prior.access.establishedAtMs<60*86400000)return;
+   if(prior&&!prior.revoked&&deviceOwnerMatches(prior.access.owner,owner)&&!explicit&&Date.now()-prior.access.establishedAtMs<60*86400000){
+    await refreshAccess(prior,isCurrent);
+    return;
+   }
    if(prior&&!deviceOwnerMatches(prior.access.owner,owner)&&!explicit)return;
    if(prior?.revoked&&!explicit)return; // A restored old SDK session cannot replace a newer device login.
    const r=await call('platformIssueDeviceAccount',{version:1}) as DeviceAccount;
@@ -39,7 +54,7 @@ export function createDeviceAccountClient(native:DeviceAccountNative|null,call:(
     const saved=await read();if(!saved)return 'absent' as const;
     if(saved.revoked)throw Object.assign(Error('Your WellBuilt account was signed out on this device.'),{code:'platform/signed-out'});
     if(!saved.access.allowedApps.includes(app))throw Object.assign(Error('This app is not included in your WellBuilt account.'),{code:'platform/access-denied'});
-    if(deviceOwnerMatches(saved.access.owner,owner))return 'current' as const;
+    if(deviceOwnerMatches(saved.access.owner,owner)){void refreshAccess(saved,()=>true);return 'current' as const;}
     let reply:DeviceExchange;
     try{reply=await call('platformExchangeDeviceAccount',{version:1,credential:saved.credential,app}) as DeviceExchange;}
     catch(error){

@@ -204,6 +204,7 @@ async function writeLogoutSignal(passcodeHash: string): Promise<void> {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const platformAccountReady=require('../../../modules/wellbuilt-platform/AccountGate').useAccountReady() as boolean;
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [shiftActive, setShiftActive] = useState(false);
@@ -329,6 +330,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // in the background. This eliminates the 0-10 second splash screen hang on slow
   // networks. If background revalidation fails, user gets logged out then.
   useEffect(() => {
+    if(!platformAccountReady)return;
     (async () => {
       try {
         const session = await getDriverSession();
@@ -511,7 +513,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // No session found (or error reading SecureStore) — done loading
       setLoading(false);
     })();
-  }, []);
+  }, [platformAccountReady]);
 
   const login = useCallback(async (displayName: string, passcode: string) => {
     const result = await verifyLogin(displayName, passcode);

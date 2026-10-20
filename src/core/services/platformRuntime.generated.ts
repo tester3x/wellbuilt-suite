@@ -1,5 +1,5 @@
 // Generated from wellbuilt-contracts/src/runtime/platformRuntime.ts. Do not edit.
-// Source SHA256: c8277cdf79aa575b884828ee96d9785794f10dc52cd6b538faaa18b4e12501a8
+// Source SHA256: b53ce281e97d77a7e086884f2c0c1e067194d56881b18bfb29a38e2d5c8144a7
 /** Canonical app entry and transport policy. Pure: no Firebase, React or storage.
  * Adapters provide only SDK-owned identities and server-established access.
  * URL identity hints select a session; they can never grant access.
@@ -43,14 +43,15 @@ export function decidePlatformAppEntry(input: {
 }
 export type PlatformFailureKind = 'transport' | 'access' | 'other';
 export function classifyPlatformFailure(error: unknown): PlatformFailureKind {
-  const e=error as {code?:unknown;name?:unknown;message?:unknown}|null;
-  const code=typeof e?.code==='string'?e.code.toLowerCase():'';
+  const e=error as {code?:unknown;name?:unknown;message?:unknown;callableStatus?:unknown;httpStatus?:unknown}|null;
+  const code=typeof e?.code==='string'?e.code.toLowerCase():typeof e?.callableStatus==='string'?e.callableStatus.toLowerCase().replace(/_/g,'-'):'';
   const message=typeof e?.message==='string'?e.message.toLowerCase():typeof error==='string'?error.toLowerCase():'';
   if(['auth/user-disabled','auth/user-token-expired','auth/invalid-user-token','auth/user-not-found',
-    'functions/permission-denied','functions/unauthenticated','permission-denied','unauthenticated'].includes(code))return 'access';
+    'storage/unauthorized','functions/permission-denied','functions/unauthenticated','permission-denied','unauthenticated'].includes(code)||e?.httpStatus===401||e?.httpStatus===403)return 'access';
+  if(['invalid-argument','failed-precondition','not-found','already-exists','out-of-range','functions/invalid-argument','functions/failed-precondition','functions/not-found','storage/object-not-found'].includes(code))return 'other';
   if(['auth/network-request-failed','functions/unavailable','functions/deadline-exceeded',
-    'unavailable','deadline-exceeded','network-request-failed','etimedout','enotfound','econnreset'].includes(code)
-    || e?.name==='AbortError' || /network request failed|failed to fetch|safe_op_timeout:|timed out|timeout|enetunreach|econnrefused/.test(message))return 'transport';
+    'platform/delivery-held','unavailable','deadline-exceeded','network-request-failed','etimedout','enotfound','econnreset'].includes(code)
+    || typeof e?.httpStatus==='number'&&e.httpStatus>=500 || e?.name==='AbortError' || /network request failed|network failed|failed to fetch|safe_op_timeout:|timed out|timeout|enetunreach|econnrefused|^offline$/.test(message))return 'transport';
   return 'other';
 }
 /** These bounds concern delivery attempts, never local saves or app opening. */
@@ -123,7 +124,7 @@ export function createPlatformDeliveryRuntime(ops:{now:()=>number;schedule:(fn:(
  };
  const drain=():Promise<void>=>{
   if(draining)return draining;
-  draining=(async()=>{try{for(const [name,q] of queues){if(!canAttempt())break;if((retryAfter.get(name)||0)>ops.now())continue;try{await q.flush();}catch{/* queue retains its own data */}finally{retryAfter.set(name,ops.now()+PLATFORM_CONNECTION_LIMITS.initialHoldMs);}}}finally{await changed();}})().finally(()=>{draining=null;});
+  draining=(async()=>{try{for(const [name,q] of queues){if(!canAttempt())break;if((retryAfter.get(name)||0)>ops.now())continue;try{const deadlines=await q.pending();if(!deadlines.some(at=>(at||0)<=ops.now()))continue;await q.flush();}catch{/* queue retains its own data */}finally{retryAfter.set(name,ops.now()+PLATFORM_CONNECTION_LIMITS.initialHoldMs);}}}finally{await changed();}})().finally(()=>{draining=null;});
   return draining;
  };
  return {

@@ -1,5 +1,6 @@
 package expo.modules.wbplatform
 import android.content.Context
+import android.net.Uri
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -34,5 +35,6 @@ internal object AccountStore {
   val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key())
   val encoded=Base64.encodeToString(cipher.iv,Base64.NO_WRAP)+":"+Base64.encodeToString(cipher.doFinal(raw.toByteArray(Charsets.UTF_8)),Base64.NO_WRAP)
   check(c.getSharedPreferences(alias,Context.MODE_PRIVATE).edit().putString("account",encoded).commit())
+  c.contentResolver.notifyChange(Uri.parse("content://"+c.packageName+".wbplatform"),null)
  }
 }

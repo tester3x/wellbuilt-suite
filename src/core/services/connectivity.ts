@@ -1,3 +1,4 @@
+import {platformDelivery} from './platformDelivery';
 // src/core/services/connectivity.ts
 // Network connectivity monitoring for WellBuilt Suite
 //
@@ -29,6 +30,7 @@ export function startConnectivityMonitor(): void {
   _unsubscribeNetInfo = NetInfo.addEventListener((state: NetInfoState) => {
     const nowOnline = state.isConnected === true && state.isInternetReachable !== false;
 
+    platformDelivery.setReachable(nowOnline);
     if (_isOnline !== nowOnline) {
       _isOnline = nowOnline;
       console.log(`[Connectivity-Suite] Status changed: ${nowOnline ? 'ONLINE' : 'OFFLINE'}`);
@@ -41,6 +43,7 @@ export function startConnectivityMonitor(): void {
   // Initial check
   NetInfo.fetch().then((state) => {
     _isOnline = state.isConnected === true && state.isInternetReachable !== false;
+    platformDelivery.setReachable(_isOnline);
     console.log(`[Connectivity-Suite] Initial status: ${_isOnline ? 'ONLINE' : 'OFFLINE'}`);
   });
 

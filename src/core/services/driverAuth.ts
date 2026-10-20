@@ -433,7 +433,7 @@ export const revalidateDriverSession = async (): Promise<boolean> => {
   // Secure path — never touch drivers/approved/{hash}
   if (mode === 'secure' || isSecureSessionShape(session)) {
     console.log('[DriverAuth-Suite] Revalidating secure session');
-    const ops = createProductionSecureRevalidationOps(hardFailRevalidationCleanup);
+    const ops = createProductionSecureRevalidationOps(async()=>{const live=await getDriverSession();if(!live||live.driverId!==session.driverId||live.companyId!==session.companyId)throw Error('revalidation_superseded');await hardFailRevalidationCleanup();});
     const result = await revalidateSecureSession(session, ops);
     if (result.outcome === 'verified') {
       console.log('[DriverAuth-Suite] Secure session revalidated');

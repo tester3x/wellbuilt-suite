@@ -115,7 +115,9 @@ export type CleanupOutcome = 'confirmed' | 'not-ours' | 'failed';
 
 export interface AuthSessionCore {
   /** Establish a verified session, or throw. */
-  establish(customToken: string, expected: ExpectedIdentity, epoch: number): Promise<void>;
+  establish(customToken: string, expected: ExpectedIdentity, epoch: number, persist?:()=>Promise<void>): Promise<void>;
+  captureMutationRevision():number;
+  withCurrentMutation<T>(revision:number,operation:()=>Promise<T>,advance?:boolean):Promise<T>;
   /** Bump the ownership epoch. Logout and identity transitions call this. */
   invalidateEpoch(): void;
   /** The epoch an attempt should capture at entry. */
@@ -166,6 +168,7 @@ export function createAuthSessionCore(
   const awaitWithTimeout = options.awaitWithTimeout ?? realAwaitWithTimeout;
 
   let epoch = 0;
+  let mutationRevision=0;
 
   /**
    * Held for the whole duration of an Auth mutation INCLUDING its
@@ -320,16 +323,21 @@ export function createAuthSessionCore(
   }
 
   return {
-    async establish(customToken, expected, attemptEpoch) {
+    async establish(customToken, expected, attemptEpoch,persist) {
       ops.initializePersistentAuth();
       const release = await acquireMutationSlot();
       try {
+        mutationRevision++;
         await runEstablish(customToken, expected, attemptEpoch);
+        if(persist)await persist();
       } finally {
         release();
       }
     },
+    captureMutationRevision(){return mutationRevision;},
+    async withCurrentMutation(revision,operation,advance=true){const release=await acquireMutationSlot();try{if(revision!==mutationRevision)throw new SupersededAttemptError();if(advance)mutationRevision++;return await operation();}finally{release();}},
     invalidateEpoch() {
+      mutationRevision++;
       epoch += 1;
       // Release the attempt slot too: the attempt it named is no longer
       // wanted, and a fresh login must not be told the app is busy.
