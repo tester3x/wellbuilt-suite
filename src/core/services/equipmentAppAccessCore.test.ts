@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createEquipmentAccessHandler,equipmentAccessRequest,isEquipmentAppTarget,type EquipmentAccessOps} from './equipmentAppAccessCore';
+import {createEquipmentAccessHandler,equipmentAccessRequest,isEquipmentAppTarget,equipmentAppEntryUrl,type EquipmentAccessOps} from './equipmentAppAccessCore';
 const req={state:'s'.repeat(43),codeChallenge:'c'.repeat(43)};
 function harness(){
  let epoch=1;const issued:string[]=[];const opened:string[]=[];
@@ -42,4 +42,20 @@ test('expired or malformed server answer never opens the destination',async()=>{
  for(const answer of [{version:1,code:'a'.repeat(43),expiresAtMs:500},{version:1,code:'invalid',expiresAtMs:2000},{version:2,code:'a'.repeat(43),expiresAtMs:2000}]){
  const h=harness();h.ops.issue=async()=>answer;await assert.rejects(createEquipmentAccessHandler(h.ops)(req));assert.equal(h.opened.length,0);
  }
+});
+
+
+test('Equipment routing hints identify only the requested account and contain no credential or shift action',()=>{
+ const url=new URL(equipmentAppEntryUrl({driverId:'driver/a',companyId:'company-a'}));
+ assert.equal(url.protocol,'wbequipment:');assert.equal(url.hostname,'app-start');
+ assert.equal(url.searchParams.get('driverId'),'driver/a');
+ assert.deepEqual([...url.searchParams.keys()].sort(),['companyId','driverId']);
+ assert.equal(equipmentAppEntryUrl(),'wbequipment://app-start');
+});
+
+test('issuance uses the persisted SDK token without a redundant forced refresh',async()=>{
+ const h=harness();const refreshes:boolean[]=[];const identity=h.ops.identity;
+ h.ops.identity=async refresh=>{refreshes.push(refresh);return identity(refresh);};
+ await createEquipmentAccessHandler(h.ops)(req);
+ assert.deepEqual(refreshes,[false,false]);assert.equal(h.issued.length,1);
 });

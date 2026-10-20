@@ -1,4 +1,4 @@
-import { isEquipmentAppTarget, EQUIPMENT_APP_START } from './equipmentAppAccessCore';
+import { isEquipmentAppTarget, equipmentAppEntryUrl } from './equipmentAppAccessCore';
 import { Linking, Alert, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import i18n from '../localization/i18n';
@@ -78,6 +78,8 @@ export interface WBAppLaunchOptions {
    * Ignored when `sso` is present; the two are mutually exclusive.
    */
   startHost?: string;
+  /** Noncredential owner hint used only to select a matching established app session. */
+  equipmentEntryOwner?: {driverId: string; companyId: string};
   /** SSO params — auto-injected by useAppLauncher hook when driver is logged in */
   sso?: {
     hash: string;
@@ -113,13 +115,14 @@ export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
   const t = i18n.t.bind(i18n);
   if (isEquipmentAppTarget(scheme, androidPackage)) {
     try {
-      await Linking.openURL(EQUIPMENT_APP_START);
+      await Linking.openURL(equipmentAppEntryUrl(options.equipmentEntryOwner));
       await trackSSOApp('wbequipment');
       return;
     } catch {
       if (Platform.OS === 'android') {
         try {
-          await Linking.openURL('intent://app-start#Intent;scheme=wbequipment;package=com.wellbuilt.equipment;end');
+          const entry = equipmentAppEntryUrl(options.equipmentEntryOwner).replace('wbequipment://','intent://');
+          await Linking.openURL(entry+'#Intent;scheme=wbequipment;package=com.wellbuilt.equipment;end');
           await trackSSOApp('wbequipment');
           return;
         } catch {}

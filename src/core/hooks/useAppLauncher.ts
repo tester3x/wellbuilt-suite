@@ -42,7 +42,8 @@ export function useAppLauncher() {
   // shift start, and Post-Trip stays on return-to-yard, both in ActionCardRow.
   const launchWB = useCallback(async (options: WBAppLaunchOptions) => {
     if (isEquipmentAppTarget(options.scheme, options.androidPackage)) {
-      return launchWBApp({ ...options, scheme: 'wbequipment', sso: undefined, startHost: 'app-start' });
+      return launchWBApp({ ...options, scheme: 'wbequipment', sso: undefined, startHost: 'app-start',
+        equipmentEntryOwner: user?.driverId && user.companyId ? {driverId:user.driverId,companyId:user.companyId} : undefined });
     }
     // Credential-free launch: WB-T and WB-M. Each mints its own PKCE
     // attempt. WB-T's audience and start host stay exactly as before.

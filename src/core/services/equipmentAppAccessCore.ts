@@ -3,6 +3,11 @@ export function isEquipmentAppTarget(scheme?:string,androidPackage?:string):bool
   return scheme === 'wbequipment' || androidPackage === 'com.wellbuilt.equipment';
 }
 export const EQUIPMENT_APP_START = 'wbequipment://app-start';
+/** Routing hints only. Equipment must match them against its own verified SDK session. */
+export function equipmentAppEntryUrl(owner?: {driverId: string; companyId: string}): string {
+  if (!owner?.driverId || !owner.companyId) return EQUIPMENT_APP_START;
+  return EQUIPMENT_APP_START+'?'+new URLSearchParams({driverId:owner.driverId,companyId:owner.companyId}).toString();
+}
 export interface EquipmentAccessIdentity { uid:string;kind:string|null;driverId:string|null;companyId:string|null }
 export interface EquipmentAccessOps {
   epoch():number;
@@ -34,7 +39,7 @@ export function createEquipmentAccessHandler(ops:EquipmentAccessOps) {
       if(!local.driverId||!local.companyId)throw Error('session_missing');
       const reconciliation=await ops.reconcile(local);
       if(reconciliation!=='verified')throw Error(reconciliation==='local-only'?'session_unverified':reconciliation==='unavailable'?'connection_unavailable':'session_changed');
-      const owner=await ops.identity(true);
+      const owner=await ops.identity(false);
       if(ops.epoch()!==epoch||!stillCurrent())throw Error('account_changed');
       if(!owner||owner.kind!=='driver'||owner.driverId!==local.driverId||owner.companyId!==local.companyId)throw Error('not_authorized');
       const result=await ops.issue(request.codeChallenge) as {version?:unknown;code?:unknown;expiresAtMs?:unknown};
