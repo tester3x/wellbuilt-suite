@@ -5,7 +5,7 @@
 // On active shift tap, shows ShiftEndModal with end odometer and return options.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Animated, Alert, AppState } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
@@ -97,6 +97,25 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const { t } = useTranslation();
   const { launchWBApp } = useAppLauncher();
   const { user, shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
+  const [preTripMissing, setPreTripMissing] = useState(false);
+  useEffect(() => {
+    let current = true;
+    let revision = 0;
+    const check = async () => {
+      const request = ++revision;
+      if (!active) { setPreTripMissing(false); return; }
+      try {
+        const { getCurrentShiftId } = await import('@/core/services/shiftTracking');
+        const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
+        const id = await getCurrentShiftId();
+        const complete = id ? await createSuiteDvirGate().isPreTripComplete(id) : true;
+        if (current && request === revision) setPreTripMissing(!complete);
+      } catch { /* Keep the last known recovery state. */ }
+    };
+    void check();
+    const sub = AppState.addEventListener('change', state => { if (state === 'active') void check(); });
+    return () => { current = false; sub.remove(); };
+  }, [active, shiftStartTime, user?.driverId, user?.companyId]);
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
@@ -372,7 +391,10 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           returnStartTime={returnStartTime}
           onArrived={handleMarkArrived}
         />
-        {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
+        {preTripMissing && <Pressable accessibilityRole="button" onPress={() => router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
+        <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>Resume Pre-Trip DVIR</Text>
+      </Pressable>}
+      {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
 
         {/* ── Arrival Confirmation Modal ── */}
         <ShiftArrivalModal
@@ -475,6 +497,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.equipmentSub')}</Text>
         </Pressable>
       </View>
+      {preTripMissing && <Pressable accessibilityRole="button" onPress={() => router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
+        <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>Resume Pre-Trip DVIR</Text>
+      </Pressable>}
       {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
 
       {/* JSA Required banner + JsaChoiceModal both removed (4/24/2026).
