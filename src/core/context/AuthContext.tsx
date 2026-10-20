@@ -332,6 +332,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const session = await getDriverSession();
+        void import('../services/deviceAccount').then(m=>m.publishSuiteDeviceAccount()).catch(()=>{});
 
         // VC51.9I-RECOVERY5A: reconcile the persisted SDK Auth session
         // against the local identity that was (or was not) restored.
@@ -533,6 +534,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         result.assignedRoutes,
         result.defaultPackageId
       );
+      if(result.authVerified)void import('../services/deviceAccount').then(m=>m.publishSuiteDeviceAccount(true)).catch(()=>{});
       // Durable secure vs legacy marker — never inferred from passcodeHash alone later.
       {
         const { markSessionAuthMode, markSecureSessionVerified } = await import(
@@ -1329,6 +1331,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // for this driver must not publish state, or sign anything out,
       // after the next driver logs in.
       reconcileForIdentity(null);
+      await import('../services/deviceAccount').then(m=>m.revokeSuiteDeviceAccount()).catch(()=>{});
       await secure.secureSignOut().catch(() => {});
     }
     await clearDriverSession();
@@ -1454,6 +1457,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // for this driver must not publish state, or sign anything out,
       // after the next driver logs in.
       reconcileForIdentity(null);
+      await import('../services/deviceAccount').then(m=>m.revokeSuiteDeviceAccount()).catch(()=>{});
       await secure.secureSignOut().catch(() => {});
     }
     await clearDriverSession();

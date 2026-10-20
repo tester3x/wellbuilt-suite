@@ -1,5 +1,5 @@
 // Generated from wellbuilt-contracts/src/runtime/platformRuntime.ts. Do not edit.
-// Source SHA256: 9f3b47fd4e14fc9fb630bfa69ca7fa3a6ec0c93d27971b8804170cb5d9abdbad
+// Source SHA256: c8277cdf79aa575b884828ee96d9785794f10dc52cd6b538faaa18b4e12501a8
 /** Canonical app entry and transport policy. Pure: no Firebase, React or storage.
  * Adapters provide only SDK-owned identities and server-established access.
  * URL identity hints select a session; they can never grant access.
@@ -96,4 +96,51 @@ export function platformDeliveryWakeDelay(state:PlatformConnectionState, now:num
   if(!reachable || deadlines.length===0)return null;
   const due=deadlines.reduce<number>((earliest,value)=>Math.min(earliest,typeof value==='number'&&Number.isFinite(value)?value:now),Infinity);
   return Math.max(1000,Math.min(3600000,Math.max(due,state.holdUntil)-now));
+}
+
+export interface PlatformDeliveryQueue {
+ /** Retry deadlines of this owner's executable durable entries; never quarantined work. */
+ pending():Promise<Array<number|null|undefined>>;
+ flush():Promise<unknown>;
+}
+/** Shared scheduler over existing durable queues, never a second payload store. */
+export function createPlatformDeliveryRuntime(ops:{now:()=>number;schedule:(fn:()=>void,delay:number)=>()=>void;notifyPending:()=>void}){
+ let state=newPlatformConnectionState(),reachable=true,notice=false,stopped=false;
+ let cancel:(()=>void)|null=null,generation=0,draining:Promise<void>|null=null;
+ const queues=new Map<string,PlatformDeliveryQueue>();
+ const retryAfter=new Map<string,number>();
+ const canAttempt=()=>!stopped&&platformDeliveryMayAttempt(state,ops.now(),reachable);
+ const changed=async()=>{
+  const captured=++generation;if(cancel){cancel();cancel=null;}
+  if(stopped)return;
+  const rows=await Promise.all([...queues.entries()].map(async([name,q])=>(await q.pending().catch(()=>[])).map(at=>Math.max(at||ops.now(),retryAfter.get(name)||0))));
+  if(captured!==generation||stopped)return;
+  const deadlines=rows.flat();
+  if(!deadlines.length){notice=false;return;}
+  if(!canAttempt()&&!notice){notice=true;ops.notifyPending();}
+  const delay=platformDeliveryWakeDelay(state,ops.now(),reachable,deadlines);
+  if(delay!==null)cancel=ops.schedule(()=>{cancel=null;void drain();},delay);
+ };
+ const drain=():Promise<void>=>{
+  if(draining)return draining;
+  draining=(async()=>{try{for(const [name,q] of queues){if(!canAttempt())break;if((retryAfter.get(name)||0)>ops.now())continue;try{await q.flush();}catch{/* queue retains its own data */}finally{retryAfter.set(name,ops.now()+PLATFORM_CONNECTION_LIMITS.initialHoldMs);}}}finally{await changed();}})().finally(()=>{draining=null;});
+  return draining;
+ };
+ return {
+  canAttempt,
+  wakeDelay(deadlines:ReadonlyArray<number|null|undefined>,link=reachable){return platformDeliveryWakeDelay(state,ops.now(),link,deadlines);},
+  record(result:{ok:true}|{ok:false;error:unknown;elapsedMs:number}){state=notePlatformDeliveryResult(state,result,ops.now());void changed();},
+  async attempt<T>(send:()=>Promise<T>):Promise<T>{
+   if(!canAttempt())throw Object.assign(Error('Saved on device; will send when connected.'),{code:'platform/delivery-held'});
+   const start=ops.now();
+   try{const result=await send();state=notePlatformDeliveryResult(state,{ok:true},ops.now());return result;}
+   catch(error){state=notePlatformDeliveryResult(state,{ok:false,error,elapsedMs:ops.now()-start},ops.now());throw error;}
+   finally{void changed();}
+  },
+  changed,
+  setReachable(value:boolean){reachable=value;void changed();},
+  register(name:string,queue:PlatformDeliveryQueue){queues.set(name,queue);void changed();return()=>{if(queues.get(name)===queue)queues.delete(name);void changed();};},
+  drain,
+  stop(){stopped=true;++generation;if(cancel)cancel();cancel=null;queues.clear();},
+ };
 }

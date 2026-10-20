@@ -119,7 +119,7 @@ function SplashVisibilityGate({laidOut}:{laidOut:boolean}) {
   return null;
 }
 
-export default function RootLayout() {
+function SuiteRootContent() {
   const [laidOut,setLaidOut]=useState(false);
   useEffect(() => {
     // Full-screen immersive mode — hide Android navigation bar
@@ -178,3 +178,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.primary,
   },
 });
+
+const DeviceAccountGate=require('../modules/wellbuilt-platform/AccountGate');
+const restoreDeviceAccount=()=>import('../src/core/services/deviceAccount').then(m=>m.restoreSuiteDeviceAccount());
+const clearDeviceAccount=async()=>{await import('../src/core/services/secureDriverAuth').then(m=>m.secureSignOut());await import('../src/core/services/driverAuth').then(m=>m.clearDriverSession());};
+export default function RootLayout(){return <DeviceAccountGate restore={restoreDeviceAccount} clearLocal={clearDeviceAccount}><SuiteRootContent /></DeviceAccountGate>;}
