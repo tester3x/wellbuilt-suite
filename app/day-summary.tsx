@@ -31,6 +31,7 @@ import {
   calculateDaySummary,
   type DaySummary,
 } from '@/core/services/daySummary';
+import {jsaDisplayReference} from '@/core/services/jsaDisplayReference';
 import {loadShiftJsaSummary} from '@/core/services/shiftJsaSummaryClient';
 import type {ShiftJsaSummary} from '@/core/services/shiftJsaSummaryCore';
 import { getCurrentShiftId, getCurrentShiftOriginDate } from '@/core/services/shiftTracking';
@@ -447,7 +448,7 @@ export default function DaySummaryScreen() {
                   </View>}
                   {!!jsaEvidence?.coveredJobCount&&<Text style={{color:colors.text.secondary,marginTop:10}}>{jsaEvidence.coveredJobCount} jobs covered by the shift read</Text>}
                   {!!jsaEvidence?.firstReadAt&&<Text style={{color:colors.text.secondary,marginTop:10}}>First signed read: {formatTime12h(jsaEvidence.firstReadAt)}</Text>}
-                  {!!jsaEvidence?.jsaNumbers.length&&<Text numberOfLines={3} style={{color:colors.text.secondary,marginTop:10}}>JSA: {jsaEvidence.jsaNumbers.slice(0,3).join(' · ')}{jsaEvidence.jsaNumbers.length>3?` · +${jsaEvidence.jsaNumbers.length-3} more`:''}</Text>}                  {!!jsaEvidence?.shiftId&&<Text style={{color:colors.text.secondary,marginTop:10}}>Shift: {jsaEvidence.shiftId}</Text>}
+                  {!!jsaEvidence?.jsaNumbers.length&&<Text numberOfLines={3} style={{color:colors.text.secondary,marginTop:10}}>JSA: {jsaEvidence.jsaNumbers.slice(0,3).map(jsaDisplayReference).join(' · ')}{jsaEvidence.jsaNumbers.length>3?` · +${jsaEvidence.jsaNumbers.length-3} more`:''}</Text>}
                   {jsaEvidence?.lifecycle==='finalized'&&<Text style={{color:colors.text.secondary,marginTop:10}}>Shift JSA finalized</Text>}
                   {jsaEvidence?.status==='partial'&&<Text style={{color:colors.text.secondary,marginTop:10}}>Some records could not be verified. Counts include verified evidence only.</Text>}
                 </>}
