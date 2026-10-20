@@ -12,14 +12,8 @@ import { getCurrentShiftId } from '../services/shiftTracking';
 import { createSuiteDvirGate } from '../services/dvirGate';
 import {
   isCredentialFreeLaunchTarget,
-  credentialFreeAudience,
-  WBT_SSO_START_HOST,
 } from '../services/ssoLaunchPolicy';
-import {
-  armSsoHandoffOutbound,
-  noteSsoHandoffLaunchFailure,
-} from '../services/ssoHandoffOverlayStore';
-import { SSO_AUDIENCE_WBT, type SsoAudience } from '../services/ssoProtocol.generated';
+
 
 export function useAppLauncher() {
   const { user, activePackageId, shiftStartTime, shiftActive } = useAuth();
@@ -51,37 +45,11 @@ export function useAppLauncher() {
       return launchWBApp({...options,sso:undefined,startHost:PLATFORM_APP_OPEN_HOST,
         entryOwner:user?.driverId&&user.companyId?{driverId:user.driverId,companyId:user.companyId}:undefined});
     }
-    // Credential-free launch: WB-T and WB-M. Each mints its own PKCE
-    // attempt. WB-T's audience and start host stay exactly as before.
-    // Equipment uses its separate credential-free general app flow.
+    // Ordinary entry opens the cached account directly. A destination without
+    // an established session owns its initial authorization flow.
     if (isCredentialFreeLaunchTarget(options.scheme)) {
-      const audience = (credentialFreeAudience(options.scheme) || SSO_AUDIENCE_WBT) as SsoAudience;
-      // CONTINUOUS HANDOFF OVERLAY — armed BEFORE openURL, then one
-      // committed frame, so the tree Suite backgrounds with is already the
-      // covered tree. Android redraws that exact tree when the authorize
-      // intent re-fronts Suite, which is what makes "Home never visibly
-      // uncovered" hold by construction for a process-preserved handoff
-      // (a returned-claim overlay always loses that first frame to the
-      // resumed native tree). Purely visual: failure to arm changes pixels
-      // only, so it is swallowed and the launch proceeds regardless.
-      try {
-        armSsoHandoffOutbound(audience, Date.now());
-        // Double-rAF: the first fires before the commit paints; the second
-        // guarantees a frame containing the overlay has been committed.
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      } catch { /* visual only — never block the launch */ }
-      try {
-        return await launchWBApp({ ...options, sso: undefined, startHost: PLATFORM_APP_OPEN_HOST,
-          entryOwner: user?.driverId && user.companyId ? {driverId:user.driverId,companyId:user.companyId} : undefined });
-      } catch (err) {
-        // Launch failed before leaving Suite: uncover Home immediately and
-        // let launchWBApp's existing alert handling stand. (Failures that
-        // launchWBApp absorbs internally without throwing fall to the
-        // bounded stale timeout instead — documented, not hidden.)
-        noteSsoHandoffLaunchFailure();
-        throw err;
-      }
+      return launchWBApp({ ...options, sso: undefined, startHost: PLATFORM_APP_OPEN_HOST,
+        entryOwner: user?.driverId && user.companyId ? {driverId:user.driverId,companyId:user.companyId} : undefined });
     }
 
     let sso = user

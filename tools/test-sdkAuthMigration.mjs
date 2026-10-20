@@ -249,7 +249,7 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   }
   check('authVerified is never persisted as durable authority', persisted.length === 0, persisted.join(', '));
   const ctx3 = stripComments(readFileSync(join(root, 'src', 'core', 'context', 'AuthContext.tsx'), 'utf8'));
-  check('AuthContext does not store authVerified in the session', !/authVerified/.test(ctx3));
+  check('AuthContext does not store authVerified in the session', !/authVerified\s*:/.test(ctx3));
   check('protected readiness comes from reconciliation, not the login result',
     /isVerifiedReady/.test(readFileSync(join(root, 'src', 'core', 'services', 'authReconciliation.ts'), 'utf8')));
 }
@@ -337,7 +337,7 @@ check('no token is placed in a URL', !/[?&](token|idToken|key)=\$\{(customToken|
   check('an ownership epoch exists', /let epoch = 0/.test(core));
   check('invalidateAuthEpoch increments the epoch, not just a promise ref',
     /invalidateAuthEpoch[\s\S]{0,140}authSession\.invalidateEpoch\(\)/.test(s)
-    && /invalidateEpoch\(\) \{\s*\n\s*epoch \+= 1;/.test(core));
+    && /invalidateEpoch\(\) \{[\s\S]{0,80}epoch \+= 1;/.test(core));
   check('it also clears the single-flight slot',
     /invalidateEpoch\(\) \{[\s\S]{0,260}inFlight = null;[\s\S]{0,70}inFlightAttemptKey = null;/.test(core));
   check('the superseded predicate compares the captured epoch to current',

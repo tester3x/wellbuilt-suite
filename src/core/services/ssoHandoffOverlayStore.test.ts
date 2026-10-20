@@ -269,13 +269,11 @@ test('a bare Suite hub return clears an outbound overlay without waiting for sta
 
 // ── Wiring assertions (source-level, same discipline as WB-T's harnesses) ──
 
-test('outbound launch arms BEFORE openURL, with one committed frame between', () => {
+test('general entry does not arm a legacy PKCE overlay or await a frame', () => {
   const src = strip(read('src/core/hooks/useAppLauncher.ts'));
-  const arm = src.indexOf('armSsoHandoffOutbound(audience');
-  const frame = src.indexOf('requestAnimationFrame');
-  const launch = src.indexOf('launchWBApp({ ...options, sso: undefined');
-  assert.ok(arm > -1 && frame > -1 && launch > -1);
-  assert.ok(arm < frame && frame < launch, 'arm → frame → openURL order');
+  assert.ok(!src.includes('armSsoHandoffOutbound'));
+  assert.ok(!src.includes('requestAnimationFrame'));
+  assert.match(src,/startHost: PLATFORM_APP_OPEN_HOST/);
 });
 
 test('the overlay is mounted above the router Stack', () => {

@@ -48,11 +48,11 @@ describe('frozen Suite → WB-T automatic PKCE launch', () => {
     assert.equal(isCredentialFreeLaunchTarget('WELLBUILT-TICKETS'), true);
   });
 
-  it('the launcher hook still arms the tickets audience and sso-start for WB-T', () => {
+  it('general WB-T entry uses app-open without changing the governed PKCE endpoints', () => {
     const hook = read('hooks/useAppLauncher.ts');
     assert.match(hook, /isCredentialFreeLaunchTarget\(options\.scheme\)/);
-    assert.match(hook, /SSO_AUDIENCE_WBT/);
-    assert.match(hook, /WBT_SSO_START_HOST/);
+    assert.match(hook, /PLATFORM_APP_OPEN_HOST/);
+    assert.match(hook, /startHost: PLATFORM_APP_OPEN_HOST/);
     assert.match(hook, /sso: undefined/);
   });
 });

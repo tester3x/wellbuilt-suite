@@ -1,3 +1,4 @@
+const {useAppAccess}=require('../../../modules/wellbuilt-platform/appAccess');
 import {buildPlatformAppEntryUrl} from '../services/platformRuntime.generated';
 import {readLocalIdentity} from '../services/authReconciliation';
 import { isEquipmentAppTarget, EQUIPMENT_APP_START } from '../services/equipmentAppAccessCore';
@@ -117,9 +118,10 @@ export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getI
   // Refs for PanResponder closure (always has current dimensions)
   const screenRef = useRef({ w: screenW, h: screenH });
   screenRef.current = { w: screenW, h: screenH };
-  const [apps, setApps] = useState<AppEntry[]>([]);
+  const [apps, setApps] = useState<AppEntry[]>(FALLBACK_APPS);
   const [tier, setTier] = useState<string>('god'); // Default to god — Firestore overrides
   const [isOpen, setIsOpen] = useState(false);
+  const accountPermits=useAppAccess(isOpen);
   const [isDragging, setIsDragging] = useState(false);
 
   // Shift timer state
@@ -309,9 +311,9 @@ export default function AppSwitcher({ badgeSource, selfScheme, firestoreDb, getI
     return apps.filter(app =>
       app.enabled !== false &&
       app.deepLinkScheme !== effectiveSelfScheme &&
-      allowed.includes(app.requiredTier),
+      (accountPermits(app) ?? allowed.includes(app.requiredTier)),
     );
-  }, [apps, tier, effectiveSelfScheme]);
+  }, [apps, tier, effectiveSelfScheme,accountPermits]);
 
   // ── Save position ──────────────────────────────────────────────────────
 
