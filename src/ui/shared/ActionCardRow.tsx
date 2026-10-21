@@ -95,7 +95,7 @@ function getShiftColor(startIso: string | null): string {
 
 export function ActionCardRow({ active, returning, returnStartTime, shiftStartTime, onStartShift, onStartReturn, onArrived, jsaMode, jsaPending, onJsaLaunch }: ActionCardRowProps) {
   const { t } = useTranslation();
-  const { launchWBApp } = useAppLauncher();
+  const { launchWBApp, canUseApp } = useAppLauncher();
   const { user, shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
   const [preTripMissing, setPreTripMissing] = useState(false);
   useEffect(() => {
@@ -490,7 +490,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
             scheme: 'wbequipment',
             androidPackage: 'com.wellbuilt.equipment',
           })}
-          style={[s.card, s.cardWallet]}
+          disabled={!canUseApp({scheme:'wbequipment'})}
+          style={[s.card, s.cardWallet, !canUseApp({scheme:'wbequipment'}) && {opacity:0.35}]}
         >
           <MaterialCommunityIcons name="truck" size={28} color={colors.brand.accent} />
           <Text style={[s.label, { color: colors.brand.accent }]}>{t('actionCard.eEquipment')}</Text>

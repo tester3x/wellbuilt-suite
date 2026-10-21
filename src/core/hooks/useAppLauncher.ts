@@ -1,3 +1,4 @@
+const {useAppAccess}=require('../../../modules/wellbuilt-platform/appAccess');
 import {PLATFORM_APP_OPEN_HOST} from '../services/platformRuntime.generated';
 import { isEquipmentAppTarget } from '../services/equipmentAppAccessCore';
 import { useCallback, useMemo } from 'react';
@@ -16,6 +17,7 @@ import {
 
 
 export function useAppLauncher() {
+  const accountPermits=useAppAccess(true);
   const { user, activePackageId, shiftStartTime, shiftActive } = useAuth();
 
   // Governed DVIR launches never attach URI hash identity (PKCE only).
@@ -76,6 +78,7 @@ export function useAppLauncher() {
 
   return {
     canLaunchApp: checkCanLaunch,
+    canUseApp: (target: {scheme?:string;androidPackage?:string}) => accountPermits(target)!==false,
     launchWBApp: launchWB,
     dvirGate,
   };

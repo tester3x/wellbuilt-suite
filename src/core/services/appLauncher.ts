@@ -1,3 +1,4 @@
+const {checkAppAccess}=require('../../../modules/wellbuilt-platform/appAccess');
 import {PLATFORM_APP_OPEN_HOST,buildPlatformAppEntryUrl} from './platformRuntime.generated';
 import { isEquipmentAppTarget, equipmentAppEntryUrl } from './equipmentAppAccessCore';
 import { Linking, Alert, Platform } from 'react-native';
@@ -115,6 +116,17 @@ export async function canLaunchApp(scheme?: string): Promise<boolean> {
 export async function launchWBApp(options: WBAppLaunchOptions): Promise<void> {
   const { name, scheme, androidPackage, webUrl, sso, startHost } = options;
   const t = i18n.t.bind(i18n);
+  // The same cached app list protects cards, detail pages and shared actions.
+  // Read again at tap time so a logout/account change cannot use a stale hook.
+  try {
+    if(await checkAppAccess({scheme,androidPackage})===false){
+      Alert.alert('App access unavailable','This app is not included in your WellBuilt account.');
+      return;
+    }
+  } catch {
+    Alert.alert('App access unavailable','Could not read your saved account. Return to Suite and retry.');
+    return;
+  }
   if (isEquipmentAppTarget(scheme, androidPackage)) {
     try {
       await Linking.openURL(equipmentAppEntryUrl(options.entryOwner||options.equipmentEntryOwner));

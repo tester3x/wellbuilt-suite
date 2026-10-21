@@ -17,7 +17,7 @@ import { fetchPendingDispatches, DispatchSummary } from '@/core/services/dispatc
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { user, logout, isAuthenticated, shiftActive, shiftStartTime, returningToYard, returnDepartTime, startShift, startReturn, confirmArrival } = useAuth();
-  const { launchWBApp } = useAppLauncher();
+  const { launchWBApp, canUseApp } = useAppLauncher();
   const { hasLaunched } = useFirstLaunch();
   const insets = useSafeAreaInsets();
   const greeting = useGreeting();
@@ -61,6 +61,7 @@ export default function HomeScreen() {
   const roleLabel = t(`home.roles.${user.role}`);
   // Filter out WB M for unrouted-only drivers
   const companyApps = wellbuiltApps.filter(app => {
+    if (!canUseApp(app)) return false;
     if (app.id === 'wellbuilt-mobile' && user.companyId) {
       const routes = user.assignedRoutes;
       if (routes === undefined) return true;
