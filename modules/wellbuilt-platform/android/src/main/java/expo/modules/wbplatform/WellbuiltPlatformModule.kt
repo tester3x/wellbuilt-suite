@@ -41,6 +41,15 @@ class WellbuiltPlatformModule:Module(){
    val id=current?.let{JSONObject(it).getJSONObject("access").getString("grantId")}
    if(id!=expectedGrant)return false
    val raw=mutation(current) ?: return false
+   if(current!=null){
+    val previous=JSONObject(current);val candidate=JSONObject(raw)
+    val a=previous.getJSONObject("access");val b=candidate.getJSONObject("access")
+    val previousOwner=a.getJSONObject("owner");val nextOwner=b.getJSONObject("owner")
+    val sameOwner=listOf("uid","driverId","companyId").all{previousOwner.getString(it)==nextOwner.getString(it)}
+    if(!AccountRecordPolicy.mayReplace(a.getString("grantId")==b.getString("grantId"),sameOwner,
+      previous.optBoolean("revoked",false),candidate.optBoolean("revoked",false),
+      a.optLong("checkedAtMs",0),b.optLong("checkedAtMs",0)))return false
+   }
    if(AccountStore.writeIfUnchanged(c,before,raw)){
     AccountStore.notifyChanged(c)
     return true
