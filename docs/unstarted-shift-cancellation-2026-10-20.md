@@ -20,7 +20,10 @@ Suite to refresh authoritative shift state.
 Validation before build: 16 focused client tests pass; TypeScript and Android
 export pass. Broader shift authority suite: 212/214 pass; two existing source
 assertions expect `mayUseDateFallback` in unchanged `app/day-summary.tsx`.
-Backend companion has 17 focused tests. Deployment/device verification pending.
+Backend companion has 17 focused tests. Existing DVIR gate suite also passes
+all 91 tests. Both backend callables are deployed; Suite 90 build
+`30143d10-ee1c-4d96-b0a7-eddd11b42b93` uses runtime source `5498834`.
+Device cancellation verification pending build completion.
 
 No TicketTime laptop source or ZFold work records changed. Existing generated
 SSO protocol line-ending-only status is outside this change.
