@@ -1,5 +1,5 @@
 /**
- * Test-only ETC target routing. Shipped dispatch stays disabled.
+ * Production and explicitly isolated field-test ETC target routing.
  * Run: npx tsx --test src/core/services/etcStart/etcBuildTarget.test.ts
  */
 import assert from 'node:assert/strict';
@@ -58,6 +58,24 @@ type Plan =
 const FIELD_PACKAGE = 'com.wellbuilt.electronictimecard.fieldtest';
 const FIELD_AUTHORITY = 'com.wellbuilt.electronictimecard.fieldtest.suitehos';
 const CERT = '349bac3a8a8462a223d9eeb8dc4511fb5091a81a3d48e819b94d46bf68ea75b7';
+
+test('normal device profiles inherit production ETC; only etc-preview is isolated', () => {
+  const profiles = JSON.parse(readFileSync(join(REPO, 'eas.json'), 'utf8')).build;
+  function envFor(name: string, seen = new Set<string>()): Record<string, string> {
+    assert.ok(!seen.has(name), 'cyclic build profile');
+    seen.add(name);
+    const profile = profiles[name];
+    assert.ok(profile, `missing profile ${name}`);
+    return { ...(profile.extends ? envFor(profile.extends, seen) : {}), ...profile.env };
+  }
+  for (const name of ['preview', 'production', 'device-preview', 'account-device-test']) {
+    const target = etcTargetForEnv(envFor(name));
+    assert.equal(target.profile, 'production', name);
+    assert.equal(target.dispatchEnabled, true, name);
+    assert.equal(target.etcPackageName, 'com.wellbuilt.electronictimecard', name);
+  }
+  assert.equal(etcTargetForEnv(envFor('etc-preview')).dispatchEnabled, false);
+});
 
 function enabledField(): Target {
   return { ...FIELD_TEST_ETC_TARGET, dispatchEnabled: true };

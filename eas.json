@@ -31,7 +31,7 @@
       "extends": "preview"
     },
     "account-device-test": {
-      "extends": "etc-preview",
+      "extends": "preview",
       "android": {
         "gradleCommand": ":app:assembleRelease -PreactNativeArchitectures=arm64-v8a"
       }
