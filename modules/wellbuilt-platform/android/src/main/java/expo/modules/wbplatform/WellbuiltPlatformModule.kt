@@ -32,6 +32,22 @@ class WellbuiltPlatformModule:Module(){
     .thenBy{if(JSONObject(it).optBoolean("revoked",false))1 else 0}
     .thenBy{JSONObject(it).getJSONObject("access").optLong("checkedAtMs",0)})
  }
+ /** Discover peers outside every local account monitor. Holding A's store
+  * while reading B lets concurrent B->A publication deadlock across Binder. */
+ private fun mutateAccount(c:Context,expectedGrant:String?,mutation:(String?)->String?):Boolean {
+  repeat(3){
+   val before=AccountStore.read(c)
+   val current=latest(c)
+   val id=current?.let{JSONObject(it).getJSONObject("access").getString("grantId")}
+   if(id!=expectedGrant)return false
+   val raw=mutation(current) ?: return false
+   if(AccountStore.writeIfUnchanged(c,before,raw)){
+    AccountStore.notifyChanged(c)
+    return true
+   }
+  }
+  return false
+ }
  override fun definition()=ModuleDefinition {
   Name("WellbuiltPlatform")
   Events("connectionChanged","accountChanged")
@@ -54,16 +70,12 @@ class WellbuiltPlatformModule:Module(){
   AsyncFunction("connectionState"){ ->mapOf("reachable" to reachable())}
   AsyncFunction("readAccount"){ ->latest(context())}
   AsyncFunction("publishAccount"){raw:String,expectedGrant:String?->
-   synchronized(AccountStore){
-    val c=context();val current=latest(c);val id=current?.let{JSONObject(it).getJSONObject("access").getString("grantId")}
-    if(id!=expectedGrant)false else {AccountStore.write(c,raw);true}
-   }
+   mutateAccount(context(),expectedGrant){raw}
   }
   AsyncFunction("revokeAccount"){grantId:String->
-   synchronized(AccountStore){
-    val c=context();val current=latest(c)
-    if(current==null||JSONObject(current).getJSONObject("access").getString("grantId")!=grantId)false
-    else {val row=JSONObject(current);row.remove("credential");row.put("revoked",true);AccountStore.write(c,row.toString());true}
+   mutateAccount(context(),grantId){current->
+    if(current==null)null
+    else {val row=JSONObject(current);row.remove("credential");row.put("revoked",true);row.toString()}
    }
   }
  }

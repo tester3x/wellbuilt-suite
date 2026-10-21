@@ -25,7 +25,7 @@ internal object AccountStore {
   val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,Base64.decode(parts[0],Base64.NO_WRAP)))
   String(cipher.doFinal(Base64.decode(parts[1],Base64.NO_WRAP)),Charsets.UTF_8)
  }catch(_:Exception){null} }
- @Synchronized fun write(c:Context,raw:String){
+ @Synchronized private fun write(c:Context,raw:String){
   require(raw.length<=65536)
   val row=JSONObject(raw);val access=row.getJSONObject("access");require(access.getInt("version")==1)
   require(access.getString("grantId").matches(Regex("[a-f0-9]{64}")))
@@ -35,6 +35,12 @@ internal object AccountStore {
   val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key())
   val encoded=Base64.encodeToString(cipher.iv,Base64.NO_WRAP)+":"+Base64.encodeToString(cipher.doFinal(raw.toByteArray(Charsets.UTF_8)),Base64.NO_WRAP)
   check(c.getSharedPreferences(alias,Context.MODE_PRIVATE).edit().putString("account",encoded).commit())
-  c.contentResolver.notifyChange(Uri.parse("content://"+c.packageName+".wbplatform"),null)
  }
+ /** Local CAS only. Never perform peer-provider IPC while holding this monitor. */
+ @Synchronized fun writeIfUnchanged(c:Context,expectedLocal:String?,raw:String):Boolean {
+  if(read(c)!=expectedLocal)return false
+  write(c,raw)
+  return true
+ }
+ fun notifyChanged(c:Context){c.contentResolver.notifyChange(Uri.parse("content://"+c.packageName+".wbplatform"),null)}
 }
