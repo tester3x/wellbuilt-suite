@@ -500,6 +500,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       {preTripMissing && <Pressable accessibilityRole="button" onPress={() => router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
         <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>Resume Pre-Trip DVIR</Text>
       </Pressable>}
+      {preTripMissing && !returning && shiftAuthorityUi.kind === 'open' && <Pressable accessibilityRole="button" onPress={() => router.push('/cancel-unstarted-shift' as never)} style={{padding:14}}>
+        <Text style={{color:colors.text.muted,textAlign:'center'}}>Cancel unstarted shift</Text>
+      </Pressable>}
       {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
 
       {/* JSA Required banner + JsaChoiceModal both removed (4/24/2026).
