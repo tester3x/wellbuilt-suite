@@ -13,3 +13,10 @@ The ZFold completed 21 interrupted-entry/reopen cases across all seven apps, onl
 Canonical mirror verification, 19 shared recovery/device tests, eight actual account-adapter cases and four actual entry-readiness cases pass. TicketTime comparable baseline retains the same 39 failing suites/86 failing tests on old and new gate; no clean full-suite claim. Its internal APK preserves the authoritative laptop working source in an isolated WIP checkpoint; original laptop changes remain intact.
 
 Private evidence remains outside Git. No backend, Hosting or demo changes. See the shared platform rollout report for the final broader sweep results.
+
+
+## Final on-shift device validation (October 20 evening)
+
+Installed with data preserved on S24 and ZFold: Suite89, Tickets207, Mobile91, JSA87, Equipment80, ETC119 and TicketTime133. This app uses the exact broker2 source/build recorded in the private rollout manifest; Equipment80 is the later d584c8c recovery fix. Native shared account policy is f0af06e. The 99 entry sweep and 21 early-interruption cases retained shared login and the existing Suite shift online/offline/reconnected. Actual Suite buttons to Equipment/Mobile/Tickets/JSA were repeated twice online/offline: online content in one-second samples; Mobile offline overlay cleared between one and four seconds. No universal instant-entry claim.
+
+Equipment's targeted interrupted authorization now recovered the original pre-trip; accepted-route warm online/offline reopening appeared in one-second samples and cold offline reopening in the three-second sample. Fresh DVIR authorization still took about thirty seconds through its network path. No physical inspection/signature/job/JSA acknowledgement was submitted. ETC HOS remained off because pre-trip was not completed. The S24 software-test shift remains active; normal closure is Post-Trip gated. S10 was disconnected. No backend, Hosting or demo deployment changed. Private device evidence remains outside Git. Shared handoff: wellbuilt-contracts docs/on-shift-switching-2026-10-20.md, checkpoint7a43468.
