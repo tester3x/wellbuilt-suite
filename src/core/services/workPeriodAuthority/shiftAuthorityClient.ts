@@ -287,7 +287,8 @@ export function mapHttpsError(err: unknown): ShiftAuthorityError {
     return new ShiftAuthorityError('callable_absent', 'callable_absent', code || undefined, details);
   }
   if (
-    code.includes('unavailable')
+    code === 'platform/delivery-held'
+    || code.includes('unavailable')
     || code.includes('deadline')
     || code.includes('resource-exhausted')
     || code.includes('internal')

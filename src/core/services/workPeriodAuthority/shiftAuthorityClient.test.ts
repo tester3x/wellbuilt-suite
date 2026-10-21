@@ -339,7 +339,7 @@ test('an absent callable is callable_absent, not transport', () => {
     assert.notEqual(e.message, 'callable_unavailable', 'must not be bucketed as transport');
   }
   // Genuine transport codes still map to transport.
-  for (const code of ['functions/unavailable', 'functions/deadline-exceeded', 'functions/internal']) {
+  for (const code of ['functions/unavailable', 'functions/deadline-exceeded', 'functions/internal', 'platform/delivery-held']) {
     assert.equal(mapHttpsError({ code, message: '' }).failure, 'transport', code);
   }
 });
