@@ -11,7 +11,11 @@ export async function hosBlocksUnstartedCancellation(
   if (stored.kind === 'missing') return false;
   if (stored.kind !== 'ok') return true;
   const result = await port.call('cancelStart', encodeEtcStartRequest(stored.record.request));
-  if (!result.ok) return true;
+  if (!result.ok) {
+    console.info('[shiftCancellation] HOS provider refused:', result.reason);
+    return true;
+  }
   const status = acceptEchoedEtcStatus(stored.record.request, result.response);
+  console.info('[shiftCancellation] HOS cancellation check:', status ? `${status.state}/${status.hos}` : 'unverified_response');
   return !(status?.hos === 'not_started' && ['cancelled', 'rejected', 'expired'].includes(status.state));
 }

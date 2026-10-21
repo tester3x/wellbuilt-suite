@@ -10,7 +10,7 @@ export async function cancelUnstartedShiftFlow(reason: string, deps: CancelDepen
   const owner = await deps.context();
   if (!owner) throw Error('Restore your active shift before cancelling.');
   if (await deps.hasInspection(owner.periodId)) throw Error('An inspection has been recorded. Use the normal End Shift process.');
-  if (await deps.hasHosRequest(owner)) throw Error('An HOS start has been requested. Use the normal End Shift process.');
+  if (await deps.hasHosRequest(owner)) throw Error('ETC has not confirmed that HOS is off. Keep this shift and retry, or use End Shift if you worked.');
   const current = await deps.context();
   if (!current || (['uid', 'driverId', 'companyId', 'periodId'] as const).some(k => current[k] !== owner[k])) {
     throw Error('Your account or shift changed. Return to Suite and try again.');

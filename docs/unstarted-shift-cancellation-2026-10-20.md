@@ -25,5 +25,18 @@ all 91 tests. Both backend callables are deployed; Suite 90 build
 `30143d10-ee1c-4d96-b0a7-eddd11b42b93` uses runtime source `5498834`.
 Device cancellation verification pending build completion.
 
+Suite 90 was installed on the S24 and correctly retained the shift when HOS
+could not be verified. Investigation found `account-device-test` inherits
+`etc-preview` with `SUITE_ETC_FIELD_TEST=1`, disabling native HOS dispatch while
+still retaining an outbox request. ETC's production provider had never received
+that request. Do not treat an unverified request as proof that work occurred.
+
+Follow-up build uses `device-preview` (production provider identity, ARM64),
+not the intentionally disabled HOS test target. The companion ETC 120 change
+can retire a never-dispatched request only after its native authority confirms
+HOS is off. Suite adds safe refusal/status diagnostics and accurate copy when
+the HOS state remains unverified. Actual cancellation remains pending until
+these builds are installed and the signed provider confirms the unused request.
+
 No TicketTime laptop source or ZFold work records changed. Existing generated
 SSO protocol line-ending-only status is outside this change.
