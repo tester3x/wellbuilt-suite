@@ -33,6 +33,8 @@ interface DaySummaryInvoice {
   timeline: TimelineEvent[];
   createdAt: string;
   closedAt?: string;
+  dispatchSplitGroupId?: string;
+  dispatchSplitSequence?: number;
 }
 
 export interface WellStat {
@@ -377,6 +379,8 @@ export async function fetchCompletedLoads(opts: {
         timeline,
         createdAt: (row.createdAt as string) || (row.invoiceStartedAt as string) || '',
         closedAt: (row.closedAt as string) || '',
+        dispatchSplitGroupId: typeof row.dispatchSplitGroupId === 'string' ? row.dispatchSplitGroupId : undefined,
+        dispatchSplitSequence: typeof row.dispatchSplitSequence === 'number' ? row.dispatchSplitSequence : undefined,
       });
       }
     }
@@ -743,9 +747,25 @@ export function jsaCardPresentation(input: {
 
 // ── Summary calculation ──────────────────────────────────────────────────────
 
-/**
- * Build a complete day summary from invoices + shift data.
- */
+/** Input is already scoped to one driver/company and the current shift. */
+export function physicalLoadInvoices(invoices: DaySummaryInvoice[]): DaySummaryInvoice[] {
+  const loads = new Map<string, DaySummaryInvoice>();
+  for (const invoice of invoices) {
+    const group = invoice.dispatchSplitGroupId?.trim();
+    const key = group ? `split:${group}` : `invoice:${invoice.id}`;
+    const previous = loads.get(key);
+    const sequence = (row: DaySummaryInvoice) =>
+      Number.isInteger(row.dispatchSplitSequence) && row.dispatchSplitSequence! > 0
+        ? row.dispatchSplitSequence! : Number.MAX_SAFE_INTEGER;
+    if (!previous || sequence(invoice) < sequence(previous)
+      || (sequence(invoice) === sequence(previous) && invoice.id < previous.id)) {
+      loads.set(key, invoice);
+    }
+  }
+  return [...loads.values()];
+}
+
+/** Build a complete day summary from invoices + shift data. */
 export function calculateDaySummary(
   invoices: DaySummaryInvoice[],
   shiftEvents: TimelineEvent[],
@@ -813,14 +833,18 @@ export function calculateDaySummary(
     return tA - tB;
   });
 
-  // Loads = count of completed invoices within shift
-  const totalLoads = shiftInvoices.length;
-  const totalBBL = shiftInvoices.reduce((sum, i) => sum + i.totalBBL, 0);
+  // Split tickets bill the same cargo at two stops. Count that cargo once,
+  // preferring the source (A) invoice regardless of query order. Keep every
+  // invoice above for activity timing. haulGroupId alone is NOT a split: a
+  // multi-haul has distinct source quantities which must all remain counted.
+  const physicalLoads = physicalLoadInvoices(shiftInvoices);
+  const totalLoads = physicalLoads.length;
+  const totalBBL = physicalLoads.reduce((sum, i) => sum + i.totalBBL, 0);
 
   // Unique wells visited during shift + per-well BBL/load stats
   const wellSet = new Set<string>();
   const wellMap = new Map<string, { bbls: number; loads: number }>();
-  for (const inv of shiftInvoices) {
+  for (const inv of physicalLoads) {
     if (inv.wellName) {
       wellSet.add(inv.wellName);
       const existing = wellMap.get(inv.wellName) || { bbls: 0, loads: 0 };
