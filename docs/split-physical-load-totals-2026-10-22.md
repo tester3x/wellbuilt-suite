@@ -17,6 +17,8 @@ REST identity projection, order independence, split vs multi-haul quantities,
 both split legs' activity, completed/created joins and cross-midnight windows.
 The actual audited private split pairs now reproduce one load per family using
 the source calculation. Operational records remain outside Git.
+Project TypeScript checking also passes after the focused test-fixture types were
+corrected; no application build was run.
 
 The unrelated generated SSO file was already modified before this work and is
 excluded from this checkpoint. Next device acceptance awaits a requested build.

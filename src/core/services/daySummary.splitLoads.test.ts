@@ -11,10 +11,9 @@ const row = (id: string, bbl: number, group?: string, sequence?: number) => ({
 test('split cargo counts once, source wins in either query order; multi-haul quantities remain distinct', () => {
   const a = row('source', 140, 'split-test', 1);
   const b = row('destination', 140, 'split-test', 2);
+  const multi = [{...row('multi-a', 70), haulGroupId: 'multi'}, {...row('multi-b', 70), haulGroupId: 'multi'}];
   for (const pair of [[a, b], [b, a]]) {
-    const result = calculateDaySummary([...pair,
-      {...row('multi-a', 70), haulGroupId: 'multi'},
-      {...row('multi-b', 70), haulGroupId: 'multi'}], []);
+    const result = calculateDaySummary([...pair, ...multi], []);
     assert.equal(result.totalLoads, 3);
     assert.equal(result.totalBBL, 280);
     assert.deepEqual(result.wellStats.find(w => w.name === 'source'), {name: 'source', bbls: 140, loads: 1});
@@ -45,7 +44,7 @@ test('REST projection preserves split identity before the calculation', async ()
     fields: {driverId:{stringValue:'driver'},companyId:{stringValue:'company'},status:{stringValue:'closed'},
       createdAt:{stringValue:'2026-10-21T12:00:00Z'},totalBBL:{integerValue:'140'},
       dispatchSplitGroupId:{stringValue:'split'},dispatchSplitSequence:{integerValue:String(index+1)}}
-  }}))})) as typeof fetch;
+  }}))})) as unknown as typeof fetch;
   try {
     const result = await fetchCompletedLoads({identity:{driverId:'driver'}, companyId:'company',authHeaders:async()=>({Authorization:'Bearer test'})});
     assert.equal(result.ok, true);
