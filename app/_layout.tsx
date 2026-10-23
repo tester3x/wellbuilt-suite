@@ -1,3 +1,4 @@
+import ShiftPreparation from '../src/core/components/ShiftPreparation';
 import React, { useEffect, useRef, useState } from 'react';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -149,6 +150,7 @@ function SuiteRootContent() {
               <SplashVisibilityGate laidOut={laidOut}/>
               <StatusBar style="light" />
               <OfflineBanner />
+              <ShiftPreparation />
               <DvirReceiptListener />
               <DvirHandoffHost />
               <Stack

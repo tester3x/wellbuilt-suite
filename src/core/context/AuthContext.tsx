@@ -1,3 +1,4 @@
+import {prepareShiftJsa,preparedShiftJsa} from '../services/preparedShiftJsa';
 // src/core/context/AuthContext.tsx
 // Firebase-backed driver authentication context.
 // Replaces the old hardcoded demo auth with real Firebase RTDB auth
@@ -780,6 +781,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           },
         });
         console.log('[AuthContext] Shift claimed for:', user.displayName, 'package:', pkg || 'none');
+        void prepareShiftJsa(claim.periodId);
         // Every ETC import stays inside this boundary. A module-load failure
         // must not reach the outer startShift catch after the server accepted.
         const acceptedBinding = {
@@ -901,6 +903,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!authorityGenRef.current.isCurrent(gen)) {
         return { ok: false, reason: 'stale_generation' };
       }
+      void prepareShiftJsa(shiftId);
       console.log('[AuthContext] Shift started (legacy) for:', user.displayName);
       return { ok: true };
     } catch (err) {
@@ -1177,6 +1180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           writeOdometerMiles(user.driverId, odometerMiles, { enforcedExplicit: false }).catch(() => {}));
       }
     }
+    if (shiftEndOk) await preparedShiftJsa.endShift(periodId).catch(()=>{});
     if (shiftEndOk) await endEtcForSuiteShift(user, periodId).catch(error => console.warn('[ETC] End remains pending:', String(error)));
     // NOTE: shiftId is intentionally NOT cleared here. Day Summary needs
     // it to scope the JSA query (jsa_day_status WHERE shiftId == X).
@@ -1263,6 +1267,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (isEnforcedExplicitShift(enforcement)) {
           const periodId = await getCurrentShiftId();
           const closed = await closeEnforcedExplicit({ periodId });
+          if (closed.ok) await preparedShiftJsa.endShift(periodId).catch(()=>{});
           if (closed.ok) await endEtcForSuiteShift(user, periodId).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!closed.ok) {
             console.warn('[logoutWithCascade] closeDriverShift failed:', closed.reason);
@@ -1277,6 +1282,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             undefined,
             { enforcedExplicit: false, allowDirectWrite: true },
           ).catch(() => false);
+          if (shiftEndOk) await preparedShiftJsa.endShift(await getCurrentShiftId()).catch(()=>{});
           if (shiftEndOk) await endEtcForSuiteShift(user, await getCurrentShiftId()).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!shiftEndOk) {
             console.warn('[logoutWithCascade] logout shift event did not persist after retry');
@@ -1387,6 +1393,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (isEnforcedExplicitShift(enforcement)) {
           const periodId = await getCurrentShiftId();
           const closed = await closeEnforcedExplicit({ periodId });
+          if (closed.ok) await preparedShiftJsa.endShift(periodId).catch(()=>{});
           if (closed.ok) await endEtcForSuiteShift(user, periodId).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!closed.ok) {
             console.warn('[logout] closeDriverShift failed:', closed.reason);
@@ -1401,6 +1408,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             undefined,
             { enforcedExplicit: false, allowDirectWrite: true },
           ).catch(() => false);
+          if (shiftEndOk) await preparedShiftJsa.endShift(await getCurrentShiftId()).catch(()=>{});
           if (shiftEndOk) await endEtcForSuiteShift(user, await getCurrentShiftId()).catch(error => console.warn('[ETC] End remains pending:', String(error)));
           if (!shiftEndOk) {
             console.warn('[logout] logout shift event did not persist after retry');

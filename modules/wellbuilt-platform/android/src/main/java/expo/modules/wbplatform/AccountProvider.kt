@@ -10,6 +10,8 @@ class AccountProvider:ContentProvider(){
  override fun call(method:String,arg:String?,extras:Bundle?):Bundle {
   val c=context ?: throw SecurityException("unavailable")
   if(!AccountTrust.caller(c,Binder.getCallingUid()))throw SecurityException("untrusted_caller")
+  if(method=="jsaKeys"&&arg==null&&extras==null)return Bundle().apply{putString("value",JsaStore.keys(c))}
+  if(method=="jsaRead"&&arg!=null&&extras==null)return Bundle().apply{putString("value",JsaStore.read(c,arg))}
   if(method!="read"||arg!=null||extras!=null)throw SecurityException("unsupported")
   return Bundle().apply{putString("record",AccountStore.read(c))}
  }

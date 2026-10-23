@@ -77,6 +77,23 @@ class WellbuiltPlatformModule:Module(){
   }
   OnDestroy {accountObserver?.let{context().contentResolver.unregisterContentObserver(it)};accountObserver=null;callback?.let{try{connectivity?.unregisterNetworkCallback(it)}catch(_:Exception){}};callback=null;connectivity=null}
   AsyncFunction("connectionState"){ ->mapOf("reachable" to reachable())}
+  AsyncFunction("jsaKeys"){ ->
+   val c=context();val keys=mutableSetOf<String>()
+   fun add(raw:String?){if(raw!=null){val a=org.json.JSONArray(raw);for(i in 0 until a.length())keys.add(a.getString(i))}}
+   add(JsaStore.keys(c))
+   for(pkg in AccountTrust.pins.keys){if(pkg==c.packageName||!AccountTrust.trusted(c,pkg))continue
+    try{add(c.contentResolver.call(Uri.parse("content://"+pkg+".wbplatform"),"jsaKeys",null,null)?.getString("value"))}catch(_:Exception){}
+   };keys.toList().sorted()
+  }
+  AsyncFunction("jsaRead"){key:String ->
+   val c=context();var raw=JsaStore.read(c,key)
+   if(raw==null)for(pkg in AccountTrust.pins.keys){if(pkg==c.packageName||!AccountTrust.trusted(c,pkg))continue
+    try{raw=c.contentResolver.call(Uri.parse("content://"+pkg+".wbplatform"),"jsaRead",key,null)?.getString("value");if(raw!=null)break}catch(_:Exception){}
+   }
+   raw
+  }
+  AsyncFunction("jsaWriteBatch"){raw:String ->JsaStore.writeBatch(context(),raw)}
+  AsyncFunction("jsaWrite"){key:String,raw:String ->JsaStore.write(context(),key,raw)}
   AsyncFunction("readAccount"){ ->latest(context())}
   AsyncFunction("publishAccount"){raw:String,expectedGrant:String?->
    mutateAccount(context(),expectedGrant){raw}
