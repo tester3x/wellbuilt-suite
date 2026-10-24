@@ -44,3 +44,15 @@ inspection and equipment set; subsequent operational work uses the current
 assignment while prior work keeps its original attribution. The internal
 assignment history does not require a third visible user reference. Discuss
 mid-load replacement and per-asset inspection reuse before implementation.
+
+## Software-only test cleanup verified
+
+Suite96 source0d4042c, build11d66b75-c91e-42b8-abda-74ee214e5bef, was verified
+and installed on S24 only. The actual authenticated cancellation UI consumed the
+protected exact-session authorization and returned confirmed cancellation plus
+signed ETC end completion. Independent server read-back confirmed no active test
+period, advanced authority version, the original login and exact test fixtures
+retained in the standard cancellation audit, and no DVIR. ETC independently showed
+START SHIFT/OFF SHIFT. Suite remained signed in and showed Start Shift. The
+software-only test shift and HOS session are no longer running. No real-driver
+work records were changed.
