@@ -114,9 +114,10 @@ test('wiring: resume login backfill carries the cached currentShiftId (no scope-
   assert.ok(/currentShiftId/.test(region.slice(0, 3500)),
     'checkShiftOnResume backfill still writes a login without currentShiftId');
 });
-test('wiring: UTC date fallbacks are enforcement-gated', () => {
-  assert.ok(src('app/day-summary.tsx').includes('mayUseDateFallback'),
-    'day-summary date fallback is not enforcement-gated');
+test('wiring: summary uses its selected shift and remaining date fallback is enforcement-gated', () => {
+  const summary = src('app/day-summary.tsx');
+  assert.match(summary, /loadShiftJsaSummary\([\s\S]*?jsaScope\.shiftId\)/, 'summary must pass its selected shift to JSA loading');
+  assert.doesNotMatch(summary, /toISOString\(\)\.slice\(0,\s*10\)/, 'summary must not mint a scope from the current UTC date');
   assert.ok(src('src/core/services/jsaShiftAck.ts').includes('mayUseDateFallback'),
     'jsaShiftAck date fallback is not enforcement-gated');
 });

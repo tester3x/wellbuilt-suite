@@ -155,7 +155,9 @@ test('10. date fallback policy independent of synthetic-close path', () => {
     assert.equal(mayUseDateFallback(s), enforcementAllowsSyntheticClose(s));
   }
   assert.ok(src('src/core/services/jsaShiftAck.ts').includes('mayUseDateFallback'));
-  assert.ok(src('app/day-summary.tsx').includes('mayUseDateFallback'));
+  // Day Summary removed the fallback altogether; it uses a selected shift.
+  assert.match(src('app/day-summary.tsx'), /loadShiftJsaSummary\([\s\S]*?jsaScope\.shiftId\)/);
+  assert.doesNotMatch(src('app/day-summary.tsx'), /toISOString\(\)\.slice\(0,\s*10\)/);
   assert.ok(!src('src/core/services/jsaShiftAck.ts').includes('resolveSyntheticCloseDecision'));
   const tracking = src('src/core/services/shiftTracking.ts');
   assert.ok(tracking.includes('observeEnforcementSafety'));
