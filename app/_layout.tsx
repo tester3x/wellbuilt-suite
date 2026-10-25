@@ -123,18 +123,19 @@ function SplashVisibilityGate({laidOut}:{laidOut:boolean}) {
 function SuiteRootContent() {
   const [laidOut,setLaidOut]=useState(false);
   useEffect(() => {
-    // Full-screen immersive mode — hide Android navigation bar
-    const hideNavBar = () => {
+    // Keep Android navigation reachable; screen controls clear the live bottom inset.
+    const showNavBar = () => {
       if (Platform.OS === 'android') {
-        NavigationBar.setVisibilityAsync('hidden');
-        NavigationBar.setBehaviorAsync('overlay-swipe');
-        NavigationBar.setBackgroundColorAsync('#00000000');
+        NavigationBar.setVisibilityAsync('visible').catch(() => {});
+        NavigationBar.setBehaviorAsync('inset-touch').catch(() => {});
+        NavigationBar.setBackgroundColorAsync('#00000000').catch(() => {});
+        NavigationBar.setButtonStyleAsync('light').catch(() => {});
       }
     };
-    hideNavBar();
-    // Re-hide nav bar when app returns to foreground (deep links can re-show it)
+    showNavBar();
+    // Reapply after a deep link or another app changes system-bar visibility.
     const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') hideNavBar();
+      if (state === 'active') showNavBar();
     });
 
     startConnectivityMonitor();
