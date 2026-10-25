@@ -16,3 +16,7 @@ Android JS export passed. Generated bundles and command logs remain outside Git.
 - SHA-256: 200bc0b94227ed1b25324a51d586ec5e5cabab7f181f2118343abaf18adc8c22.
 - APK package/version and cryptographic signature verified; signing certificate matches the previous app APK.
 - Built and downloaded; not installed in this task. Device acceptance of navigation, keyboard, camera and dialogs remains pending.
+
+## Installation 2026-10-25
+
+Installed the verified APK above on both ZFold and S24 using ADB replace-install with app data retained. All installs returned Success. Android package-manager reads on both phones confirmed the expected versionCode. This verifies installation only; drawer/nav/offline UI acceptance remains pending.
