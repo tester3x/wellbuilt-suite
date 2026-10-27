@@ -15,3 +15,13 @@ Validation: ten focused display/summary boundary tests pass, including canonical
 The shared cross-app Shift reference remains the separately documented design in shared-shift-reference-discussion-2026-10-23.md: one reference spanning midnight, plus each ticket/JSA/DVIR's own reference, with original associations preserved across transfers. It has not yet been implemented across record writers/readers. The proposed Back to WB S / Equipment navigation replacement is also separate; no Switcher behavior changed here.
 
 Owner clarified document versus acknowledgement identity: read-once acknowledgements share the signed full read's visible number. Separate full reads keep separate numbers. Backend correction is preserved in codex/jsa-document-number-complete-20261026. The card now uses singular number for a single reference; counts remain separate. Eleven focused display/summary tests pass. No APK built or installed for this source change.
+
+## Suite 98 build and S24 acceptance — 2026-10-26
+
+Built source 689539a32e2f15cc5c613a4be731e5aa79e0fea1 using account-device-test. EAS build 0581e685-98bf-4646-bbcb-2538d60891d6 FINISHED; Android package com.wellbuilt.suite, versionCode 98, versionName 1.0.0, ARM64. APK SHA-256 0F87BC1CC4019B806CDF5288A251CB57051AA02E45DC82430994C8EEA94353FA. Signing certificate SHA-256 a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6 matches the prior Suite APK. APK and EAS logs remain private outside Git.
+
+Prebuild validation passed the eleven display/summary cases, six Suite/ETC production-target checks and SSO mirror verification. The existing generated SSO file reports a working-tree status due to line endings, with no content diff; it was not edited or committed for this work.
+
+Data-preserving replacement on S24 returned Success; Android package manager confirms versionCode 98. Opened the existing summary read-only, without starting, ending or canceling a shift or submitting any load. Fresh accessibility output and screenshot show one singular six-digit JSA reference, while the existing signed-read, acknowledgement and unique-job counts remain separate. The long date/time reference is absent from the card. Independent server read-back confirms the same test shift authority/version, records and shared reference as before installation. Device screenshots/XML remain private outside Git.
+
+S24 acceptance passed. ZFold installation remains pending USB reconnection: ADB currently detects only S24. Do not describe Suite 98 as installed on ZFold yet.
