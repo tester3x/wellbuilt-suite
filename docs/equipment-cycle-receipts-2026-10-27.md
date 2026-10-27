@@ -35,3 +35,7 @@ Suite 101 from deea301 is paired with locally built Equipment 102 from 15f78c1 o
 ## ZFold E102 / S101 installation
 
 On October 27, the user requested rollout of the S24-tested pair. Both exact APK hashes above were rechecked, then replace-installed successfully on ZFold; Android confirms Equipment 102 and Suite 101. Existing app data was retained. Link verification is not yet complete: the phone switched to another user app during the check, so interaction was paused and availability requested. No job arrival, departure, close, shift or signed inspection action was submitted. Do not count installation as a completed handoff verification.
+
+## ZFold link verification completed
+
+After the user made the phone available, actual WB T menu handoffs passed on Equipment 102 / Suite 101: WB eQuipment reached Equipment Home, Breakdown / report a problem reached Shop, and the following warm WB eQuipment handoff returned to Home. The open-shift DVIR card showed pre-trip completed and post-trip still due. Equipment and Suite process IDs remained unchanged across the warm Shop-to-Home handoff; no app restart, timeout or retry was needed. No job, shift or inspection lifecycle operation was submitted. ZFold rollout and requested link checks are complete; forced-timeout/retry acceptance remains the prior S24 test evidence rather than a newly induced ZFold test.
