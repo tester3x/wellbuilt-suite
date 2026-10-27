@@ -11,7 +11,6 @@ import {
   clearPendingEndShift,
   getPendingEndShift,
   getReceipt,
-  hasValidPhase,
   saveReceiptIdempotent,
   setPendingEndShift,
 } from './dvirReceiptStore';
@@ -91,6 +90,8 @@ export interface DvirGateDeps {
     trailer?: string;
   } | null>;
   nowMs?: () => number;
+  /** Production verifies that a cached receipt belongs to the current vehicle cycle. */
+  isCurrentReceipt?: (receipt: PhaseCompletionReceipt) => Promise<boolean>;
   /** Optional UI alert (no-op in tests). */
   alert?: (title: string, message: string) => void;
   /**
@@ -131,17 +132,21 @@ async function shiftIsActive(deps: DvirGateDeps): Promise<boolean> {
 }
 
 export async function isPreTripCompleteForShift(
-  deps: Pick<DvirGateDeps, 'kv'>,
+  deps: Pick<DvirGateDeps, 'kv' | 'isCurrentReceipt'>,
   shiftId: string,
 ): Promise<boolean> {
-  return hasValidPhase(deps.kv, shiftId, 'pre_trip');
+  const receipt = await getReceipt(deps.kv, shiftId, 'pre_trip');
+  return !!receipt && receipt.shiftId === shiftId && receipt.phase === 'pre_trip'
+    && (!deps.isCurrentReceipt || await deps.isCurrentReceipt(receipt));
 }
 
 export async function isPostTripCompleteForShift(
-  deps: Pick<DvirGateDeps, 'kv'>,
+  deps: Pick<DvirGateDeps, 'kv' | 'isCurrentReceipt'>,
   shiftId: string,
 ): Promise<boolean> {
-  return hasValidPhase(deps.kv, shiftId, 'post_trip');
+  const receipt = await getReceipt(deps.kv, shiftId, 'post_trip');
+  return !!receipt && receipt.shiftId === shiftId && receipt.phase === 'post_trip'
+    && (!deps.isCurrentReceipt || await deps.isCurrentReceipt(receipt));
 }
 
 /**
@@ -437,7 +442,9 @@ export async function ingestDvirCompletionUrl(
     return { ok: false, reason: 'Receipt shiftId does not match active shift' };
   }
 
-  const result = await saveReceiptIdempotent(deps.kv, validated.receipt);
+  if (deps.isCurrentReceipt && !await deps.isCurrentReceipt(validated.receipt))
+    return { ok: false, reason: 'This receipt is not confirmed for the current equipment cycle. Return to eQuipment and retry.' };
+  const result = await saveReceiptIdempotent(deps.kv, validated.receipt, !!deps.isCurrentReceipt);
   try {
     console.log(
       `[Suite-DVIR] dvir.receipt.received phase=${validated.receipt.phase} created=${result === 'created' ? 1 : 0}`,

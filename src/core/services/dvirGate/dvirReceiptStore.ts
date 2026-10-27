@@ -37,17 +37,23 @@ export interface DvirReceiptKv {
 export async function saveReceiptIdempotent(
   kv: DvirReceiptKv,
   receipt: PhaseCompletionReceipt,
+  currentEquipmentVerified = false,
 ): Promise<'created' | 'already_exists'> {
   const key = receiptKey(receipt.shiftId, receipt.phase);
   const existingRaw = await kv.getItem(key);
+  let replacing = false;
   if (existingRaw) {
-    try {
-      const existing = JSON.parse(existingRaw) as PhaseCompletionReceipt;
+    let existing: PhaseCompletionReceipt | null = null;
+    try { existing = JSON.parse(existingRaw); } catch { /* replace corrupt */ }
+    if (existing) {
       if (existing.receiptId === receipt.receiptId) return 'already_exists';
-      // Same shift+phase already complete with different receipt — treat as exists
-      return 'already_exists';
-    } catch {
-      /* replace corrupt */
+      replacing = currentEquipmentVerified && existing.inspectionId !== receipt.inspectionId
+        && existing.shiftId === receipt.shiftId && existing.phase === receipt.phase
+        && (!existing.driverHash || existing.driverHash === receipt.driverHash)
+        && Date.parse(receipt.completedAt) >= Date.parse(existing.completedAt);
+      if (!replacing) return 'already_exists';
+      // Archive first. A failed write leaves the old receipt and new completion retryable.
+      await kv.setItem(`${ROOT}/equipmentReceiptHistory/${encodeURIComponent(existing.receiptId)}`, existingRaw);
     }
   }
 
@@ -55,7 +61,7 @@ export async function saveReceiptIdempotent(
   const seen = await loadSeenIds(kv);
   if (seen.includes(receipt.receiptId)) {
     // Already processed under possibly different key — still write shift key if missing
-    if (!existingRaw) {
+    if (!existingRaw || replacing) {
       await kv.setItem(key, JSON.stringify(receipt));
     }
     return 'already_exists';

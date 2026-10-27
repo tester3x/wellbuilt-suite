@@ -5,6 +5,7 @@ import { Alert, Linking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { getCurrentShiftId } from '../shiftTracking';
+import { isCurrentEquipmentReceipt } from './currentEquipmentReceipt';
 import type { DvirGateDeps } from './dvirGateService';
 import {
   ensurePostTripGate,
@@ -72,6 +73,7 @@ export function createSuiteDvirGate(opts?: {
     kv,
     sha256Hex,
     getCurrentShiftId,
+    isCurrentReceipt: isCurrentEquipmentReceipt,
     getSso: opts?.getSso,
     isShiftActive: opts?.isShiftActive,
     openUrl: (url) => Linking.openURL(url),
