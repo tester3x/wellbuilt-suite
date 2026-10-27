@@ -15,3 +15,8 @@ WB S99: EAS 9038e9e9-af8a-49cc-a25d-9f40099879c5, exact source f1caab7b9d70b168b
 Actual summary UI/screenshot: Close bounds y2026–2162, fully above the Android navigation row beginning at y2214. Before: y2110–2246 (32px overlap). Its bounds remain identical at the top and bottom of the scroll. Existing six-digit JSA number, counts and completed DVIR summary remain visible. Tapping Close returns to the signed-in home. Independent before/after server reads confirm unchanged shift authority; no shift lifecycle action or logout was submitted. S24 remains on home. Private evidence: C:/dev/tmp/suite99-footer-top-private.png, suite99-footer-bottom-private.png and suite99-close-home-private.png.
 
 Source and acceptance notes pushed. ZFold installation remains deferred; use S99 instead of the earlier S98 when it becomes available.
+
+
+## ZFold installation completed
+
+At the user's request, replacement-installed the exact S24-tested APKs on ZFold: Tickets270, Mobile112, JSA99, Equipment95 and Suite99. Each APK's download checksum, package/version metadata and expected signing certificate was verified before installation. All five installs returned Success; package-manager readback confirms all five versions. No app data was cleared. TicketTime137 and ETC121 were already current and were retained. No shift, job, load, signature or logout action was taken. Suite was launched; further on-device inspection stopped when Chrome became foreground, to leave the user's phone use uninterrupted. S24 acceptance remains the functional release gate already recorded above; this ZFold check establishes installation/version, not a fresh full workflow test.
