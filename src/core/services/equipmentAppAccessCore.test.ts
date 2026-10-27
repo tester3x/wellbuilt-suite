@@ -59,3 +59,29 @@ test('issuance uses the persisted SDK token without a redundant forced refresh',
  await createEquipmentAccessHandler(h.ops)(req);
  assert.deepEqual(refreshes,[false,false]);assert.equal(h.issued.length,1);
 });
+
+
+test('timeout is not cached: retry revalidates identity and can deliver once',async()=>{
+ const h=harness();let count=0;
+ h.ops.issue=async()=>{if(++count===1)throw {code:'functions/deadline-exceeded'};return {version:1,code:'a'.repeat(43),expiresAtMs:2000};};
+ const run=createEquipmentAccessHandler(h.ops);
+ await assert.rejects(run(req));await run(req);await run(req);
+ assert.equal(count,2);assert.equal(h.opened.length,1);
+});
+
+test('cancelled stalled issuance cannot block retry or open a late callback',async()=>{
+ const h=harness();let active=true;let release!:(v:unknown)=>void;let count=0;
+ h.ops.issue=async()=>{if(++count===1)return new Promise(resolve=>{release=resolve;});return {version:1,code:'b'.repeat(43),expiresAtMs:2000};};
+ const run=createEquipmentAccessHandler(h.ops);const old=run(req,()=>active);
+ await new Promise(resolve=>setImmediate(resolve));active=false;
+ await run(req);release({version:1,code:'a'.repeat(43),expiresAtMs:2000});
+ await assert.rejects(old);await run(req);
+ assert.equal(count,2);assert.equal(h.opened.length,1);assert(h.opened[0].includes('b'.repeat(43)));
+});
+
+test('retry after failure still rejects a changed account',async()=>{
+ const h=harness();h.ops.issue=async()=>{throw {code:'functions/unavailable'};};
+ const run=createEquipmentAccessHandler(h.ops);await assert.rejects(run(req));
+ h.ops.identity=async()=>({uid:'other',kind:'driver',driverId:'other',companyId:'company-a'});
+ await assert.rejects(run(req),/not_authorized/);assert.equal(h.opened.length,0);
+});

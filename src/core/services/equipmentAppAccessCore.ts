@@ -25,13 +25,13 @@ export function equipmentAccessRequest(raw:Record<string,unknown>):{state:string
   return {state:raw.state,codeChallenge:raw.codeChallenge};
 }
 export function createEquipmentAccessHandler(ops:EquipmentAccessOps) {
-  const attempts=new Map<string,{at:number;work:Promise<void>}>();
+  const attempts=new Map<string,{at:number;work:Promise<void>;current:()=>boolean;succeeded:boolean}>();
   return (raw:Record<string,unknown>, stillCurrent:()=>boolean=()=>true):Promise<void>=>{
     let request:{state:string;codeChallenge:string};
     try{request=equipmentAccessRequest(raw);}catch(e){return Promise.reject(e);}
     const key=request.state+'/'+request.codeChallenge;
     const previous=attempts.get(key);
-    if(previous&&ops.now()-previous.at<300000)return previous.work;
+    if(previous&&(previous.succeeded||previous.current())&&ops.now()-previous.at<300000)return previous.work;
     // Bound memory; never retain authorization codes or URLs after callback.
     for(const [k,a] of attempts)if(ops.now()-a.at>=300000)attempts.delete(k);
     while(attempts.size>=32)attempts.delete(attempts.keys().next().value!);
@@ -51,7 +51,11 @@ export function createEquipmentAccessHandler(ops:EquipmentAccessOps) {
       // Destination is fixed; caller cannot select another app or redirect.
       await ops.open('wbequipment://app-callback?'+new URLSearchParams({code:result.code,state:request.state}).toString());
     })();
-    attempts.set(key,{at:ops.now(),work});
+    const attempt={at:ops.now(),work,current:stillCurrent,succeeded:false};
+    attempts.set(key,attempt);
+    // A failed/cancelled issuance is retryable. Keep successful deliveries
+    // deduplicated, but never cache a rejected promise for five minutes.
+    void work.then(()=>{attempt.succeeded=true;},()=>{if(attempts.get(key)===attempt)attempts.delete(key);});
     return work;
   };
 }

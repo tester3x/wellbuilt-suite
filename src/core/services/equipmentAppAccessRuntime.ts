@@ -9,6 +9,6 @@ import {createEquipmentAccessHandler} from './equipmentAppAccessCore';
 export const authorizeEquipmentAppAccess=createEquipmentAccessHandler({
  epoch:currentSsoIdentityEpoch,local:readLocalIdentity,reconcile:resolveReconciliationForHandoff,
  identity:refresh=>getOwnedVerifiedIdentity(getFirebaseApp(),refresh),now:()=>Date.now(),
- issue:async codeChallenge=>(await httpsCallable(getFunctions(getFirebaseApp(),FIREBASE_REGION),'issueEquipmentAppSession',{timeout:30000})({version:1,codeChallenge})).data,
+ issue:async codeChallenge=>(await httpsCallable(getFunctions(getFirebaseApp(),FIREBASE_REGION),'issueEquipmentAppSession',{timeout:60000})({version:1,codeChallenge})).data,
  open:url=>Linking.openURL(url),
 });
