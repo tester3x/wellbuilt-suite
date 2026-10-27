@@ -345,7 +345,7 @@ export default function DaySummaryScreen() {
 
   return (
     <SafeAreaView style={s.container}>
-      <ScrollView contentContainerStyle={s.scrollContent}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={s.scrollContent}>
         {/* Header */}
         <View style={s.header}>
           <View style={s.checkCircle}>
@@ -635,7 +635,7 @@ export default function DaySummaryScreen() {
         )}
       </ScrollView>
 
-      {/* Fixed Bottom Button — Close only. Log Out lives on the WB S home
+      {/* Safe-area footer — Close only. Log Out lives on the WB S home
           screen now (single source of truth for the logout cascade). The
           JSA shift-end gate that previously fired here will be re-attached
           to the home-screen Log Out button in a follow-up. */}
@@ -656,7 +656,7 @@ const s = StyleSheet.create({
   },
   scrollContent: {
     padding: 24,
-    paddingBottom: 100,
+    paddingBottom: 24,
   },
   header: {
     alignItems: 'center',
@@ -801,14 +801,10 @@ const s = StyleSheet.create({
     fontSize: 15,
   },
   bottomButtons: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    flexShrink: 0,
     flexDirection: 'row',
     gap: 12,
     padding: 20,
-    paddingBottom: 36,
     backgroundColor: colors.bg.primary,
     borderTopWidth: 1,
     borderTopColor: colors.border.subtle,
