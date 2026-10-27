@@ -9,3 +9,9 @@ A verified, newer receipt for a different equipment inspection can replace that 
 Validation: 95 DVIR gate tests pass, including the four new current-cycle receipt checks, original arrival state transitions and pending-end controls. Full TypeScript check passes. Companion Equipment tests pass 727 and backend ledger tests pass 11.
 
 Local build / S24 acceptance / ZFold rollout pending. No real shift, equipment assignment or signed inspection was changed in this source work.
+
+## Local Suite 100 / S24 checkpoint
+
+Local APK built from exact 185465f commit using a separate detached clean source worktree; the original generated-file working-copy modification remains untouched. Preview profile; remote 99 checked and 100 reserved. APK SHA256 c24e2dd606d763f5936fbf36c776741b75f4faf9d3e2f493bf011439c66af22e; existing Suite signer a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6 matches the approved baseline. S24 replace-install succeeded and package manager confirms 100. No cloud build.
+
+Actual S24 Home remains signed in with Start Shift available. Its Equipment button now opens Equipment Home through E98's compatible verified bridge. Both Equipment breakdown-post-trip and replacement-pre-trip setup screens are reachable while off shift. No shift start, close, return, mileage or inspection-signature action was performed by the agent. Full signed multi-vehicle acceptance remains represented by automated domain/gate/server tests until the user finishes the requested S24 inspection/signature. ZFold is not connected and no rollout has occurred.
