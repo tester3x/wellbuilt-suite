@@ -1,4 +1,4 @@
-# Shift summary reference display — 2026-10-19
+# Shift summary reference display ï¿½ 2026-10-19
 
 Suite shift-complete JSA card shows the server-assigned human JSA number; legacy opaque cached references show Pending sync until the separate backend numbering update is deployed and refreshed. Human-readable numbers remain unchanged. Removes the raw shift ID row. Evidence IDs, counts, lifecycle and storage remain intact.
 
@@ -15,4 +15,3 @@ Validation: ten focused display/summary boundary tests pass, including canonical
 The shared cross-app Shift reference remains the separately documented design in shared-shift-reference-discussion-2026-10-23.md: one reference spanning midnight, plus each ticket/JSA/DVIR's own reference, with original associations preserved across transfers. It has not yet been implemented across record writers/readers. The proposed Back to WB S / Equipment navigation replacement is also separate; no Switcher behavior changed here.
 
 Owner clarified document versus acknowledgement identity: read-once acknowledgements share the signed full read's visible number. Separate full reads keep separate numbers. Backend correction is preserved in codex/jsa-document-number-complete-20261026. The card now uses singular number for a single reference; counts remain separate. Eleven focused display/summary tests pass. No APK built or installed for this source change.
-
