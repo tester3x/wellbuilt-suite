@@ -13,3 +13,6 @@ All compact references are shown on the card rather than truncating the list to 
 Validation: ten focused display/summary boundary tests pass, including canonical-reference preservation, leading zeros, legacy opaque references, account changes and verified-versus-unavailable states. Project TypeScript retains unrelated existing errors and reports none in the changed screen/helper/tests. Source only: no new APK built or installed for this change.
 
 The shared cross-app Shift reference remains the separately documented design in shared-shift-reference-discussion-2026-10-23.md: one reference spanning midnight, plus each ticket/JSA/DVIR's own reference, with original associations preserved across transfers. It has not yet been implemented across record writers/readers. The proposed Back to WB S / Equipment navigation replacement is also separate; no Switcher behavior changed here.
+
+Owner clarified document versus acknowledgement identity: read-once acknowledgements share the signed full read's visible number. Separate full reads keep separate numbers. Backend correction is preserved in codex/jsa-document-number-complete-20261026. The card now uses singular number for a single reference; counts remain separate. Eleven focused display/summary tests pass. No APK built or installed for this source change.
+

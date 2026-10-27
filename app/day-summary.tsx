@@ -448,7 +448,7 @@ export default function DaySummaryScreen() {
                   </View>}
                   {!!jsaEvidence?.coveredJobCount&&<Text style={{color:colors.text.secondary,marginTop:10}}>{jsaEvidence.coveredJobCount} jobs covered by the shift read</Text>}
                   {!!jsaEvidence?.firstReadAt&&<Text style={{color:colors.text.secondary,marginTop:10}}>First signed read: {formatTime12h(jsaEvidence.firstReadAt)}</Text>}
-                  {!!jsaEvidence?.jsaNumbers.length&&<Text style={{color:colors.text.secondary,marginTop:10}}>JSA numbers: {jsaEvidence.jsaNumbers.map(jsaDisplayReference).join(' · ')}</Text>}
+                  {!!jsaEvidence?.jsaNumbers.length&&<Text style={{color:colors.text.secondary,marginTop:10}}>JSA {jsaEvidence.jsaNumbers.length===1?'number':'numbers'}: {jsaEvidence.jsaNumbers.map(jsaDisplayReference).join(' · ')}</Text>}
                   {jsaEvidence?.lifecycle==='finalized'&&<Text style={{color:colors.text.secondary,marginTop:10}}>Shift JSA finalized</Text>}
                   {jsaEvidence?.status==='partial'&&<Text style={{color:colors.text.secondary,marginTop:10}}>Some records could not be verified. Counts include verified evidence only.</Text>}
                 </>}
