@@ -206,6 +206,17 @@ test('every declared server reason token is extractable and survives mapping', (
   }
 });
 
+test('unfinished WB T work survives the Firebase error boundary for the End Shift alert', () => {
+  for (const error of [
+    { code: 'functions/failed-precondition', message: 'unfinished_ticket_jobs' },
+    { code: 'functions/failed-precondition', message: 'Request refused.', details: { reason: 'unfinished_ticket_jobs' } },
+  ]) {
+    const mapped = mapHttpsError(error);
+    assert.equal(mapped.failure, 'unfinished_ticket_jobs');
+    assert.equal(mapped.message, 'unfinished_ticket_jobs');
+  }
+});
+
 test('the two reasons that used to degrade now survive: malformed_attempt, payload_not_object', () => {
   for (const token of ['malformed_attempt', 'payload_not_object']) {
     const e = mapHttpsError({ code: 'functions/invalid-argument', message: `INVALID_ARGUMENT: ${token}` });

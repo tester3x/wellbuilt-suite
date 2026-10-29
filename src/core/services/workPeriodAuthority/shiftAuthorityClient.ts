@@ -82,6 +82,7 @@ export type CloseActiveResult = {
  * Longest-first so a token can never be shadowed by a shorter prefix of itself.
  */
 export const SHIFT_AUTHORITY_REASON_TOKENS = [
+  'unfinished_ticket_jobs',
   'implausible_origin_local_date',
   'malformed_period_proposal',
   'driver_not_authoritative',
