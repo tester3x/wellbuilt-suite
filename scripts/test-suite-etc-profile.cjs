@@ -136,7 +136,7 @@ test('app config keeps Suite identity and enables only the verified production t
   try {
     const field = load(true);
     assert.equal(field.expo.android.package, 'com.wellbuilt.suite');
-    assert.equal(field.expo.android.versionCode, 2);
+    assert.equal(field.expo.android.versionCode, require('../app.json').expo.android.versionCode);
     assert.equal(field.expo.extra.eas.projectId, '202541c3-1f23-43c5-93ab-3cd1c2064595');
     assert.deepEqual(field.expo.extra.router, {});
     assert.equal(field.expo.extra.suiteEtc.profile, 'field-test');

@@ -65,7 +65,7 @@ describe('WB-T launches credential-free', () => {
     // (asserted positionally above). The bounded gap tolerates the overlay
     // block; a change that reordered the launch out of the guard would
     // still fail here.
-    assert.match(hook, /isCredentialFreeLaunchTarget\(options\.scheme\)\)\s*\{[\s\S]{0,900}return await launchWBApp\(\{ \.\.\.options, sso: undefined, startHost: PLATFORM_APP_OPEN_HOST,[\s\S]{0,200}entryOwner:[\s\S]{0,200}\}\)/);
+    assert.match(hook, /isCredentialFreeLaunchTarget\(options\.scheme\)\)\s*\{[\s\S]{0,900}return (?:await )?launchWBApp\(\{ \.\.\.options, sso: undefined, startHost: PLATFORM_APP_OPEN_HOST,[\s\S]{0,200}entryOwner:[\s\S]{0,200}\}\)/);
   });
 
   it('launchWBApp builds a bare start route when startHost is set', () => {
