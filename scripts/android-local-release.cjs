@@ -81,7 +81,8 @@ function main(args=process.argv.slice(2)) {
  // Hash long dependency object paths inside this registered home. Do not move
  // or copy source to work around Windows Ninja's legacy filename limit.
  const objectMarker='// WB bounded CMake object paths';
- if(!fs.readFileSync(appGradle,'utf8').includes(objectMarker))fs.appendFileSync(appGradle,`\n${objectMarker}\nandroid { defaultConfig { externalNativeBuild { cmake { arguments "-DCMAKE_OBJECT_PATH_MAX=128" } } } }\n`);
+ if(!fs.readFileSync(appGradle,'utf8').includes(objectMarker))fs.appendFileSync(appGradle,`\n${objectMarker}\nandroid { defaultConfig { externalNativeBuild { cmake { arguments "-DCMAKE_OBJECT_PATH_MAX=250" } } } }\n`);
+ fs.writeFileSync(appGradle,fs.readFileSync(appGradle,'utf8').replaceAll('-DCMAKE_OBJECT_PATH_MAX=128','-DCMAKE_OBJECT_PATH_MAX=250'));
  const stagingMarker='// WB generated-only CMake artifact staging';
  if(!fs.readFileSync(appGradle,'utf8').includes(stagingMarker))fs.appendFileSync(appGradle,`\n${stagingMarker}\nandroid { externalNativeBuild { cmake { buildStagingDirectory file("C:/dev/release-artifacts/native-cache/suite") } } }\n`);
  const local=path.join(android,'local.properties'),old=fs.existsSync(local)?fs.readFileSync(local,'utf8'):'';
