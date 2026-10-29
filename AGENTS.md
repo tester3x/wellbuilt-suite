@@ -28,4 +28,3 @@
 - Mike authorized registering the existing `C:/dev/TicketTimeExpo/tmp/suite-equipment-entry-20261012` checkout, branch `codex/suite-equipment-entry-20261012`, remote `https://github.com/tester3x/wellbuilt-suite.git`. Common Git directory: `C:/dev/wellbuilt-suite/.git`. Preserve the accepted `677476dc07d4ee337f6883b9c4621c0db9d3e561` baseline.
 - Claim/check/finish through `C:/dev/workspace-control/guard.cjs` using the actual session ID. One writer per repository; do not steal ownership or bypass Git hooks.
 - Use this registered existing home. No new checkouts or source-copy build folders, resets, force pushes, uninstalls or clearing app data. Any authorized local build must use exact clean committed reconciled source in this home with the existing signer and immutable version reservation; preserve generated native files and private artifacts outside Git.
-
