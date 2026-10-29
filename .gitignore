@@ -8,3 +8,5 @@ nul
 /android/
 /output/
 /modules/suite-etc-hos/android/generated/
+/modules/suite-etc-hos/android/build/
+/modules/wellbuilt-platform/android/build/
