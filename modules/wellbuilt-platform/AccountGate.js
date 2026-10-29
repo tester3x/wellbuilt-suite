@@ -33,9 +33,11 @@ module.exports=function AccountGate({restore,clearLocal,returnToHub,children}){
  const [pending,setPending]=React.useState(false);
  React.useEffect(()=>{let timer;const unsubscribe=require('./delivery').subscribePending(()=>{setPending(true);clearTimeout(timer);timer=setTimeout(()=>setPending(false),6000);});return()=>{unsubscribe();clearTimeout(timer);};},[]);
  const ready=state.phase==='ready'||state.phase==='signing-in';
- const everReady=React.useRef(false);if(state.phase==='ready')everReady.current=true;
+ // This context releases local auth startup; it is not proof of authentication.
+ // Interactive sign-in must let AuthProvider finish its signed-out session check.
+ const everReady=React.useRef(false);if(ready)everReady.current=true;
  const signIn=async()=>{
-  revision.current++;signingIn.current=true;everReady.current=false;
+  revision.current++;signingIn.current=true;
   try{await clearLocal?.();if(active.current)setState(s=>({phase:'signing-in',error:null,generation:s.generation+1}));}
   catch(error){signingIn.current=false;if(active.current)setState(s=>({...s,phase:'error',error}));}
  };

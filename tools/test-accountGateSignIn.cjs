@@ -24,9 +24,9 @@ function gate(){
 test('Sign in survives foreground, connection and signed-out account events until real sign-in',async()=>{
  const g=gate();g.render();await g.flush();g.render();
  assert.equal(g.button('Retry'),undefined,'signed-out state should not offer a futile retry');
- await g.button('Sign in').props.onPress();g.render();assert(g.loginVisible());assert.equal(g.ready(),false);
+ await g.button('Sign in').props.onPress();g.render();assert(g.loginVisible());assert.equal(g.ready(),true);
  for(const send of [()=>g.events.app('active'),()=>g.events.accountChanged({}),()=>g.events.connectionChanged({reachable:true})]){
-  send();await g.flush();g.render();assert(g.loginVisible(),'background signed-out check must not hide login');assert.equal(g.ready(),false);
+  send();await g.flush();g.render();assert(g.loginVisible(),'background signed-out check must not hide login');assert.equal(g.ready(),true);
  }
  g.setRestore(async()=> 'restored');g.events.accountChanged({});await g.flush();g.render();assert(g.loginVisible());assert.equal(g.ready(),true);
 });
@@ -41,4 +41,26 @@ test('late signed-out failure cannot cover a newly requested login; access denia
  g.setRestore(()=>new Promise((_,fail)=>{reject=fail;}));g.events.app('active');await sign();g.render();
  reject(Object.assign(Error('Signed out'),{code:'platform/signed-out'}));await g.flush();g.render();assert(g.loginVisible());
  g.setRestore(async()=>{throw Object.assign(Error('Access denied'),{code:'platform/access-denied'});});g.events.accountChanged({});await g.flush();g.render();assert.equal(g.loginVisible(),false);
+});
+
+test('interactive sign-in releases the actual AuthProvider session check without authenticating a user',async()=>{
+ const ts=require('typescript');
+ const source=ts.createSourceFile('AuthContext.tsx',fs.readFileSync('src/core/context/AuthContext.tsx','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+ let startup;
+ function visit(node){
+  if(ts.isCallExpression(node)&&node.expression.getText(source)==='useEffect'&&node.arguments[0]?.getText(source).includes('if(!platformAccountReady)return;'))startup=node.arguments[0];
+  ts.forEachChild(node,visit);
+ }
+ visit(source);assert(startup,'execute the real auth startup effect');
+ const js=ts.transpileModule('const startup = '+startup.getText(source)+'; startup();',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+ const g=gate();g.render();await g.flush();g.render();
+ let loading=true,reads=0,identity='unchecked';
+ const context=()=>({platformAccountReady:g.ready(),getDriverSession:async()=>{reads++;return null;},
+  reconcileForIdentity:value=>{identity=value;},setLoading:value=>{loading=value;},
+  require:name=>{assert(name.endsWith('/deviceAccount'));return {publishSuiteDeviceAccount:async()=>{}};},console});
+ vm.runInNewContext(js,context());await g.flush();assert.equal(reads,0);
+ await g.button('Sign in').props.onPress();g.render();
+ vm.runInNewContext(js,context());await g.flush();
+ assert.equal(reads,1,'login can leave its loading screen');assert.equal(loading,false);
+ assert.equal(identity,null,'startup remains signed out; no identity or grant is fabricated');
 });
