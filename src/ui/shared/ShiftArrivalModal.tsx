@@ -25,7 +25,7 @@ interface ShiftArrivalModalProps {
   visible: boolean;
   onClose: () => void;
   /** Returning a Promise lets the modal hold its busy state until end-of-shift work resolves. */
-  onConfirm: (odometerMiles?: number) => void | Promise<void>;
+  onConfirm: (odometerMiles?: number) => boolean | Promise<boolean>;
   /**
    * Post-Trip satisfied, derived from a verified receipt for THIS shift.
    * The row is display-only: a tap must never claim an inspection happened.
@@ -133,12 +133,12 @@ export default function ShiftArrivalModal({
       // Pass distance traveled, never an absolute odometer. This value must
       // not be promoted as the next shift's starting odometer.
       const miles = totalMiles !== '' ? Number(totalMiles) : undefined;
-      await Promise.resolve(onConfirm(miles));
-    } finally {
-      // Don't clear busy on success — the parent will close the modal,
-      // and the visible-effect will reset state on next open. Clearing
-      // here would let a second tap fire before the modal unmounts.
-      // On error (catch in parent), keep modal open so driver can retry.
+      const closed = await Promise.resolve(onConfirm(miles));
+      // A repeated refusal may keep the same error/odometer props. Explicitly
+      // release busy rather than relying on a prop-change effect to reset it.
+      if (!closed) setBusy(false);
+    } catch {
+      setBusy(false);
     }
   }, [busy, endOdometer, totalMiles, onConfirm]);
 

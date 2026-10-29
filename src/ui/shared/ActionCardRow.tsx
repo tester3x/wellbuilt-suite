@@ -432,7 +432,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
                 if (result.jsa?.kind === 'blocked') {
                   setJsaBlock(result.jsa);
                   setArrivalError(result.jsa.message);
-                  return;
+                  return false;
                 }
                 const message = result.reason === 'post_trip_missing'
                   ? 'The post-trip inspection for this shift is not recorded yet. Your shift is still open.'
@@ -440,15 +440,17 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
                     ? 'Check total miles (0–5000 whole miles). Your shift is still open.'
                     : 'Could not end shift. Your shift is still open — try again.';
                 setArrivalError(message);
-                return; // keep the modal open and recoverable
+                return false; // keep the modal open and recoverable
               }
               setJsaBlock(null);
               await gate.clearDvirRoutingAfterFinalization();
               setShowArrivalModal(false);
               setRetainedOdometer(undefined);
+              return true;
             } catch (err) {
               console.warn('[ActionCardRow] arrival confirm failed:', err);
               setArrivalError('Could not end shift. Your shift is still open — try again.');
+              return false;
             }
           }}
           postTripVerified={postTripVerified}
