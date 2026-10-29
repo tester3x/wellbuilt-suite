@@ -5,17 +5,22 @@ const ReadyContext=React.createContext(true);
 module.exports=function AccountGate({restore,clearLocal,returnToHub,children}){
  const [state,setState]=React.useState({phase:'checking',error:null,generation:0});
  const active=React.useRef(true),running=React.useRef(null),queued=React.useRef(false),failed=React.useRef(false),reachable=React.useRef(null);
+ const signingIn=React.useRef(false),revision=React.useRef(0);
  const {restoreWithRecovery}=require('./accountRecovery');
  const run=React.useCallback((recheck=false)=>{
   if(running.current){if(recheck)queued.current=true;return running.current;}
-  setState(s=>({...s,phase:'checking',error:null}));
+  if(!signingIn.current)setState(s=>({...s,phase:'checking',error:null}));
   running.current=(async()=>{
    do{
     queued.current=false;
+    const attemptRevision=revision.current;
     try{
      const result=await restoreWithRecovery({restore,isActive:()=>active.current,wait:ms=>new Promise(resolve=>setTimeout(resolve,ms)),report:detail=>console.info('WB_ACCOUNT_GATE '+JSON.stringify(detail))});
-     if(active.current&&!queued.current){failed.current=false;setState(s=>({phase:'ready',error:null,generation:s.generation+(result==='restored'?1:0)}));}
-    }catch(error){if(active.current&&!queued.current){failed.current=true;setState(s=>({...s,phase:'error',error}));}}
+     if(active.current&&!queued.current&&attemptRevision===revision.current){signingIn.current=false;failed.current=false;setState(s=>({phase:'ready',error:null,generation:s.generation+(result==='restored'?1:0)}));}
+    }catch(error){if(active.current&&!queued.current&&attemptRevision===revision.current){
+     if(signingIn.current&&error?.code==='platform/signed-out'){failed.current=false;setState(s=>({...s,phase:'signing-in',error:null}));}
+     else{signingIn.current=false;failed.current=true;setState(s=>({...s,phase:'error',error}));}
+    }}
    }while(active.current&&queued.current);
   })().finally(()=>{running.current=null;});return running.current;
  },[restore]);
@@ -27,9 +32,13 @@ module.exports=function AccountGate({restore,clearLocal,returnToHub,children}){
  React.useEffect(()=>{if(state.phase==='error')try{void require('expo-splash-screen').hideAsync().catch(()=>{});}catch{}},[state.phase]);
  const [pending,setPending]=React.useState(false);
  React.useEffect(()=>{let timer;const unsubscribe=require('./delivery').subscribePending(()=>{setPending(true);clearTimeout(timer);timer=setTimeout(()=>setPending(false),6000);});return()=>{unsubscribe();clearTimeout(timer);};},[]);
- const ready=state.phase==='ready';
- const everReady=React.useRef(false);if(ready)everReady.current=true;
- const signIn=async()=>{try{await clearLocal?.();setState(s=>({phase:'ready',error:null,generation:s.generation+1}));}catch{}};
+ const ready=state.phase==='ready'||state.phase==='signing-in';
+ const everReady=React.useRef(false);if(state.phase==='ready')everReady.current=true;
+ const signIn=async()=>{
+  revision.current++;signingIn.current=true;everReady.current=false;
+  try{await clearLocal?.();if(active.current)setState(s=>({phase:'signing-in',error:null,generation:s.generation+1}));}
+  catch(error){signingIn.current=false;if(active.current)setState(s=>({...s,phase:'error',error}));}
+ };
  return React.createElement(ReadyContext.Provider,{value:everReady.current},React.createElement(View,{collapsable:false,style:{flex:1,backgroundColor:'#0b1020'}},
   React.createElement(View,{collapsable:false,style:{flex:1,opacity:ready?1:0},pointerEvents:ready?'auto':'none'},React.createElement(React.Fragment,{key:state.generation},children)),
   ready&&pending&&React.createElement(View,{pointerEvents:'none',style:{position:'absolute',left:16,right:16,bottom:100,padding:14,borderRadius:12,backgroundColor:'#182335'}},React.createElement(Text,{style:{color:'white',textAlign:'center',fontSize:15}},'Saved on device; will send when connected.')),
@@ -37,7 +46,7 @@ module.exports=function AccountGate({restore,clearLocal,returnToHub,children}){
    state.phase==='checking'?React.createElement(ActivityIndicator,{color:'#e5b52e',size:'large'}):React.createElement(React.Fragment,null,
     React.createElement(Text,{style:{color:'white',fontSize:21,fontWeight:'600',marginBottom:16}},state.error?.code==='platform/access-denied'?'App access unavailable':state.error?.code==='platform/signed-out'?'Signed out of WellBuilt':'Your saved work is still on this device'),
     React.createElement(Text,{style:{color:'#cbd5e1',fontSize:17,marginBottom:24}},state.error?.code?.startsWith('platform/')?state.error.message:'Unable to finish opening this account. Check the connection and retry. You do not need to enter your password again.'),
-    React.createElement(Pressable,{onPress:()=>run(),style:{padding:16,borderRadius:12,backgroundColor:'#e5b52e',marginBottom:14}},React.createElement(Text,{style:{textAlign:'center',fontWeight:'700',fontSize:17}},'Retry')),
+    state.error?.code!=='platform/signed-out'&&React.createElement(Pressable,{onPress:()=>run(),style:{padding:16,borderRadius:12,backgroundColor:'#e5b52e',marginBottom:14}},React.createElement(Text,{style:{textAlign:'center',fontWeight:'700',fontSize:17}},'Retry')),
     returnToHub&&React.createElement(Pressable,{onPress:returnToHub,style:{padding:16}},React.createElement(Text,{style:{color:'#a5b4fc',textAlign:'center',fontSize:17}},'Return to Suite')),
     state.error?.code==='platform/signed-out'&&clearLocal&&React.createElement(Pressable,{onPress:signIn,style:{padding:16}},React.createElement(Text,{style:{color:'white',textAlign:'center',fontSize:17}},'Sign in'))))));
 };
