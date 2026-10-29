@@ -5,7 +5,7 @@ import {prepareShiftJsa,preparedShiftJsa} from '../services/preparedShiftJsa';
 // (same system as WB M — drivers/approved/{passcodeHash}).
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { AppState } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { endEtcForSuiteShift, retryEtcEnds } from '../services/etcStart/etcEndDispatch';
 import * as SecureStore from 'expo-secure-store';
@@ -1154,6 +1154,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       shiftEndOk = closed.ok;
       if (!shiftEndOk) {
+        if (closed.reason?.includes('unfinished_ticket_jobs')) {
+          Alert.alert('Finish your WB T job first',
+            'You still have an unfinished job in WB T. Return to WB T and finish the delivery or resolve the load before ending your shift. Queued jobs can stay in the Job Drawer.');
+        }
         console.warn(
           '[confirmArrival] closeDriverShift failed — retaining active local state:',
           closed.reason,
