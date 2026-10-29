@@ -78,6 +78,10 @@ function main(args=process.argv.slice(2)) {
  const android=path.join(root,'android'),appGradle=path.join(android,'app/build.gradle');
  const marker='// WB registered-home release signing';
  if(!fs.readFileSync(appGradle,'utf8').includes(marker))fs.appendFileSync(appGradle,`\n${marker}\ndef wbKey = new groovy.json.JsonSlurper().parse(new File(System.getenv('WB_LOCAL_CREDENTIALS'))).android.keystore\nandroid {\n defaultConfig { versionCode Integer.parseInt(System.getenv('WB_RELEASE_VERSION_CODE')) }\n signingConfigs { wbRegisteredRelease { storeFile new File(System.getenv('WB_LOCAL_KEYSTORE')); storePassword wbKey.keystorePassword; keyAlias wbKey.keyAlias; keyPassword wbKey.keyPassword } }\n buildTypes { release { signingConfig signingConfigs.wbRegisteredRelease } }\n}\n`);
+ // Hash long dependency object paths inside this registered home. Do not move
+ // or copy source to work around Windows Ninja's legacy filename limit.
+ const objectMarker='// WB bounded CMake object paths';
+ if(!fs.readFileSync(appGradle,'utf8').includes(objectMarker))fs.appendFileSync(appGradle,`\n${objectMarker}\nandroid { defaultConfig { externalNativeBuild { cmake { arguments "-DCMAKE_OBJECT_PATH_MAX=128" } } } }\n`);
  const local=path.join(android,'local.properties'),old=fs.existsSync(local)?fs.readFileSync(local,'utf8'):'';
  const sdkLine=`sdk.dir=${sdk}`;
  fs.writeFileSync(local,/^sdk.dir=.*$/m.test(old)?old.replace(/^sdk.dir=.*$/m,sdkLine):`${old}\n${sdkLine}\n`);
