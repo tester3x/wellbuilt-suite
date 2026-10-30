@@ -4,7 +4,8 @@ import {getFirebaseApp} from './firebaseApp';
 import {initializePersistentAuth,waitForAuthReady,getOwnedUserId,getOwnedVerifiedIdentity,getOwnedAuth} from './firebaseAuthBoundary';
 import {createDeviceAccountClient,type DeviceAccountNative} from './deviceAccount.generated';
 const native=require('../../../modules/wellbuilt-platform') as DeviceAccountNative|null;
-export const suiteDeviceAccount=createDeviceAccountClient(native,async(name,data)=>(await httpsCallable(getFunctions(getFirebaseApp(),'us-central1'),name,{timeout:15000})(data)).data);
+// Field cold-start request took 18.25s; a 15s deadline lost its successful grant.
+export const suiteDeviceAccount=createDeviceAccountClient(native,async(name,data)=>(await httpsCallable(getFunctions(getFirebaseApp(),'us-central1'),name,{timeout:60000})(data)).data);
 export async function restoreSuiteDeviceAccount(){
  initializePersistentAuth(getFirebaseApp(),AsyncStorage);await waitForAuthReady(getFirebaseApp());
  const capturedUser=getOwnedAuth(getFirebaseApp())?.currentUser;
@@ -24,7 +25,11 @@ export async function publishSuiteDeviceAccount(explicit=false){
  const identity=await getOwnedVerifiedIdentity(getFirebaseApp(),false);if(!identity||identity.kind!=='driver'||!identity.driverId||!identity.companyId||identity.app)return;
  const local=await import('./driverAuth').then(m=>m.getDriverSession());
  if(local?.driverId!==identity.driverId||local?.companyId!==identity.companyId)return;
- const uid=identity.uid;await suiteDeviceAccount.publish({uid,driverId:identity.driverId,companyId:identity.companyId},()=>getOwnedUserId(getFirebaseApp())===uid,explicit);
+ const uid=identity.uid,isCurrent=()=>getOwnedUserId(getFirebaseApp())===uid;
+ const {publishWithRecovery}=require('../../../modules/wellbuilt-platform/accountPublication');
+ await publishWithRecovery({explicit,isCurrent,
+  publish:()=>suiteDeviceAccount.publish({uid,driverId:identity.driverId!,companyId:identity.companyId!},isCurrent,explicit),
+  report:(detail:unknown)=>console.info('WB_ACCOUNT_PUBLICATION '+JSON.stringify(detail))});
 }
 
 export async function revokeSuiteDeviceAccount(){const saved=await suiteDeviceAccount.read();if(saved&&getOwnedUserId(getFirebaseApp())===saved.access.owner.uid)await suiteDeviceAccount.revoke(saved.access.owner);}

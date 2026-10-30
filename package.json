@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "scripts": {
+    "test:account-recovery": "node tools/test-accountGateSignIn.cjs && node tools/test-accountPublication.cjs",
     "eas-build-post-install": "node scripts/sync-suite-etc-profile.cjs",
     "start": "expo start",
     "android": "expo run:android",
