@@ -1,0 +1,37 @@
+{
+  "policy": "FIRST: Read D:/dev/workspace-control/POLICY.md in full before taking action. Then read the assigned repository's applicable AGENTS.md and CLAUDE.md. Follow the current user-authorized workspace policy over obsolete task notes.",
+  "date": "2026-10-30",
+  "session": "01a139b5-d3f7-7401-bdf0-3443ec841c28",
+  "scope": "Repair WB S -> ETC off-duty handoff; no APK build, installation or real duty-record edits.",
+  "fieldEvidence": {
+    "device": "RFGL23VJCED",
+    "suiteInstalled": 110,
+    "etcInstalled": 122,
+    "reported": "ETC stayed on duty after Suite shift closure; user subsequently ended ETC with its widget.",
+    "limitation": "No surviving device log or private end-journal read established the exact failure of this field occurrence. Source repair addresses verified background-service and retry weaknesses; device acceptance remains pending."
+  },
+  "preserved": "Original requested end timestamp, caller signature checks, company/driver/shift binding, ten-minute execution expiry, user manual end time, and pre-existing untracked work.",
+  "acceptancePending": "After explicit build authorization, build exact reconciled source locally, test fresh software-test shift closure on S24 with ETC cold/backgrounded, confirm duty end receipt and retained original timestamp; test manual end followed by old-receipt reconciliation without ending a later shift. No real-duty sessions are to be invented or closed for testing.",
+  "checkout": "C:/dev/TicketTimeExpo/tmp/suite-equipment-entry-20261012",
+  "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+  "branch": "codex/suite-equipment-entry-20261012",
+  "base": "1a62f8000eb228e563153e96058b68f21a264a00",
+  "changes": [
+    "Unconfirmed end publishes existing ETC notice instead of silently appearing confirmed.",
+    "Expired/future-skewed end requests are status-only; original request/time are never replaced.",
+    "Catch each delivery failure independently so an older lost reply cannot starve a later bound shift end.",
+    "Log bounded provider failure reasons without account credentials.",
+    "Correct stale production-target test assertion pinning versionCode 2; positive integer validation replaces it, immutable release allocation remains separately enforced."
+  ],
+  "checks": {
+    "typescript": "passed",
+    "endDispatch": "9 tests passed",
+    "startAndTarget": "31 tests passed",
+    "diffCheck": "passed"
+  },
+  "counterpart": {
+    "checkout": "C:/dev/WellBuiltTimeCard",
+    "branch": "test/etc-vc70-end-hos-odometer",
+    "required": "Foreground end bootstrap and retryable temporary ledger contention."
+  }
+}

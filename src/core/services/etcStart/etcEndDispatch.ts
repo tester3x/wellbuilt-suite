@@ -2,6 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createEtcPort } from './etcProduction';
 import { newEtcRequestId } from './etcStartProtocol';
 import { AppState } from 'react-native';
+import { currentEtcNotice, publishEtcNotice } from './etcNoticeStore';
+
+export const ETC_END_PENDING_NOTICE = 'WB S ended your shift, but ETC has not confirmed going off duty. Open ETC and check your clock.';
 
 type EndRequest = { protocolVersion: 1; action: 'end_hos'; requestId: string;
   companyId: string; driverId: string; suiteShiftId: string; requestedAtMs: number };
@@ -29,10 +32,21 @@ async function deliver(request: EndRequest): Promise<boolean> {
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error('ETC end timeout')), 4000); })]);
     } finally { if (timer) clearTimeout(timer); }
   };
-  const prepared = await call('prepareEnd');
-  if (!prepared.ok || !sameReply(request, prepared.response)) return false;
+  // Old requests are observation-only. Never refresh their timestamp to make
+  // an expired end execute against a later duty session.
+  const age = Date.now() - request.requestedAtMs;
+  const fresh = age >= -30000 && age <= 600000;
+  const prepared = await call(fresh ? 'prepareEnd' : 'getEndStatus');
+  if (!prepared.ok) {
+    console.warn('[ETC] Off-duty provider did not confirm:', prepared.reason);
+    return false;
+  }
+  if (!sameReply(request, prepared.response)) {
+    console.warn('[ETC] Off-duty response did not match the queued request');
+    return false;
+  }
   if ((prepared.response as any).state === 'completed') return true;
-  if (prepared.startIntent !== 'sent') return false;
+  if (!fresh || prepared.startIntent !== 'sent') return false;
   for (let i = 0; i < 12; i++) {
     await new Promise(resolve => setTimeout(resolve, 250));
     const result = await call('getEndStatus');
@@ -64,9 +78,18 @@ export async function retryEtcEnds(user: { companyId?: string | null; driverId: 
     if (!Array.isArray(pending)) throw Error('Unreadable ETC end queue');
     for (const request of pending) {
       if (request.companyId !== user.companyId || request.driverId !== user.driverId) continue;
-      if (await deliver(request)) {
-        await mutate(key, rows => rows.filter(r => r.requestId !== request.requestId));
+      try {
+        if (await deliver(request)) {
+          await mutate(key, rows => rows.filter(r => r.requestId !== request.requestId));
+        }
+      } catch (error) {
+        // A lost reply for an older end must not prevent delivery of the next
+        // exact, independently bound shift end. The durable row stays queued.
+        console.warn('[ETC] Off-duty confirmation remains pending:', String(error));
       }
     }
+    const remaining: EndRequest[] = JSON.parse(await AsyncStorage.getItem(key) || '[]');
+    if (remaining.length) publishEtcNotice(ETC_END_PENDING_NOTICE);
+    else if (currentEtcNotice() === ETC_END_PENDING_NOTICE) publishEtcNotice(null);
   } finally { running.delete(key); }
 }
