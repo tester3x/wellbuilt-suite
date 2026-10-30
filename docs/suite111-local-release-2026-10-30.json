@@ -1,0 +1,183 @@
+{
+  "sourceCommit": "7461b7ed9a2f209a31d302861c42fe1c1a33e631",
+  "branch": "codex/suite-equipment-entry-20261012",
+  "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+  "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+  "owner": "01a139b5-d3f7-7401-bdf0-3443ec841c28",
+  "reservation": "android-release-v111",
+  "reservationTagObject": "13854eff55d07786527aca875ae58dbf34bd53c4",
+  "profile": "preview",
+  "buildMethod": "local Android SDK/Gradle in registered home",
+  "sourceCopy": false,
+  "cloudBuild": false,
+  "package": "com.wellbuilt.suite",
+  "versionCode": 111,
+  "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+  "artifact": "C:\\dev\\release-artifacts\\suite-111-7461b7e\\com.wellbuilt.suite-vc111.apk",
+  "apkSha256": "e85d27900cd719e0b925ee1c1f5ee69a104e08ea1ef5a4e318fd810a342b7922",
+  "completedAt": "2026-10-30T06:59:50.324Z",
+  "installed": true,
+  "policy": "FIRST: Read D:/dev/workspace-control/POLICY.md in full before taking action. Then read the assigned repository's applicable AGENTS.md and CLAUDE.md. Follow the current user-authorized workspace policy over obsolete task notes.",
+  "authorization": "Mike said keep going after paired local builds and S24 verification were identified as next.",
+  "lastInstalledSource": "d7a455367fd3e666e186d66cf76687e85cc49909",
+  "installedOn": [
+    "R5CX15HEGQB"
+  ],
+  "launch": "Android MainActivity Status ok on S24; existing data retained.",
+  "installedApkSha256Verified": true,
+  "s24FunctionalAcceptance": "Pending: existing software-test shift remains active; user asked to end through WB S and complete any required post-trip personally. ETC still showed the pre-existing Oct29 11:57 clock before closure. No automated signature, safety acknowledgement or duty edit.",
+  "zfold": "Not updated: retain Suite110 and ETC122 until S24 handoff passes.",
+  "sourceReceiptNote": "This evidence commit follows the immutable APK source and is not included in the APK.",
+  "reconciliation": {
+    "fetchedRemoteHeads": 25,
+    "historicalDivergentHeads": [
+      {
+        "ref": "refs/remotes/origin/checkpoint/wbs-stale-drive-timer-red-20260913",
+        "head": "2a11feed4a91f8e41cc457f4f206d245ce5613a0",
+        "ancestor": false,
+        "date": "2026-09-10T08:35:24-05:00",
+        "subject": "test(wbs): failing regression for stale EN ROUTE Drive Time (119:xx/120:xx defect)"
+      },
+      {
+        "ref": "refs/remotes/origin/codex/suite-etc-start-hos",
+        "head": "50759e231ce99bb4856f3cfe9234c20783aa1e7a",
+        "ancestor": false,
+        "date": "2026-10-16T21:44:47-05:00",
+        "subject": "Record Suite 72 build and ZFold installation"
+      },
+      {
+        "ref": "refs/remotes/origin/feat/wbs-appswitcher-public-companies-20260917",
+        "head": "f8c32f2d4c0d5aa8feca1087f79026513ea54c58",
+        "ancestor": false,
+        "date": "2026-09-17T00:50:15-05:00",
+        "subject": "fix(appswitcher): remove unmounted floating AppSwitcher"
+      },
+      {
+        "ref": "refs/remotes/origin/feat/wbs-company-join-code-registration-20260917",
+        "head": "26ef86d4edc369152ec783fce9c526654bb9c6fd",
+        "ancestor": false,
+        "date": "2026-09-17T01:00:05-05:00",
+        "subject": "feat(login): Company Join Code registration (mirror WB-M contract)"
+      },
+      {
+        "ref": "refs/remotes/origin/feature/register-company-join-code-20260904",
+        "head": "eebd0d6c54ef18ac0b4010ddac04834d75efa3ed",
+        "ancestor": false,
+        "date": "2026-09-04T02:43:53-05:00",
+        "subject": "fix(auth): use canonical driver sign-in after approval"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/p0-wbs-abortable-noworkshift-20260905",
+        "head": "a840f915225cd2e7eafa5a55644bea8a55bac3e3",
+        "ancestor": false,
+        "date": "2026-09-05T07:49:56-05:00",
+        "subject": "fix(p0): audited aborted/no-work End Shift close (never fabricate Pre/Post-Trip)"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/p0-wbs-end-shift-without-dvir-20260905",
+        "head": "9066c97caf004c5e118b649e5e92123e6c2de83d",
+        "ancestor": false,
+        "date": "2026-09-06T08:25:12-05:00",
+        "subject": "fix(p0): governed shift reconciliation via authenticated server authority"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/p0-wbs-enterprise-handoff-20260905",
+        "head": "914af9b421c2a980fd082175905a980e601c33b0",
+        "ancestor": false,
+        "date": "2026-09-04T23:54:22-05:00",
+        "subject": "fix(p0): issuance-incapable terminal SSO + generation-owned equipment gate"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/shift-authority-after-session-revalidation",
+        "head": "e733af6ed868720aedbadce70a014407a3c0db8b",
+        "ancestor": false,
+        "date": "2026-08-19T01:10:41-05:00",
+        "subject": "fix(shift): resolve authority only after session revalidation"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/sso-authorize-durable-inbox",
+        "head": "7644c8462a6f703308b7e6f10c7ac9d9005cdddd",
+        "ancestor": false,
+        "date": "2026-08-19T02:11:31-05:00",
+        "subject": "fix(sso): persist inbound authorize until session ready"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/wbs-authenticated-company-config-20260912",
+        "head": "9954bdc2f6dc481d8b40673eec80d036dc93d092",
+        "ancestor": false,
+        "date": "2026-09-13T02:34:12-05:00",
+        "subject": "Record Suite vc48 installation and both-phone return-home checks"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/wbs-endshift-repair-20260910",
+        "head": "84fa564a22d6b76c47b18fcf0203d09703627c28",
+        "ancestor": false,
+        "date": "2026-09-10T21:20:55-05:00",
+        "subject": "fix(wbs): blended End Shift repair \u00e2\u20ac\u201d period-scoped DVIR signal + truthful UX"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/wbs-endshift-trace-20260910",
+        "head": "79c73eee7653a7456a5309edbbbfcd437f4bbda5",
+        "ancestor": false,
+        "date": "2026-09-10T20:57:48-05:00",
+        "subject": "test(wbs): deterministic stale-EN-ROUTE reproduction + 6-cause differential diagnosis"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/wbs-financial-correctness-20260917",
+        "head": "93da51b8e7e2fef971f806d241d638bdbd7ffe8b",
+        "ancestor": false,
+        "date": "2026-09-17T20:05:53-05:00",
+        "subject": "fix(finance): fail-closed timesheet projection matching Dashboard contract"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/wbs-financial-parity-tests-20260918",
+        "head": "84f807fc7d61b677160ac430cec5ccaf79248d66",
+        "ancestor": false,
+        "date": "2026-09-18T02:00:26-05:00",
+        "subject": "fix(finance): split parity, consumer tests, npm test wiring"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/wbs-open-shift-dvir-handoff",
+        "head": "822ce3d3f7f9b5085fad10e9b9909cc77a6329a4",
+        "ancestor": false,
+        "date": "2026-08-24T00:06:51-05:00",
+        "subject": "fix(suite): launch app cards without App Details interstitial"
+      },
+      {
+        "ref": "refs/remotes/origin/fix/wbs-shift-resolution-decouple-config-20260909",
+        "head": "28d783a5b35b6c795ead1801c40183b84c374d8b",
+        "ancestor": false,
+        "date": "2026-09-09T22:22:13-05:00",
+        "subject": "fix(p0-wbs): resolve End Shift from server authority even when company config is unreadable"
+      },
+      {
+        "ref": "refs/remotes/origin/integration/wbs-canonical-security-sso-2026-08-19",
+        "head": "f096f12d5f020683bb91624de5bb6189e2b96a41",
+        "ancestor": false,
+        "date": "2026-08-19T17:53:11-05:00",
+        "subject": "fix(sso): generation-tagged resolve leases and fail-closed cleanup"
+      },
+      {
+        "ref": "refs/remotes/origin/refactor/wbs-four-theme-shared-workhorse-2026-08-19",
+        "head": "e9ea1c125bedea4eb8a99015ba2466518d400e39",
+        "ancestor": false,
+        "date": "2026-08-20T22:22:50-05:00",
+        "subject": "test(sso): pin additive wellbuilt-mobile without renaming prior audiences"
+      },
+      {
+        "ref": "refs/remotes/origin/release/wbs-vc37-20260910",
+        "head": "4eee10fc413dd5a0699568ce49c216d286e49dac",
+        "ancestor": false,
+        "date": "2026-09-10T21:31:07-05:00",
+        "subject": "chore(release): WB-S VC37 versionCode metadata (build from End Shift repair 84fa564)"
+      }
+    ],
+    "decision": "Preserve historical branches. Their latest tip is Oct16; they predate installed S110. Reviewed current S110-to-S111 delta: account-publication recovery plus shift-end recovery, tests/docs/version only. Existing source authority and accepted baseline retained; no new other-machine commits appeared; no wholesale historical import. Unpushed work cannot be discovered."
+  },
+  "checks": {
+    "repair": "40 Suite handoff tests and TypeScript passed",
+    "accountRecovery": "10 tests passed",
+    "authCore": "125 tests passed",
+    "localRunner": "2 tests passed"
+  }
+}
