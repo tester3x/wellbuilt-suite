@@ -16,7 +16,7 @@ import {
   reconcileEtcOnResume,
 } from './attachEtcHandoff';
 import { ETC_RELEASE_IDENTITY, isEtcDispatchConfigured } from './etcReleaseIdentity';
-import { resetEtcNoticeForTests, currentEtcNotice } from './etcNoticeStore';
+import { resetEtcNoticeForTests, currentEtcNotice, publishEtcNotice } from './etcNoticeStore';
 import {
   ETC_PROVIDER_AUTHORITY,
   ETC_REQUEST_BUNDLE_KEY,
@@ -397,6 +397,45 @@ test('a delayed receiver acknowledgement confirms the original start without res
   assert.equal(result.etcShiftId, 'same-session');
   assert.deepEqual(bridge.calls.map(call => call.method), ['prepareStart', 'getStartStatus', 'getStartStatus']);
   assert.ok(bridge.calls.every(call => call.payload === bridge.calls[0].payload));
+});
+
+test('resume reports only the current shift and clears stale start copy off shift', async () => {
+  const kv = memory();
+  for (const periodId of ['old-period', 'current-period']) {
+    await start({ kv, claim: { ok: true, periodId },
+      port: port(async () => okResponse({ state: 'completed', hos: 'started' })).impl });
+  }
+  const bridge = port(async () => okResponse({ state: 'completed', hos: 'started' }));
+  const input = { companyId: base.companyId, driverId: base.driverId, nowMs: base.nowMs,
+    activityVisible: true, kv, port: bridge.impl, identity: verified };
+  const results = await reconcileEtcOnResume({ ...input, currentSuiteShiftId: 'current-period' });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].request?.suiteShiftId, 'current-period');
+  assert.equal(bridge.calls.length, 1);
+  await reconcileEtcOnResume({ ...input, currentSuiteShiftId: null });
+  assert.equal(bridge.calls.length, 1);
+  assert.equal(currentEtcNotice(), null);
+  publishEtcNotice('WB S ended your shift, but ETC has not confirmed going off duty.');
+  await reconcileEtcOnResume({ ...input, currentSuiteShiftId: null });
+  assert.match(currentEtcNotice()!, /not confirmed going off duty/);
+  resetEtcNoticeForTests();
+});
+
+test('an account change while awaiting a receipt cannot publish it to the new account', async () => {
+  const kv = memory();
+  await start({ kv });
+  let current = true;
+  const bridge = port(async () => {
+    current = false;
+    return okResponse({ state: 'completed', hos: 'started' });
+  });
+  resetEtcNoticeForTests();
+  const results = await reconcileEtcOnResume({ companyId: base.companyId,
+    driverId: base.driverId, nowMs: base.nowMs, activityVisible: true,
+    currentSuiteShiftId: base.periodId, isCurrent: () => current,
+    kv, port: bridge.impl, identity: verified });
+  assert.equal(results.length, 0);
+  assert.equal(currentEtcNotice(), null);
 });
 
 test('receiver rejection preserves its diagnostic reason and never sends another start', async () => {

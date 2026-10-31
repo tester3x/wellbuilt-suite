@@ -5,7 +5,7 @@
  */
 import { ETC_RELEASE_IDENTITY, type EtcReleaseIdentity } from './etcReleaseIdentity';
 import { dispatchStoredEtcStart, unknownHandoff, type EtcHandoffResult, type EtcPort } from './etcStartDispatch';
-import { publishEtcNotice } from './etcNoticeStore';
+import { currentEtcNotice, publishEtcNotice } from './etcNoticeStore';
 import {
   buildEtcStartRequest,
   newEtcRequestId,
@@ -136,10 +136,13 @@ export async function attachEtcHandoff(input: {
       if (observed.state === 'unknown') { result = observed; break; }
     }
   }
+  if (!current()) return unknownHandoff('stale_generation', stored.request, 'skipped');
   return publish(result);
 }
 
 export async function reconcileEtcOnResume(input: {
+  currentSuiteShiftId?: string | null;
+  isCurrent?: () => boolean;
   companyId: string | null;
   driverId: string;
   nowMs: number;
@@ -149,10 +152,17 @@ export async function reconcileEtcOnResume(input: {
   identity?: EtcReleaseIdentity;
   timeoutMs?: number;
 }): Promise<EtcHandoffResult[]> {
+  if (input.isCurrent && !input.isCurrent()) return [];
+  if (input.currentSuiteShiftId === null) {
+    if (currentEtcNotice()?.startsWith('ETC hours of service:')) publishEtcNotice(null);
+    return [];
+  }
   const records = await listEtcStartsForDriver(input.kv, input.driverId, input.companyId);
   if (records.length === 0) return [];
   const results: EtcHandoffResult[] = [];
   for (const stored of records) {
+    if (input.isCurrent && !input.isCurrent()) break;
+    if (input.currentSuiteShiftId !== undefined && stored.request.suiteShiftId !== input.currentSuiteShiftId) continue;
     const result = await dispatchStoredEtcStart({
       kv: input.kv,
       stored,
@@ -163,6 +173,7 @@ export async function reconcileEtcOnResume(input: {
       port: input.port,
       timeoutMs: input.timeoutMs,
     });
+    if (input.isCurrent && !input.isCurrent()) break;
     results.push(publish(result));
   }
   return results;

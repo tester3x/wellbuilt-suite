@@ -243,9 +243,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user?.driverId) return;
     const driverId = user.driverId;
     const companyId = user.companyId ?? null;
-    const gen = authorityGenRef.current.current();
     let cancelled = false;
     const reconcile = () => {
+      const gen = authorityGenRef.current.current();
       if (AppState.currentState === 'active') void retryEtcEnds(user).catch(() => {});
       if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
       void import('../services/etcStart/attachEtcHandoff')
@@ -253,9 +253,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
           const { createEtcPort, productionEtcKv, shippedEtcIdentity } = await import('../services/etcStart/etcProduction');
           const { noteEtcActivityState, isEtcActivityVisible } = await import('../services/etcStart/etcActivityGate');
+          const currentSuiteShiftId = await getCurrentShiftId();
           noteEtcActivityState(AppState.currentState);
           if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
           await reconcileEtcOnResume({
+            currentSuiteShiftId,
+            isCurrent: () => !cancelled && authorityGenRef.current.isCurrent(gen),
             companyId,
             driverId,
             nowMs: Date.now(),

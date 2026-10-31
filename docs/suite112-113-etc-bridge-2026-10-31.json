@@ -1,0 +1,56 @@
+{
+  "releases": [
+    {
+      "sourceCommit": "0616c98272cf377bf894aad868a14a828483ae61",
+      "branch": "codex/suite-equipment-entry-20261012",
+      "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+      "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+      "owner": "01a139b5-d3f7-7401-bdf0-3443ec841c28",
+      "reservation": "android-release-v112",
+      "reservationTagObject": "69030067bb7ed5de46393f0083ca65b7b55342a8",
+      "profile": "preview",
+      "buildMethod": "local Android SDK/Gradle in registered home",
+      "sourceCopy": false,
+      "cloudBuild": false,
+      "package": "com.wellbuilt.suite",
+      "versionCode": 112,
+      "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+      "artifact": "C:\\dev\\release-artifacts\\suite-112-0616c98\\com.wellbuilt.suite-vc112.apk",
+      "apkSha256": "575f93835316530ff0f5b684d73618404b97db6361ae2ef4f6d802ff78b4b2c8",
+      "completedAt": "2026-10-31T18:47:10.542Z",
+      "installed": false,
+      "installedOn": [
+        "R5CX15HEGQB"
+      ],
+      "verification": "112 S24 probe: native_unavailable; held from ZFold"
+    },
+    {
+      "sourceCommit": "107daa9e0b374b98ac6a05c008672f8a593b2934",
+      "branch": "codex/suite-equipment-entry-20261012",
+      "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+      "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+      "owner": "01a139b5-d3f7-7401-bdf0-3443ec841c28",
+      "reservation": "android-release-v113",
+      "reservationTagObject": "a3b44badb8664df8a6143e6b9d5646e56123ad25",
+      "profile": "preview",
+      "buildMethod": "local Android SDK/Gradle in registered home",
+      "sourceCopy": false,
+      "cloudBuild": false,
+      "package": "com.wellbuilt.suite",
+      "versionCode": 113,
+      "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+      "artifact": "C:\\dev\\release-artifacts\\suite-113-107daa9\\com.wellbuilt.suite-vc113.apk",
+      "apkSha256": "821aea8fcdd3a3368063e57505de02798ca39c2e4b1ccc54ba597940aa4b2b2d",
+      "completedAt": "2026-10-31T18:50:13.218Z",
+      "installed": false,
+      "installedOn": [
+        "R5CX15HEGQB",
+        "RFGL23VJCED"
+      ],
+      "verification": "113 both phones: native bridge reachable, historical receipts read; current ZFold request unknown_request; no duty history changed; new shift start field test pending"
+    }
+  ],
+  "cause": "JavaScript bridge resolved through a dependency junction to a historical checkout. Registered native and JavaScript source now match; module resolution retries early initialization failures.",
+  "tests": "34 handoff tests, 125 auth tests, TypeScript and off-duty tests pass",
+  "reconciliation": "All 24 other remote branch tips unchanged from Suite111 reviewed survey; active branch includes installed S110 and S111 ancestry. No cloud builds. Unpushed other-machine work undiscoverable."
+}
