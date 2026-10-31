@@ -1,0 +1,55 @@
+{
+  "sourceCommit": "b8296ec566cbec892a00cd04efb1042ff47226bb",
+  "branch": "codex/suite-equipment-entry-20261012",
+  "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+  "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+  "owner": "01a139b5-d3f7-7401-bdf0-3443ec841c28",
+  "reservation": "android-release-v114",
+  "reservationTagObject": "f7284ec016c9d748418c51eb59c2dc0521de406f",
+  "profile": "preview",
+  "buildMethod": "local Android SDK/Gradle in registered home",
+  "sourceCopy": false,
+  "cloudBuild": false,
+  "package": "com.wellbuilt.suite",
+  "versionCode": 114,
+  "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+  "artifact": "C:\\dev\\release-artifacts\\suite-114-b8296ec\\com.wellbuilt.suite-vc114.apk",
+  "apkSha256": "f1613e30f390dd96909c2c0e46c17f3d4a67d4412b2b10edb26f67ee6b0420a5",
+  "completedAt": "2026-10-31T18:53:01.621Z",
+  "installed": true,
+  "deviceProof": [
+    {
+      "serial": "R5CX15HEGQB",
+      "sha256": "f1613e30f390dd96909c2c0e46c17f3d4a67d4412b2b10edb26f67ee6b0420a5",
+      "verified": true
+    },
+    {
+      "serial": "RFGL23VJCED",
+      "sha256": "f1613e30f390dd96909c2c0e46c17f3d4a67d4412b2b10edb26f67ee6b0420a5",
+      "verified": true
+    }
+  ],
+  "checks": {
+    "handoff": "36 passed",
+    "authCore": "125 passed",
+    "types": "passed",
+    "offDuty": "passed",
+    "runner": "2 passed before initial build; runner unchanged"
+  },
+  "acceptance": {
+    "bridge": "Both devices reach authenticated ETC receiver; S24 historical receipts resolve, ZFold current request is absent on receiver",
+    "currentShiftScope": "S24 off-shift does not show an old start receipt; pending off-duty notice remains visible. ZFold reconciles only current shift.",
+    "newShiftAutomaticStart": "Pending user-operated S24 test; no automated shift creation, safety acknowledgement or HOS ledger mutation",
+    "hours": "User advised to start ETC manually while working and review missing time separately. No duty timestamps repaired or old request replayed."
+  },
+  "reconciliation": {
+    "previousInstalledZFoldSource": "d7a455367fd3e666e186d66cf76687e85cc49909",
+    "previousInstalledS24Source": "7461b7ed9a2f209a31d302861c42fe1c1a33e631",
+    "otherRemoteTips": "All 24 other remote tips match Suite111 reviewed survey; release branch contains both installed sources",
+    "cloudHighest": 99,
+    "priorLocalVersionCeiling": 113,
+    "limitation": "Unpushed other-machine work cannot be discovered"
+  },
+  "remainingWork": "User-operated S24 automatic HOS start test and separately authorized missing-time review. Earlier ETC123 is still S24-only; ZFold ETC remains122.",
+  "sourceReceiptNote": "Evidence commit follows immutable APK source; no source-copy or cloud build."
+}
