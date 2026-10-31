@@ -218,14 +218,15 @@ export async function dispatchStoredEtcStart(input: {
 
   // A sent token only resumes observation. Until ETC reports a terminal HOS
   // result, that send is not proof the service executed.
-  const observationUnproven = intent === 'accept' && !isTerminalEtcResult(response.hos, response.state);
+  const observationUnproven = !isTerminalEtcResult(response.hos, response.state)
+    && (intent === 'accept' || input.stored.dispatchUncertain);
   await saveEtcStartObservation(input.kv, request, {
     dispatchUncertain: observationUnproven,
     lastHos: observationUnproven ? input.stored.lastHos : response.hos,
     lastState: observationUnproven ? input.stored.lastState : response.state,
     lastGps: observationUnproven ? input.stored.lastGps : response.gps,
   });
-  if (observationUnproven) {
+  if (observationUnproven && intent === 'accept') {
     return unknownHandoff('observation_unconfirmed', request);
   }
   const handoff: EtcHandoffResult = {
@@ -236,7 +237,7 @@ export async function dispatchStoredEtcStart(input: {
     gps: response.gps,
     state: response.state,
     transport: method === 'prepareStart' ? 'sent' : 'reconciled',
-    reason,
+    reason: response.reason || reason,
     driverText: etcDriverText(response),
     etcShiftId: response.etcShiftId,
     observedAtMs: response.observedAtMs,

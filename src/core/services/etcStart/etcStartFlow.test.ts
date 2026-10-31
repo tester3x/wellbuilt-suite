@@ -386,6 +386,29 @@ test('timeout is unknown, keeps the same request, and the next attempt reconcile
   assert.equal(bridge.calls[0].payload, bridge.calls[1].payload);
 });
 
+test('a delayed receiver acknowledgement confirms the original start without resending', async () => {
+  let observations = 0;
+  const bridge = port(async method => method === 'prepareStart'
+    ? okResponse({ state: 'prepared', hos: 'not_started' }, 'sent')
+    : ++observations < 2 ? okResponse({ state: 'processing', hos: 'unknown' })
+      : okResponse({ state: 'completed', hos: 'started', etcShiftId: 'same-session' }));
+  const { result } = await start({ port: bridge.impl });
+  assert.equal(result.hos, 'started');
+  assert.equal(result.etcShiftId, 'same-session');
+  assert.deepEqual(bridge.calls.map(call => call.method), ['prepareStart', 'getStartStatus', 'getStartStatus']);
+  assert.ok(bridge.calls.every(call => call.payload === bridge.calls[0].payload));
+});
+
+test('receiver rejection preserves its diagnostic reason and never sends another start', async () => {
+  const bridge = port(async method => method === 'prepareStart'
+    ? okResponse({ state: 'prepared', hos: 'not_started' }, 'sent')
+    : okResponse({ state: 'rejected', hos: 'not_started', reason: 'platform_start_restricted' }));
+  const { result } = await start({ port: bridge.impl });
+  assert.equal(result.hos, 'not_started');
+  assert.equal(result.reason, 'platform_start_restricted');
+  assert.equal(bridge.calls.filter(call => call.method === 'prepareStart').length, 1);
+});
+
 test('an ended ETC result is reconciled and does not prepare another start', async () => {
   const kv = memory();
   const bridge = port(async (method) => {
@@ -760,8 +783,10 @@ test('a sent token without a terminal result is not proof the service ran', asyn
     },
   });
   assert.equal(second.request?.requestedAtMs, base.nowMs);
-  assert.deepEqual(bridge.calls.map((call) => call.method), ['prepareStart', 'getStartStatus']);
-  assert.equal(bridge.calls[0].payload, bridge.calls[1].payload);
+  assert.equal(bridge.calls[0].method, 'prepareStart');
+  assert.equal(bridge.calls.length, 14); // initial send + 12 observations + explicit revisit
+  assert.ok(bridge.calls.slice(1).every(call => call.method === 'getStartStatus'));
+  assert.ok(bridge.calls.every(call => call.payload === bridge.calls[0].payload));
 });
 
 test('a token that was not sent and a malformed or null response are unknown', async () => {

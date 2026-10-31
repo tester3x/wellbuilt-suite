@@ -10,6 +10,7 @@ import {
   buildEtcStartRequest,
   newEtcRequestId,
   requestIdentityKey,
+  isTerminalEtcResult,
 } from './etcStartProtocol';
 import {
   listEtcStartsForDriver,
@@ -49,6 +50,11 @@ export async function etcHandoffThatCannotFailShift(
 }
 
 function publish(result: EtcHandoffResult): EtcHandoffResult {
+  // No credentials or request payloads: retain the reason needed to distinguish
+  // receiver rejection from a lost acknowledgement on a field device.
+  console.log('[ETC start]', JSON.stringify({ periodId: result.request?.suiteShiftId,
+    state: result.state, hos: result.hos, gps: result.gps, reason: result.reason,
+    transport: result.transport }));
   if (result.driverText) publishEtcNotice(result.driverText);
   return result;
 }
@@ -99,7 +105,7 @@ export async function attachEtcHandoff(input: {
   }
   if (!current()) return unknownHandoff('stale_generation', stored.request, 'skipped');
 
-  const result = await dispatchStoredEtcStart({
+  let result = await dispatchStoredEtcStart({
     kv: input.kv,
     stored,
     mode: 'confirmed_start',
@@ -109,6 +115,27 @@ export async function attachEtcHandoff(input: {
     port: input.port,
     timeoutMs: input.timeoutMs,
   });
+  // Sending a PendingIntent precedes the receiver's ledger commit. Observe that
+  // exact request briefly rather than leaving a successful start unconfirmed
+  // until the next app resume. Observation never sends another start token.
+  if (result.reason === 'observation_unconfirmed') {
+    const observationStarted = Date.now();
+    for (let attempt = 0; attempt < 12 && current(); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      if (!current()) break;
+      const latest = await readEtcStart(input.kv, identityKey);
+      if (latest.kind !== 'ok') break;
+      const observed = await dispatchStoredEtcStart({
+        kv: input.kv, stored: latest.record, mode: 'resume',
+        nowMs: input.nowMs + Date.now() - observationStarted,
+        activityVisible: input.activityVisible,
+        identity: input.identity ?? ETC_RELEASE_IDENTITY, port: input.port,
+        timeoutMs: input.timeoutMs,
+      });
+      if (isTerminalEtcResult(observed.hos, observed.state)) { result = observed; break; }
+      if (observed.state === 'unknown') { result = observed; break; }
+    }
+  }
   return publish(result);
 }
 
