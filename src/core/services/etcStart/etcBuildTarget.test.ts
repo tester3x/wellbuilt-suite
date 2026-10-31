@@ -3,6 +3,7 @@
  * Run: npx tsx --test src/core/services/etcStart/etcBuildTarget.test.ts
  */
 import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -218,6 +219,9 @@ test('native dispatch_disabled is a known refusal and does not mark the outbox u
 });
 
 test('node native loading fail-closes and the module is registered for Android', () => {
+  const production = readFileSync(join(HERE, 'etcProduction.ts'), 'utf8');
+  assert.ok(production.includes("require('../../../../modules/suite-etc-hos')"));
+  assert.equal(production.includes("require('suite-etc-hos')"), false);
   const config = JSON.parse(readFileSync(join(REPO, 'modules/suite-etc-hos/expo-module.config.json'), 'utf8')) as {
     android: { modules: string[] };
   };
@@ -231,6 +235,22 @@ test('node native loading fail-closes and the module is registered for Android',
   assert.equal(native.nativeAvailable(), false);
   const raw = native.callProvider({ method: 'capabilities', payload: '{}' });
   assert.equal(JSON.parse(raw).reason, 'native_unavailable');
+});
+
+test('a failed native lookup is retried when the runtime becomes available', () => {
+  let ready = false;
+  let calls = 0;
+  const module = { exports: {} as any };
+  runInNewContext(readFileSync(join(REPO, 'modules/suite-etc-hos/index.js'), 'utf8'), {
+    module, console: { warn() {} }, require: () => ({ requireNativeModule: () => {
+      if (!ready) throw Error('runtime not ready');
+      return { callProvider: () => { calls++; return 'connected'; } };
+    } }),
+  });
+  assert.equal(JSON.parse(module.exports.callProvider({})).reason, 'native_unavailable');
+  ready = true;
+  assert.equal(module.exports.callProvider({}), 'connected');
+  assert.equal(calls, 1);
 });
 
 test('native and gradle sources agree on BuildConfig and do not bake the field-test fingerprint', () => {

@@ -120,7 +120,7 @@ export async function attachEtcHandoff(input: {
   // until the next app resume. Observation never sends another start token.
   if (result.reason === 'observation_unconfirmed') {
     const observationStarted = Date.now();
-    for (let attempt = 0; attempt < 12 && current(); attempt++) {
+    for (let attempt = 0; attempt < 12 && current() && Date.now() - observationStarted < 3000; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 250));
       if (!current()) break;
       const latest = await readEtcStart(input.kv, identityKey);
@@ -130,7 +130,7 @@ export async function attachEtcHandoff(input: {
         nowMs: input.nowMs + Date.now() - observationStarted,
         activityVisible: input.activityVisible,
         identity: input.identity ?? ETC_RELEASE_IDENTITY, port: input.port,
-        timeoutMs: input.timeoutMs,
+        timeoutMs: Math.max(1, Math.min(input.timeoutMs ?? 4000, 3000 - (Date.now() - observationStarted))),
       });
       if (isTerminalEtcResult(observed.hos, observed.state)) { result = observed; break; }
       if (observed.state === 'unknown') { result = observed; break; }

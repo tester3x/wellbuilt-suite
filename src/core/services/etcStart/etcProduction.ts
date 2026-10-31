@@ -58,7 +58,9 @@ function loadNative(): NativeModule | null {
   try {
     // Optional until the local module is installed and a release build links it.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require('suite-etc-hos') as NativeModule;
+    // Local file dependencies may be junctions into a historical checkout.
+    // Match the native module compiled from this registered source home.
+    return require('../../../../modules/suite-etc-hos') as NativeModule;
   } catch {
     return null;
   }

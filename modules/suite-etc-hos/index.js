@@ -1,12 +1,19 @@
 let native = null;
-try {
-  const { requireNativeModule } = require('expo-modules-core');
-  native = requireNativeModule('SuiteEtcHos');
-} catch {
-  native = null;
+function loadNative() {
+  if (native) return native;
+  try {
+    const { requireNativeModule } = require('expo-modules-core');
+    native = requireNativeModule('SuiteEtcHos');
+  } catch (error) {
+    console.warn('[ETC bridge] Native module unavailable:', error instanceof Error ? error.message : 'module load failed');
+  }
+  return native;
 }
 
 function callProvider(args) {
+  // Retry resolution after startup; a failed early lookup must not disable
+  // every later shift handoff for the lifetime of the JavaScript process.
+  loadNative();
   if (!native || typeof native.callProvider !== 'function') {
     return JSON.stringify({ ok: false, reason: 'native_unavailable' });
   }
@@ -23,5 +30,5 @@ function callProvider(args) {
 
 module.exports = {
   callProvider,
-  nativeAvailable: () => !!native,
+  nativeAvailable: () => !!loadNative(),
 };
