@@ -1,0 +1,15 @@
+{
+  "reviewedSourceCommit": "b8296ec566cbec892a00cd04efb1042ff47226bb",
+  "installedSuiteVersionCode": 114,
+  "installedEtcVersions": {"ZFold": 122, "S24": 123},
+  "review": "Confirmed accepted-shift handoff creates one durable owner/shift request, loads the registered-home JS bridge, retries native-module resolution after startup, verifies the configured production package/certificate and sends the returned PendingIntent only during the visible explicit start. Resume reconciles the same identity; no stale start replay or replacement request.",
+  "validation": {
+    "command": "node --import tsx --test src/core/services/etcStart/etcStartFlow.test.ts src/core/services/etcStart/etcBuildTarget.test.ts",
+    "passed": 36,
+    "failed": 0,
+    "privateLog": "C:/dev/tmp/etc-tomorrow-code-review-private.log"
+  },
+  "fieldAcceptance": "Pending November 1 normal ZFold shift start. User clarified the previous manual-start suggestion and S24 test were not performed; neither is claimed complete. Existing installed Suite114 bridge repair is ready for that test.",
+  "driverTest": "Start the next real shift through WB S normally. Complete any driver-required shift preparation. Verify ETC reports on duty without manually starting its clock first. If not, preserve the displayed status/error and request evidence for investigation.",
+  "preservation": "Read-only code/device-version audit; no shift creation/end, manual ETC start, backdating, receiver prepareStart replay or HOS ledger change. No further Suite/ETC source repair or APK needed based on this review. Code tests do not prove a fresh native shift-start result."
+}
