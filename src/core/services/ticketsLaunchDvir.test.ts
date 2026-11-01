@@ -10,6 +10,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { wbtSsoStartUrl } from './ssoLaunchPolicy.js';
+import {isCredentialFreeLaunchTarget} from './ssoLaunchPolicy.js';
+import {runInNewContext} from 'node:vm';
+import ts from 'typescript';
 
 const CORE = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => readFileSync(join(CORE, p), 'utf8');
@@ -48,28 +51,29 @@ describe('WB-T card tap launches directly', () => {
     assert.match(hook, /launchWBApp: launchWB/);
   });
 
-  it('launchWB does not consult shift state or DVIR before the credential-free return', () => {
-    const hook = strip(read('hooks/useAppLauncher.ts'));
-    const start = hook.indexOf('const launchWB = useCallback');
-    const end = hook.indexOf('return launchWBApp({ ...options, sso });', start);
-    assert.ok(start > -1 && end > start);
-    const body = hook.slice(start, end);
-    const direct = body.indexOf(
-      'return await launchWBApp({ ...options, sso: undefined, startHost: WBT_SSO_START_HOST })',
-    );
-    assert.ok(direct > -1, 'credential-free sso-start return missing');
-    // shiftActive is only read later, for legacy hash apps. WB-T returns
-    // on the line above whether the shift is active or not.
-    const shiftAt = body.indexOf('shiftActive');
-    assert.ok(shiftAt > direct, 'shiftActive is read before the Tickets return');
-    assert.equal(body.includes('isTicketsLaunch'), false);
-    assert.equal(body.includes('ensurePreTripGate'), false);
-    assert.equal(body.includes('ensurePostTripGate'), false);
-    assert.equal(body.includes('dvirGate'), false);
-    assert.ok(body.includes('armSsoHandoffOutbound(audience, Date.now())'));
-    assert.ok(body.includes('noteSsoHandoffLaunchFailure()'));
-    assert.ok(body.indexOf('armSsoHandoffOutbound') < direct);
-    assert.ok(direct < body.indexOf('noteSsoHandoffLaunchFailure()'));
+  it('actual Tickets card handler opens directly on and off shift without asking for DVIR', async () => {
+    for(const active of [false,true]){
+      const launches:any[]=[];
+      const unexpected=()=>{throw Error('Tickets consulted shift or DVIR routing');};
+      const modules:Record<string,any>={
+        '../../../modules/wellbuilt-platform/appAccess':{useAppAccess:()=>()=>true},
+        '../services/platformRuntime.generated':{PLATFORM_APP_OPEN_HOST:'app-open'},
+        '../services/equipmentAppAccessCore':{isEquipmentAppTarget:()=>false},
+        react:{useCallback:(f:any)=>f,useMemo:(f:any)=>f()},
+        '../services/appLauncher':{canLaunchApp:()=>true,launchWBApp:async(o:any)=>{launches.push(o);}},
+        '../context/AuthContext':{useAuth:()=>({user:null,shiftActive:active})},
+        '../services/driverProfile':{loadVehicleInfo:unexpected},
+        '../services/shiftTracking':{getCurrentShiftId:unexpected},
+        '../services/dvirGate':{createSuiteDvirGate:()=>({ensurePreTripGate:unexpected,ensurePostTripGate:unexpected})},
+        '../services/ssoLaunchPolicy':{isCredentialFreeLaunchTarget},
+      };
+      const exports:any={};
+      const source=ts.transpileModule(read('hooks/useAppLauncher.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+      runInNewContext(source,{exports,require:(id:string)=>{assert.ok(modules[id],id);return modules[id];}});
+      await exports.useAppLauncher().launchWBApp({name:'Tickets',scheme:'wellbuilt-tickets'});
+      assert.equal(launches.length,1);assert.equal(launches[0].scheme,'wellbuilt-tickets');
+      assert.equal(launches[0].sso,undefined);assert.equal(launches[0].startHost,'app-open');
+    }
   });
 });
 

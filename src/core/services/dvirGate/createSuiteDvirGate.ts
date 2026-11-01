@@ -26,7 +26,6 @@ import {
 } from './shiftDvirSummary';
 import { loadVehicleInfo } from '../driverProfile';
 import {
-  hasEquipmentHandoffConfirmHandler,
   requestEquipmentHandoffConfirm,
 } from './equipmentHandoffConfirm';
 
@@ -80,18 +79,7 @@ export function createSuiteDvirGate(opts?: {
     alert: (title, message) => {
       Alert.alert(title, message);
     },
-    // Branded modal via DvirHandoffHost; Alert only if host not mounted
-    confirmLeaveForEquipment: async ({ phase, title, message }) => {
-      if (hasEquipmentHandoffConfirmHandler()) {
-        return requestEquipmentHandoffConfirm({ phase, title, message });
-      }
-      return new Promise((resolve) => {
-        Alert.alert(title, message, [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Continue', onPress: () => resolve(true) },
-        ]);
-      });
-    },
+    confirmLeaveForEquipment: requestEquipmentHandoffConfirm,
     tryAndroidIntent: Platform.OS === 'android',
   };
 

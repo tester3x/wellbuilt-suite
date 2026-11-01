@@ -18,13 +18,13 @@ export default function DvirHandoffHost() {
   const [pending, setPending] = useState<Pending | null>(null);
 
   useEffect(() => {
-    setEquipmentHandoffConfirmHandler((req) => {
+    const unregister = setEquipmentHandoffConfirmHandler((req) => {
       return new Promise<boolean>((resolve) => {
         setPending({ ...req, resolve });
       });
     });
     return () => {
-      setEquipmentHandoffConfirmHandler(null);
+      unregister();
     };
   }, []);
 

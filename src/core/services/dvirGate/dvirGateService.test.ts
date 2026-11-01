@@ -133,6 +133,8 @@ describe('Suite DVIR gate service', () => {
     assert.match(pre.message, /Pre-Trip DVIR/i);
     assert.match(pre.message, /WellBuilt Suite/i);
     assert.doesNotMatch(pre.message, /Post-Trip/i);
+    assert.match(pre.message, /Your shift has started/);
+    assert.doesNotMatch(pre.message, /before using Tickets/i);
   });
 
   it('post-trip handoff notice names eQuipment and Post-Trip DVIR reason', () => {

@@ -122,7 +122,7 @@ export function equipmentHandoffNotice(phase: DvirReceiptPhase): {
   return {
     title: 'Opening WellBuilt eQuipment',
     message:
-      'Your Pre-Trip DVIR is required before using Tickets. You will return to WellBuilt Suite when it is finished.',
+        'Your shift has started. Complete its Pre-Trip DVIR in WellBuilt eQuipment, then return to WellBuilt Suite.',
   };
 }
 
