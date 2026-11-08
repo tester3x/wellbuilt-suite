@@ -1,0 +1,40 @@
+{
+  "sourceCommit": "6fbcfb964eb4f1cd420a578e2cab3b4ebacea5c4",
+  "branch": "codex/suite-equipment-entry-20261012",
+  "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+  "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+  "owner": "01a139b5-d3f7-7401-bdf0-3443ec841c28",
+  "reservation": "android-release-v115",
+  "reservationTagObject": "a266311dbb1a397f807975b81c09a5e75f96bac5",
+  "profile": "preview",
+  "buildMethod": "local Android SDK/Gradle in registered home",
+  "sourceCopy": false,
+  "cloudBuild": false,
+  "package": "com.wellbuilt.suite",
+  "versionCode": 115,
+  "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+  "artifact": "C:\\dev\\release-artifacts\\suite-115-6fbcfb9\\com.wellbuilt.suite-vc115.apk",
+  "apkSha256": "72c75aa77aa85579fcbf3bd5785e01292643bce8f1086a0b295c309ca7a3c57b",
+  "completedAt": "2026-11-08T02:06:18.881Z",
+  "installed": false,
+  "checks": {
+    "typescript": "passed",
+    "shiftAuthority": "216 passed",
+    "returnFlow": "65 passed",
+    "dvirGate": "101 passed",
+    "releaseRunner": "2 passed"
+  },
+  "fieldEvidence": {
+    "device": "Galaxy Z Fold",
+    "installedVersion": 114,
+    "finding": "Repeated saved-shift fallback and three failed Return to Yard requests preceded a successful return and confirmed shift close at 8:04 p.m. Central on November 7."
+  },
+  "reconciliation": {
+    "installedSource": "b8296ec566cbec892a00cd04efb1042ff47226bb",
+    "previousBranchTip": "2c170532a5ce200cb4782c4b950c300ac8653598",
+    "delta": "Preserves the previously committed branded DVIR handoff. The new source changes are limited to saved-shift refresh and version metadata.",
+    "remoteCloudHighest": 99,
+    "previousReservationCeiling": 114
+  },
+  "acceptance": "Pending S24 device validation of stable saved-shift status during a failed refresh and successful reconnection."
+}
