@@ -1540,7 +1540,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (!authorityGenRef.current.isCurrent(gen)) return;
-      setShiftAuthorityUi({ kind: 'checking' });
+      setShiftAuthorityUi(previous =>
+        previous.kind === 'open' && previous.offline ? previous : { kind: 'checking' },
+      );
       const ui = await postLoginEnforcedRestore({
         enforcement,
         flags: { setShiftActive, setShiftStartTime },
@@ -1556,17 +1558,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Reconcile a saved verified shift when connectivity returns. No polling
-  // while offline and no shift creation; a readable closed response wins.
+  const hasSavedOfflineShift = shiftAuthorityUi.kind === 'open' && shiftAuthorityUi.offline === true;
+  // NetInfo emits the current state for new listeners. Keep this subscription
+  // while the same offline status persists so a failed read cannot restart it.
   useEffect(() => {
-    if (shiftAuthorityUi.kind !== 'open' || !shiftAuthorityUi.offline) return;
+    if (!hasSavedOfflineShift) return;
     let busy = false;
     return NetInfo.addEventListener(state => {
       if (state.isConnected !== true || state.isInternetReachable === false || busy || AppState.currentState !== 'active') return;
       busy = true;
       void refreshShiftAuthority().finally(() => { busy = false; });
     });
-  }, [shiftAuthorityUi, refreshShiftAuthority]);
+  }, [hasSavedOfflineShift, refreshShiftAuthority]);
 
   // A phone waking up can reach the shift callable before its connection or
   // Firebase Auth session is ready. The failed resolve must still block Start

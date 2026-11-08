@@ -82,7 +82,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.wellbuilt.suite",
-      "versionCode": 114
+      "versionCode": 115
     },
     "web": {
       "favicon": "./assets/favicon.png"

@@ -389,6 +389,16 @@ test('cold-start: idempotent restore when already local active', async () => {
   );
 });
 
+test('wiring: an offline refresh keeps the saved shift visible and retains the NetInfo listener', () => {
+  const auth = readFileSync(join(__dirname, '..', '..', 'context', 'AuthContext.tsx'), 'utf8');
+  const refresh = auth.slice(auth.indexOf('const refreshShiftAuthority ='), auth.indexOf('const hasSavedOfflineShift ='));
+  assert.match(refresh, /previous\.kind === 'open' && previous\.offline \? previous : \{ kind: 'checking' \}/);
+  const reconnect = auth.slice(auth.indexOf('const hasSavedOfflineShift ='), auth.indexOf('// A phone waking up'));
+  assert.match(reconnect, /if \(!hasSavedOfflineShift\) return/);
+  assert.match(reconnect, /NetInfo\.addEventListener/);
+  assert.match(reconnect, /\[hasSavedOfflineShift, refreshShiftAuthority\]/);
+});
+
 test('wiring: login + cold-start consult server postLoginEnforcedRestore', () => {
   const auth = readFileSync(join(__dirname, '..', '..', 'context', 'AuthContext.tsx'), 'utf8');
   assert.ok(auth.includes('postLoginEnforcedRestore'));
