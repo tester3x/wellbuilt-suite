@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "9489abbec746ad964c35702890cca77f7f7f935e",
+  "branch": "codex/suite-equipment-entry-20261012",
+  "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+  "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+  "owner": "01a1ca24-a83e-7f40-b6df-ac284cb3cd76",
+  "reservation": "android-release-v116",
+  "reservationTagObject": "b38c0a14b7c9a569fd0126bde9d2060feffa3c41",
+  "profile": "preview",
+  "buildMethod": "local Android SDK/Gradle in registered home",
+  "sourceCopy": false,
+  "cloudBuild": false,
+  "package": "com.wellbuilt.suite",
+  "versionCode": 116,
+  "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+  "artifact": "C:\\dev\\release-artifacts\\suite-116-9489abb\\com.wellbuilt.suite-vc116.apk",
+  "apkSha256": "43d07b1e7a2429e7f4c1d9dc0674ea885ef4b483a0a36e3c79c8bf0f29ee3d62",
+  "completedAt": "2026-11-11T12:05:08.982Z",
+  "installed": true,
+  "s24": "Signed in-place install and cold launch succeeded. LGDispatch acceptance pending.",
+  "backend": {
+    "deployed": [
+      "platformIssueDeviceAccount",
+      "platformRefreshDeviceAccount",
+      "platformExchangeDeviceAccount"
+    ],
+    "source": "05b44033"
+  }
+}
