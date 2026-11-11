@@ -3,6 +3,11 @@ import {getFunctions,httpsCallable} from 'firebase/functions';
 import {getFirebaseApp} from './firebaseApp';
 import {initializePersistentAuth,waitForAuthReady,getOwnedUserId,getOwnedVerifiedIdentity,getOwnedAuth} from './firebaseAuthBoundary';
 import {createDeviceAccountClient,type DeviceAccountNative} from './deviceAccount.generated';
+function verifiedAccountRole(profile: object): 'admin' | 'viewer' | 'driver' | null {
+ const role = 'role' in profile ? profile.role : null;
+ return role === 'admin' || role === 'viewer' || role === 'driver' ? role : null;
+}
+
 const native=require('../../../modules/wellbuilt-platform') as DeviceAccountNative|null;
 // Field cold-start request took 18.25s; a 15s deadline lost its successful grant.
 export const suiteDeviceAccount=createDeviceAccountClient(native,async(name,data)=>(await httpsCallable(getFunctions(getFirebaseApp(),'us-central1'),name,{timeout:60000})(data)).data);
@@ -10,13 +15,19 @@ export async function restoreSuiteDeviceAccount(){
  initializePersistentAuth(getFirebaseApp(),AsyncStorage);await waitForAuthReady(getFirebaseApp());
  const capturedUser=getOwnedAuth(getFirebaseApp())?.currentUser;
  const {getDriverSession,saveDriverSession}=await import('./driverAuth');const saved=await getDriverSession(),uid=getOwnedUserId(getFirebaseApp());
+ const account=await suiteDeviceAccount.read();
+ const cachedRole=account ? verifiedAccountRole(account.access.profile) : null;
+ const savedRole=saved?.isAdmin?'admin':saved?.isViewer?'viewer':'driver';
  if(getOwnedAuth(getFirebaseApp())?.currentUser!==capturedUser)throw Object.assign(Error('Account changed during local restore.'),{code:'platform/superseded'});
- return suiteDeviceAccount.restore('suite',uid&&saved?.companyId?{uid,driverId:saved.driverId,companyId:saved.companyId}:null,async reply=>{
+ return suiteDeviceAccount.restore('suite',uid&&saved?.companyId&&(!cachedRole||cachedRole===savedRole)?{uid,driverId:saved.driverId,companyId:saved.companyId}:null,async reply=>{
   const {installDeviceAccountToken}=await import('./secureDriverAuth');
   await installDeviceAccountToken(reply.customToken,reply.access.owner,async()=>{
   const verified=await getOwnedVerifiedIdentity(getFirebaseApp(),false),owner=reply.access.owner;
   if(!verified||verified.uid!==owner.uid||verified.driverId!==owner.driverId||verified.companyId!==owner.companyId||verified.app)throw Error('platform_identity_mismatch');
-  await saveDriverSession(owner.driverId,reply.access.profile.displayName||'Driver',owner.driverId,false,false,owner.companyId,undefined,reply.access.profile.legalName||undefined);
+  const role=verifiedAccountRole(reply.access.profile);
+  const sameSavedOwner=uid===owner.uid&&saved?.driverId===owner.driverId&&saved.companyId===owner.companyId;
+  const restoredRole=role??(sameSavedOwner?savedRole:'driver');
+  await saveDriverSession(owner.driverId,reply.access.profile.displayName||'Driver',owner.driverId,restoredRole==='admin',restoredRole==='viewer',owner.companyId,undefined,reply.access.profile.legalName||undefined);
   const {markSessionAuthMode,markSecureSessionVerified}=await import('./secureSessionRevalidation');await markSessionAuthMode('secure');await markSecureSessionVerified();
   });
  });
