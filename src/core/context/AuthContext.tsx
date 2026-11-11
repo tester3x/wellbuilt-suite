@@ -691,6 +691,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const startShift = useCallback(async (packageId?: string): Promise<StartShiftResult> => {
     if (!user) return { ok: false, reason: 'no_user' };
+    if (user.role === 'viewer') return { ok: false, reason: 'viewer_account' };
     // Single-flight: first confirm owns the operation; later taps no-op.
     if (startShiftInFlightRef.current) {
       return { ok: false, reason: 'in_flight' };

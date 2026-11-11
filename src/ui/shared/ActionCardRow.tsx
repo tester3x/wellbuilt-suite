@@ -244,7 +244,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   }, [returning, returnStartTime]);
 
   // ── Shift card press handler ──
+  const viewerShiftDisabled = user?.role === 'viewer';
   const handleShiftPress = () => {
+    if (viewerShiftDisabled) return;
     if (returning) {
       // Returning to yard — branded arrival confirmation with post-trip checklist
       setShowArrivalModal(true);
@@ -357,7 +359,13 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   let showDot = false;
   let shiftDisabled = false;
 
-  if (returning) {
+  if (viewerShiftDisabled) {
+    shiftLabel = 'Driver shifts';
+    shiftSub = 'Unavailable for viewer accounts';
+    shiftColor = colors.text.muted;
+    shiftBorder = colors.border.subtle;
+    shiftDisabled = true;
+  } else if (returning) {
     shiftIcon = 'truck';
     shiftLabel = t('shift.returning');
     shiftSub = elapsed;
@@ -384,7 +392,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   }
 
   // When returning to yard, show full-width en route card instead of 3-card row
-  if (returning) {
+  if (returning && !viewerShiftDisabled) {
     return (
       <View>
         <EnRouteYardCard
@@ -469,7 +477,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         {/* Shift Card */}
         <Pressable
           onPress={handleShiftPress}
-          disabled={shiftDisabled && shiftAuthorityUi.kind === 'checking'}
+          disabled={shiftDisabled}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: shiftDisabled }}
           style={[s.card, { borderColor: shiftBorder, opacity: shiftDisabled ? 0.7 : 1 }]}
         >
           <MaterialCommunityIcons name={shiftIcon} size={28} color={shiftColor} />
