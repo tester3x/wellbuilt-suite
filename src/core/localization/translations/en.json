@@ -77,7 +77,8 @@
     "roles": {
       "admin": "Administrator",
       "manager": "Manager",
-      "driver": "Driver"
+      "driver": "Driver",
+      "viewer": "Viewer"
     },
     "stats": {
       "apps": "Apps",

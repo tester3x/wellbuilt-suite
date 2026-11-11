@@ -17,7 +17,7 @@
   "apkSha256": "43d07b1e7a2429e7f4c1d9dc0674ea885ef4b483a0a36e3c79c8bf0f29ee3d62",
   "completedAt": "2026-11-11T12:05:08.982Z",
   "installed": true,
-  "s24": "Signed in-place install and cold launch succeeded. LGDispatch acceptance pending.",
+  "s24": "LGDispatch sign-in and Suite cold restart retained viewer role; disabled Driver shifts card showed Unavailable for viewer accounts. Build 116 displays raw home.roles.viewer because the translation was absent; corrected in source after the APK. Mobile, Tickets and eQuipment activities launched. Dashboard authenticated content unverified. JSA activity launched but account exchange was denied; LGDispatch has no shift-authority record.",
   "backend": {
     "deployed": [
       "platformIssueDeviceAccount",
