@@ -130,6 +130,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const [returnError, setReturnError] = useState<string | null>(null);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
   const [postTripVerified, setPostTripVerified] = useState(false);
+  const [completedArrivalRecovery, setCompletedArrivalRecovery] = useState(false);
   const [arrivalError, setArrivalError] = useState<string | null>(null);
   /**
    * The blocked shift JSA decision, when a close was refused for JSA evidence.
@@ -193,7 +194,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
   /** Restore the final step after a receipt return or a process restart. */
   useEffect(() => {
-    if (!returning) return;
+    if (!active) { setCompletedArrivalRecovery(false); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -204,17 +205,18 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         const gate = createSuiteDvirGate({ isShiftActive: () => true });
         const view = await coordinator.getResumeArrivalView(gate, { shiftActive: true });
         if (cancelled) return;
+        setCompletedArrivalRecovery(view.show === 'final_modal' && view.preTripUnconfirmed === true);
         if (view.show === 'final_modal') {
           setPostTripVerified(true);
           setRetainedOdometer(
             view.record.odometerMiles !== undefined ? String(view.record.odometerMiles) : undefined,
           );
-          setShowArrivalModal(true);
+          if (returning && !view.preTripUnconfirmed) setShowArrivalModal(true);
         }
-      } catch { /* resume is best-effort; the card stays usable */ }
+      } catch { if (!cancelled) setCompletedArrivalRecovery(false); }
     })();
     return () => { cancelled = true; };
-  }, [returning]);
+  }, [active, returning, shiftStartTime, preTripMissing]);
   const [startConfirmBusy, setStartConfirmBusy] = useState(false);
   const [etcNotice, setEtcNotice] = useState<string | null>(null);
   useEffect(() => subscribeEtcNotice(setEtcNotice), []);
@@ -398,25 +400,36 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
   if (preTripMissing) {
     shiftDisabled = true;
-    shiftSub = 'Finish Pre-Trip';
+    shiftSub = completedArrivalRecovery ? 'Finish shift' : 'Finish Pre-Trip';
   }
 
-  // When returning to yard, show full-width en route card instead of 3-card row
-  if (returning && !viewerShiftDisabled) {
-    return (
-      <View>
-        <EnRouteYardCard
-          returnStartTime={returnStartTime}
-          onArrived={handleMarkArrived}
-          arrivalDisabled={preTripMissing}
-        />
-        {preTripMissing && <Pressable accessibilityRole="button" onPress={() => router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
-        <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>Resume Pre-Trip DVIR</Text>
-      </Pressable>}
-      {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
-
-        {/* ── Arrival Confirmation Modal ── */}
-        <ShiftArrivalModal
+  const openCompletedArrival = async () => {
+    try {
+      const [{ createSuiteDvirGate }, coordinator] = await Promise.all([
+        import('@/core/services/dvirGate'), import('@/core/services/dvirGate/arrivalCoordinator'),
+      ]);
+      const view = await coordinator.getResumeArrivalView(createSuiteDvirGate({ isShiftActive: () => active }), { shiftActive: active });
+      if (view.show !== 'final_modal' || !view.preTripUnconfirmed) {
+        setCompletedArrivalRecovery(false);
+        Alert.alert('Shift still open', 'The completed Post-Trip could not be confirmed for this arrival. Reconnect and try again.');
+        return;
+      }
+      setPostTripVerified(true);
+      setRetainedOdometer(view.record.odometerMiles !== undefined ? String(view.record.odometerMiles) : undefined);
+      setArrivalError(null);
+      setShowArrivalModal(true);
+    } catch {
+      Alert.alert('Shift still open', 'Could not verify the completed Post-Trip. Try again.');
+    }
+  };
+  const preTripRecovery = preTripMissing && <View>
+    {completedArrivalRecovery && <Text style={s.etcNotice}>Post-Trip is complete. Pre-Trip was not confirmed. Finish ending this shift without marking Pre-Trip complete.</Text>}
+    <Pressable accessibilityRole="button" onPress={() => completedArrivalRecovery ? void openCompletedArrival() : router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
+      <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>{completedArrivalRecovery ? 'Finish ending shift' : 'Resume Pre-Trip DVIR'}</Text>
+    </Pressable>
+  </View>;
+  const arrivalModal = (
+    <ShiftArrivalModal
           visible={showArrivalModal}
           onClose={() => { setShowArrivalModal(false); setJsaBlock(null); }}
           onConfirm={async (miles) => {
@@ -473,11 +486,27 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
             }
           }}
           postTripVerified={postTripVerified}
+          preTripUnconfirmed={completedArrivalRecovery}
           initialOdometer={retainedOdometer}
           errorText={arrivalError}
           recoveryAction={jsaRecoveryAction(jsaBlock, onJsaLaunch)}
           returnStartTime={returnStartTime}
         />
+  );
+
+  // When returning to yard, show full-width en route card instead of 3-card row
+  if (returning && !viewerShiftDisabled) {
+    return (
+      <View>
+        <EnRouteYardCard
+          returnStartTime={returnStartTime}
+          onArrived={handleMarkArrived}
+          arrivalDisabled={preTripMissing}
+        />
+        {preTripRecovery}
+      {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
+
+        {arrivalModal}
       </View>
     );
   }
@@ -521,10 +550,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           <Text style={[s.sub, { color: colors.text.muted }]}>{t('actionCard.equipmentSub')}</Text>
         </Pressable>
       </View>
-      {preTripMissing && <Pressable accessibilityRole="button" onPress={() => router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
-        <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>Resume Pre-Trip DVIR</Text>
-      </Pressable>}
-      {preTripMissing && !returning && shiftAuthorityUi.kind === 'open' && <Pressable accessibilityRole="button" onPress={() => router.push('/cancel-unstarted-shift' as never)} style={{padding:14}}>
+      {preTripRecovery}
+      {preTripMissing && !completedArrivalRecovery && !returning && shiftAuthorityUi.kind === 'open' && <Pressable accessibilityRole="button" onPress={() => router.push('/cancel-unstarted-shift' as never)} style={{padding:14}}>
         <Text style={{color:colors.text.muted,textAlign:'center'}}>Cancel unstarted shift</Text>
       </Pressable>}
       {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
@@ -533,6 +560,8 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           The per-job-close JSA gate in WB T owns the prompt; shift-start
           + home-screen are silent. Drivers can still launch the JSA app
           early via the application grid. */}
+
+      {arrivalModal}
 
       {/* ── Enhanced Shift Start Modal ── */}
       <ShiftStartModal

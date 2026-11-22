@@ -222,7 +222,7 @@ export type ResumeView =
   /** Arrived, Post-Trip still outstanding — offer retry, do NOT claim it passed. */
   | { show: 'awaiting_post_trip'; record: ArrivalRecord }
   /** Post-Trip verified for this shift — show the final mileage modal. */
-  | { show: 'final_modal'; record: ArrivalRecord };
+  | { show: 'final_modal'; record: ArrivalRecord; preTripUnconfirmed?: boolean };
 
 /**
  * What a cold start (or a return to Home) should put back on screen.

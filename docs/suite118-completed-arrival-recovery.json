@@ -1,0 +1,10 @@
+{
+ "versionCode":118,
+ "package":"com.wellbuilt.suite",
+ "scope":"Recover an existing recorded arrival with verified current Post-Trip through the normal final shift-close checks. Missing Pre-Trip remains unconfirmed; Return to Yard and Mark Arrived remain blocked.",
+ "baseline":"575d34bef8e61147ed6230761068f954a02961f9",
+ "checks":"425 relevant tests, TypeScript, 2 local-release tests and 6 ETC profile tests passed.",
+ "reconciliation":"Fresh origin fetch and all-head review retained accepted baseline and installed117 ancestry. Historical nonancestor branches remain reference material; no newer relevant remote source found. Unpushed other-machine work is not discoverable.",
+ "versionEvidence":"Installed/local/reserved117; fresh read-only EAS history below117. Reserve118 with existing package and signer. Local registered-home build only.",
+ "acceptance":"Pending S24 installation and verification. Do not alter signed inspections, invent Pre-Trip, certify paperwork or close shift on the owner behalf. No Fold update. Original normal-order JSA cycle remains incomplete."
+}

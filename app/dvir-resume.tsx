@@ -30,7 +30,16 @@ export default function DvirResumeScreen() {
         currentShift:getCurrentShiftId,
         complete:(id,phase)=>phase==='post_trip'?gate.isPostTripComplete(id):gate.isPreTripComplete(id),
         launch:(id,phase)=>gate.launchPhase(phase,id),
+        canFinishCompletedArrival:async id=>{
+          const { getResumeArrivalView } = await import('@/core/services/dvirGate/arrivalCoordinator');
+          const view = await getResumeArrivalView(gate, { shiftActive });
+          return view.show === 'final_modal' && view.record.shiftId === id && view.preTripUnconfirmed === true;
+        },
       });
+      if (result === 'finish_shift') {
+        router.replace('/home');
+        return;
+      }
       setMessage(result === 'launched' ? 'Your inspection is opening. If interrupted, tap Resume inspection again.'
         : result === 'complete' ? 'This inspection is already recorded for your current shift.'
         : 'This request does not match your active shift. Return to Suite home.');

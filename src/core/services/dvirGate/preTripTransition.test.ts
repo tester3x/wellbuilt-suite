@@ -57,13 +57,30 @@ test('valid current pre-trip allows arrival, but post-trip remains separately re
   assert.equal((await readArrivalRecord(f.deps.kv))?.shiftId, SHIFT);
 });
 
-test('restored arrival cannot open final close UI with a post-trip but no pre-trip', async () => {
+test('an existing arrived shift can finish ending with verified post-trip while pre-trip remains missing', async () => {
   const f = fixture();
   await f.save('post_trip');
   await writeArrivalRecord(f.deps.kv, { shiftId: SHIFT, stage: 'awaiting_final', arrivedAtIso: '2026-11-22T06:12:00Z' });
-  assert.deepEqual(await getResumeArrivalView(f.deps, { shiftActive: true }), { show: 'none', reason: 'pre_trip_required' });
+  const before = [...f.data];
+  const view = await getResumeArrivalView(f.deps, { shiftActive: true });
+  assert.equal(view.show, 'final_modal');
+  assert.equal(view.show === 'final_modal' && view.preTripUnconfirmed, true);
+  assert.deepEqual([...f.data], before, 'recovery reads never write an inspection or arrival');
+  assert.equal((await markArrived(f.deps)).arrived, false, 'terminal recovery never unlocks Mark Arrived');
+  assert.equal((await checkPreTripTransition(f.deps)).allowed, false, 'return gate remains closed');
   await f.save('pre_trip');
   assert.equal((await getResumeArrivalView(f.deps, { shiftActive: true })).show, 'final_modal');
+});
+
+test('a completed post-trip alone cannot invent arrival; foreign equipment or closed shift cannot recover', async () => {
+  const f = fixture();
+  await f.save('post_trip');
+  assert.equal((await getResumeArrivalView(f.deps, { shiftActive: true })).show, 'none');
+  await writeArrivalRecord(f.deps.kv, { shiftId: SHIFT, stage: 'awaiting_final', arrivedAtIso: '2026-11-22T06:12:00Z' });
+  assert.equal((await getResumeArrivalView({ ...f.deps, isCurrentReceipt: async () => false }, { shiftActive: true })).show, 'none');
+  assert.equal((await getResumeArrivalView(f.deps, { shiftActive: false })).show, 'none');
+  assert.equal((await getResumeArrivalView({ ...f.deps, getCurrentShiftId: async () => 'other' }, { shiftActive: true })).show, 'none');
+  assert.equal(f.launches(), 0);
 });
 
 test('return service and UI keep the receipt gate ahead of mutations and expose disabled arrival', () => {

@@ -111,18 +111,26 @@ export async function getResumeArrivalView(
 ): Promise<ResumeView> {
   const record = await readArrivalRecord(deps.kv);
   const activeShiftId = await deps.getCurrentShiftId();
-  if (opts.shiftActive && !(await checkPreTripTransition(deps)).allowed) {
-    return { show: 'none', reason: 'pre_trip_required' };
-  }
   const postTripReceiptValid = record && activeShiftId && record.shiftId === activeShiftId
     ? await isPostTripCompleteForShift(deps, activeShiftId)
     : false;
-  return resumeArrivalView({
+  const preTrip = opts.shiftActive ? await checkPreTripTransition(deps) : null;
+  const view = resumeArrivalView({
     record,
     activeShiftId,
     shiftActive: opts.shiftActive,
     postTripReceiptValid,
   });
+  // Terminal recovery only: an existing arrival plus its current verified
+  // Post-Trip can finish closing. Never create an arrival or invent Pre-Trip.
+  if (view.show === 'final_modal' && preTrip && !preTrip.allowed) {
+    if (preTrip.reason !== 'pre_trip_missing' && preTrip.reason !== 'pre_trip_unverified') {
+      return { show: 'none', reason: preTrip.reason };
+    }
+    return { ...view, preTripUnconfirmed: true };
+  }
+  if (preTrip && !preTrip.allowed) return { show: 'none', reason: 'pre_trip_required' };
+  return view;
 }
 
 /** Is the final modal's DVIR row satisfied? Derived from the receipt only. */

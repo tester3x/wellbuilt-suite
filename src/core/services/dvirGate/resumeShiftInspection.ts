@@ -5,7 +5,8 @@ export async function resumeShiftInspection(input: {
   currentShift(): Promise<string | null>;
   complete(id: string, phase: 'pre_trip' | 'post_trip'): Promise<boolean>;
   launch(id: string, phase: 'pre_trip' | 'post_trip'): Promise<{launched:boolean;error?:string}>;
-}): Promise<'inactive' | 'mismatch' | 'complete' | 'launched'> {
+  canFinishCompletedArrival?(id: string): Promise<boolean>;
+}): Promise<'inactive' | 'mismatch' | 'complete' | 'launched' | 'finish_shift'> {
   if (!input.active) return 'inactive';
   const id = await deps.currentShift();
   if (!id) return 'inactive';
@@ -13,6 +14,7 @@ export async function resumeShiftInspection(input: {
   if (input.phase && input.phase !== 'pre_trip' && input.phase !== 'post_trip') return 'mismatch';
   const phase = input.phase === 'post_trip' ? 'post_trip' : 'pre_trip';
   if (await deps.complete(id, phase)) return 'complete';
+  if (phase === 'pre_trip' && await deps.canFinishCompletedArrival?.(id)) return 'finish_shift';
   const result = await deps.launch(id, phase);
   if (!result.launched) throw new Error(result.error || 'Could not open the inspection. Try again.');
   return 'launched';

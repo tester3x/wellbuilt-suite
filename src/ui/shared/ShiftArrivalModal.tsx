@@ -31,6 +31,8 @@ interface ShiftArrivalModalProps {
    * The row is display-only: a tap must never claim an inspection happened.
    */
   postTripVerified?: boolean;
+  /** An inspection gap remains visible, never represented as completed. */
+  preTripUnconfirmed?: boolean;
   /** Odometer retained from a failed close, so a retry does not re-ask. */
   initialOdometer?: string;
   /** Visible reason a previous submit did not close the shift. */
@@ -68,7 +70,7 @@ function CheckItem({ label, checked, onToggle }: { label: string; checked: boole
 
 export default function ShiftArrivalModal({
   visible, onClose, onConfirm, returnStartTime,
-  postTripVerified = false, initialOdometer, errorText, recoveryAction,
+  postTripVerified = false, preTripUnconfirmed = false, initialOdometer, errorText, recoveryAction,
 }: ShiftArrivalModalProps) {
   const { user } = useAuth();
   const [etcMiles, setEtcMiles] = useState<number | null>(null);
@@ -199,6 +201,9 @@ export default function ShiftArrivalModal({
               ) : null}
             </View>
 
+            {preTripUnconfirmed && <Text style={{ color: '#f59e0b', fontSize: 14, marginTop: 12 }}>
+              Pre-Trip is not confirmed for this shift. Post-Trip is complete. Finish ending this shift; the missing Pre-Trip will not be marked complete.
+            </Text>}
             {errorText ? (
               <View style={{ marginTop: 12 }}>
                 <Text style={{ color: '#f59e0b', fontSize: 13 }}>{errorText}</Text>
