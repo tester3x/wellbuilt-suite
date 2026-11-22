@@ -26,5 +26,7 @@
     "apkSha256": "6a2ba05148800ad8579162dca00991e4649f8f0ebdb7fda49acb75bb61013c68",
     "completedAt": "2026-11-22T15:36:37.677Z",
     "installed": true
-  }
+  },
+  "afterOwnerEnd": "2026-11-22: authoritative shift openPeriodId=null, lastClosedPeriodId=2026-11-22_000833. Current JSA period finalized shift_ended; old off-shift period remains finalized shift_started with original finalizedAt. WB JSA S24 home offers New JSA, no Resume. Signed Post-Trip ledger digest and completion timestamp exactly unchanged; preTrip=null. Owner submitted closure. Full new normal-order shift/job/JSA test remains separate.",
+  "foldRollout": "User authorized all pending built-app installs. Suite118 install-r success, version118 readback. ETC125 hash matched original receipt, S24 installed/readback and launch check passed before Fold install/readback125. Tickets450/JSA120/TicketTime166/Equipment123/WBP242/Mobile152 already current on Fold. No job or inspection edited, no print."
 }
