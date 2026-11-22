@@ -7,6 +7,34 @@
   "checks": "422 relevant DVIR/arrival/shift-authority/return/JSA tests passed; production TypeScript passed; local runner2tests and ETC profile6tests passed. Updated prior stale disabled-expression assertion to retain full disabled state and require missing-pretrip condition.",
   "reconciliation": "Fresh fetch all origin heads/tags. Accepted baseline and installed116 ancestry retained. Only since-installed changes before this task are source labels for viewer translations and116 receipt documentation. origin/master July29 baseline; historical nonancestor suite-etc-start-hos Oct16 and desktop launcher Sept10 preserved, no whole-branch merge or old screen restoration. Current lifecycle/SSO work retained. Other-machine unpushed work cannot be discovered.",
   "versionEvidence": "S24 installed116; existing local Suite116 APK and annotated reservation116; fresh read-only EAS latest10 maximum99; reserve117 above all discovered evidence. No cloud build.",
-  "deviceAcceptance": "Pending S24 install. Existing shift000833 has unfinished Pre-Trip and erroneous prior return/arrival; use it to verify dimmed Mark Arrived and recovery, never mark its inspections complete through tooling. Full JSA test must use normal pre-trip -> test job -> JSA -> close -> yard/post-trip -> shift-end flow.",
-  "fold": "No installation or interaction authorized for this Suite release."
+  "deviceAcceptance": {
+    "installed": "S24 install-r success and independent version117 readback. Fold not updated.",
+    "arrival": "Existing returning shift000833 showed dimmed Mark Arrived. One tap had no navigation, no post-trip launch. Screenshot s24-suite117-disabled-arrival-tap.png.",
+    "return": "Used normal Back to Work to exit prior invalid return. Active shift card shows Finish Pre-Trip,dimmed; tap did not open Return to Yard. Screenshot s24-suite117-disabled-return-tap.png.",
+    "recovery": "Resume Pre-Trip opened WBE. WBE returned a pre_trip receipt that Suite rejected because server current cycle has preTrip=null,postTrip completed2026-11-22T06:16:20.395Z. Reproduced twice; no further retry. Signed post-trip was completed by owner after earlier116 bypass. WBE domain explicitly treats legacy post-only records as pre_trip_already_complete; that is not evidence a pre-trip exists.",
+    "normalJsaRetest": "NOT COMPLETED. Existing test shift is post-trip-only with no pre-trip; cannot honestly continue normal pre-trip->testjob->freshJSA sequence through Resume. Need supported recovery/cleanup of this test cycle before a clean full-cycle test. No inspection fabricated or signed by agent; no real job started.",
+    "evidenceDirectory": "C:/dev/release-artifacts/jsa-14hour",
+    "screenshotsDirectory": "C:/dev/release-artifacts/qr-acceptance"
+  },
+  "fold": "No installation or interaction authorized for this Suite release.",
+  "build": {
+    "sourceCommit": "8cbc9acc1e31527cadb96edb4252a68e2c9ab3e7",
+    "branch": "codex/suite-equipment-entry-20261012",
+    "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+    "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+    "owner": "01a1cd39-d530-7ac2-ae54-c509b9310cfc",
+    "reservation": "android-release-v117",
+    "reservationTagObject": "9d9c05e68373bfbbd9e39f27bc48c05dbb4dd14c",
+    "profile": "preview",
+    "buildMethod": "local Android SDK/Gradle in registered home",
+    "sourceCopy": false,
+    "cloudBuild": false,
+    "package": "com.wellbuilt.suite",
+    "versionCode": 117,
+    "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+    "artifact": "C:\\dev\\release-artifacts\\suite-117-8cbc9ac\\com.wellbuilt.suite-vc117.apk",
+    "apkSha256": "802ccd2d97248be9e42965cf3fff7f098a056e599d498a0743ad57fccacfa0a7",
+    "completedAt": "2026-11-22T06:32:22.827Z",
+    "installed": true
+  }
 }
