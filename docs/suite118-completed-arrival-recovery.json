@@ -1,10 +1,30 @@
 {
- "versionCode":118,
- "package":"com.wellbuilt.suite",
- "scope":"Recover an existing recorded arrival with verified current Post-Trip through the normal final shift-close checks. Missing Pre-Trip remains unconfirmed; Return to Yard and Mark Arrived remain blocked.",
- "baseline":"575d34bef8e61147ed6230761068f954a02961f9",
- "checks":"425 relevant tests, TypeScript, 2 local-release tests and 6 ETC profile tests passed.",
- "reconciliation":"Fresh origin fetch and all-head review retained accepted baseline and installed117 ancestry. Historical nonancestor branches remain reference material; no newer relevant remote source found. Unpushed other-machine work is not discoverable.",
- "versionEvidence":"Installed/local/reserved117; fresh read-only EAS history below117. Reserve118 with existing package and signer. Local registered-home build only.",
- "acceptance":"Pending S24 installation and verification. Do not alter signed inspections, invent Pre-Trip, certify paperwork or close shift on the owner behalf. No Fold update. Original normal-order JSA cycle remains incomplete."
+  "versionCode": 118,
+  "package": "com.wellbuilt.suite",
+  "scope": "Recover an existing recorded arrival with verified current Post-Trip through the normal final shift-close checks. Missing Pre-Trip remains unconfirmed; Return to Yard and Mark Arrived remain blocked.",
+  "baseline": "575d34bef8e61147ed6230761068f954a02961f9",
+  "checks": "425 relevant tests, TypeScript, 2 local-release tests and 6 ETC profile tests passed.",
+  "reconciliation": "Fresh origin fetch and all-head review retained accepted baseline and installed117 ancestry. Historical nonancestor branches remain reference material; no newer relevant remote source found. Unpushed other-machine work is not discoverable.",
+  "versionEvidence": "Installed/local/reserved117; fresh read-only EAS history below117. Reserve118 with existing package and signer. Local registered-home build only.",
+  "acceptance": "S24 install-r success and version118 readback. Finish ending shift visible; opens final Arrived at Yard modal with verified Post-Trip, explicit missing Pre-Trip warning, blank mileage, unchecked paperwork and disabled End Shift. Left for owner review/submit; shift not closed by agent. Firestore preTrip remains null; signed Post-Trip digest fcbff91dc100bbca3e0366467786022e1dc3b56b8f47c3e16c1f8fc25f4cd356 and completion timestamp unchanged. Normal Return/Arrived guards retained. No Fold interaction. Full normal-order JSA cycle still pending.",
+  "build": {
+    "sourceCommit": "3a85841e3bbe98441c52bff58b6e27b14665e409",
+    "branch": "codex/suite-equipment-entry-20261012",
+    "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+    "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+    "owner": "01a1cd39-d530-7ac2-ae54-c509b9310cfc",
+    "reservation": "android-release-v118",
+    "reservationTagObject": "9745ba2149717757b64c8e062cc9596eea3c7ac8",
+    "profile": "preview",
+    "buildMethod": "local Android SDK/Gradle in registered home",
+    "sourceCopy": false,
+    "cloudBuild": false,
+    "package": "com.wellbuilt.suite",
+    "versionCode": 118,
+    "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+    "artifact": "C:\\dev\\release-artifacts\\suite-118-3a85841\\com.wellbuilt.suite-vc118.apk",
+    "apkSha256": "6a2ba05148800ad8579162dca00991e4649f8f0ebdb7fda49acb75bb61013c68",
+    "completedAt": "2026-11-22T15:36:37.677Z",
+    "installed": true
+  }
 }
