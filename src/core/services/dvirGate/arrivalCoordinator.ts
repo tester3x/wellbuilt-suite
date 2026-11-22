@@ -13,6 +13,7 @@
 import type { DvirGateDeps } from './dvirGateService';
 import type { JsaCloseDecision } from '../shiftJsaClose';
 import { isPostTripCompleteForShift, launchEquipmentPhase } from './dvirGateService';
+import { checkPreTripTransition } from './preTripTransition';
 import {
   beginArrival,
   onPostTripReceipt,
@@ -45,10 +46,9 @@ export async function markArrived(
   deps: DvirGateDeps,
   opts?: { nowIso?: string },
 ): Promise<MarkArrivedResult> {
-  const shiftId = await deps.getCurrentShiftId();
-  if (!shiftId) {
-    return { arrived: false, launched: false, showFinalModal: false, shiftId: null, reason: 'No active shift' };
-  }
+  const preTrip = await checkPreTripTransition(deps);
+  if (!preTrip.allowed) return { arrived: false, launched: false, showFinalModal: false, shiftId: null, reason: preTrip.reason };
+  const shiftId = preTrip.shiftId;
   const postTripAlreadyComplete = await isPostTripCompleteForShift(deps, shiftId);
   const existing = await readArrivalRecord(deps.kv);
   const decision = beginArrival({
@@ -111,6 +111,9 @@ export async function getResumeArrivalView(
 ): Promise<ResumeView> {
   const record = await readArrivalRecord(deps.kv);
   const activeShiftId = await deps.getCurrentShiftId();
+  if (opts.shiftActive && !(await checkPreTripTransition(deps)).allowed) {
+    return { show: 'none', reason: 'pre_trip_required' };
+  }
   const postTripReceiptValid = record && activeShiftId && record.shiftId === activeShiftId
     ? await isPostTripCompleteForShift(deps, activeShiftId)
     : false;

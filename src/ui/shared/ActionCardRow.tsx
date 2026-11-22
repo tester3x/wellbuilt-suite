@@ -97,25 +97,28 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const { t } = useTranslation();
   const { launchWBApp, canUseApp } = useAppLauncher();
   const { user, shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
-  const [preTripMissing, setPreTripMissing] = useState(false);
+  const preTripKey = JSON.stringify([user?.driverId, user?.companyId, shiftStartTime]);
+  const [preTripVerifiedFor, setPreTripVerifiedFor] = useState<string | null>(null);
+  const preTripMissing = active && preTripVerifiedFor !== preTripKey;
   useEffect(() => {
     let current = true;
     let revision = 0;
     const check = async () => {
       const request = ++revision;
-      if (!active) { setPreTripMissing(false); return; }
+      setPreTripVerifiedFor(null);
+      if (!active) { setPreTripVerifiedFor(null); return; }
       try {
         const { getCurrentShiftId } = await import('@/core/services/shiftTracking');
         const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
         const id = await getCurrentShiftId();
-        const complete = id ? await createSuiteDvirGate().isPreTripComplete(id) : true;
-        if (current && request === revision) setPreTripMissing(!complete);
-      } catch { /* Keep the last known recovery state. */ }
+        const complete = id ? await createSuiteDvirGate().isPreTripComplete(id) : false;
+        if (current && request === revision) setPreTripVerifiedFor(complete ? preTripKey : null);
+      } catch { if (current && request === revision) setPreTripVerifiedFor(null); }
     };
     void check();
     const sub = AppState.addEventListener('change', state => { if (state === 'active') void check(); });
     return () => { current = false; sub.remove(); };
-  }, [active, shiftStartTime, user?.driverId, user?.companyId]);
+  }, [active, shiftStartTime, user?.driverId, user?.companyId, preTripKey]);
   const [elapsed, setElapsed] = useState('0:00');
   const [shiftElapsed, setShiftElapsed] = useState('0:00');
   const [dotColor, setDotColor] = useState('#34D399');
@@ -159,7 +162,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       const gate = createSuiteDvirGate({ isShiftActive: () => true });
       const result = await coordinator.markArrived(gate);
       if (!result.arrived) {
-        Alert.alert('Could not mark arrived', result.reason || 'Your shift is still open.');
+        Alert.alert('Could not mark arrived', result.reason?.startsWith('pre_trip_') ? 'Complete the Pre-Trip DVIR for this shift first. Use Resume Pre-Trip DVIR.' : result.reason || 'Your shift is still open.');
         return;
       }
       if (result.showFinalModal) {
@@ -247,6 +250,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const viewerShiftDisabled = user?.role === 'viewer';
   const handleShiftPress = () => {
     if (viewerShiftDisabled) return;
+    if (preTripMissing) { router.push('/dvir-resume' as never); return; }
     if (returning) {
       // Returning to yard — branded arrival confirmation with post-trip checklist
       setShowArrivalModal(true);
@@ -325,6 +329,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   // no error — and no way forward through End Shift / logout. All of the tap
   // behaviour lives in runReturnTap so it is covered by returnStart.test.ts.
   const handleReturnToYard = async () => {
+    if (preTripMissing) { setReturnError('Complete the Pre-Trip DVIR for this shift first. Use Resume Pre-Trip DVIR.'); return; }
     await runReturnTap({
       latch: returnTapLatch.current,
       start: onStartReturn,
@@ -391,6 +396,11 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     shiftBorder = 'rgba(245, 158, 11, 0.3)';
   }
 
+  if (preTripMissing) {
+    shiftDisabled = true;
+    shiftSub = 'Finish Pre-Trip';
+  }
+
   // When returning to yard, show full-width en route card instead of 3-card row
   if (returning && !viewerShiftDisabled) {
     return (
@@ -398,6 +408,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         <EnRouteYardCard
           returnStartTime={returnStartTime}
           onArrived={handleMarkArrived}
+          arrivalDisabled={preTripMissing}
         />
         {preTripMissing && <Pressable accessibilityRole="button" onPress={() => router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
         <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>Resume Pre-Trip DVIR</Text>

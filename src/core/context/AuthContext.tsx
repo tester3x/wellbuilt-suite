@@ -937,11 +937,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Caller gate: Return-to-Yard is only valid during an OPEN shift, and not if
     // already returning — prevents a stray/duplicate depart_return.
     if (!shiftActive) return { ok: false, reason: 'no_open_shift' };
-    if (returningToYard) return { ok: true };
     if (returnInFlight.current) return { ok: false, reason: 'in_flight' };
     returnInFlight.current = true;
     const gen = authorityGenRef.current.current();
     try {
+      const [{ createSuiteDvirGate }, { checkPreTripTransition }] = await Promise.all([
+        import('../services/dvirGate'), import('../services/dvirGate/preTripTransition'),
+      ]);
+      const preTrip = await checkPreTripTransition(createSuiteDvirGate({ isShiftActive: () => shiftActive }));
+      if (!preTrip.allowed) return { ok: false, reason: preTrip.reason };
+      if (!authorityGenRef.current.isCurrent(gen)) return { ok: false, reason: 'stale_generation' };
+      if (returningToYard) return { ok: true };
       const now = new Date().toISOString();
       const [{ fetchCompanyConfig }, { parseSuiteEnforcement }, { isEnforcedExplicitShift }, { recordEnforcedDepartReturn }] =
         await Promise.all([

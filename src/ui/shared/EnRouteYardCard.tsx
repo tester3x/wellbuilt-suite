@@ -24,6 +24,7 @@ import { returnDivertMessage } from '@/core/services/returnStart';
 interface EnRouteYardCardProps {
   returnStartTime: string | null;
   onArrived: () => void;
+  arrivalDisabled?: boolean;
 }
 
 function formatElapsed(startIso: string): string {
@@ -37,7 +38,7 @@ function formatElapsed(startIso: string): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function EnRouteYardCard({ returnStartTime, onArrived }: EnRouteYardCardProps) {
+export default function EnRouteYardCard({ returnStartTime, onArrived, arrivalDisabled = false }: EnRouteYardCardProps) {
   const { user, abandonReturn } = useAuth();
 
   // Divert: a new job came in while heading to the yard. Exit the return
@@ -142,7 +143,7 @@ export default function EnRouteYardCard({ returnStartTime, onArrived }: EnRouteY
       <Text style={s.timerLabel}>Drive Time</Text>
 
       {/* Mark Arrived */}
-      <Pressable onPress={onArrived} style={s.arrivedButton}>
+      <Pressable onPress={onArrived} disabled={arrivalDisabled} accessibilityState={{ disabled: arrivalDisabled }} style={[s.arrivedButton, arrivalDisabled && { opacity: 0.4 }]}>
         <MaterialCommunityIcons name="map-marker-check" size={18} color="#000" />
         <Text style={s.arrivedText}>Mark Arrived</Text>
       </Pressable>

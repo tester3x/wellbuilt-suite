@@ -1,0 +1,12 @@
+{
+  "versionCode": 117,
+  "package": "com.wellbuilt.suite",
+  "baseSource": "7831c78f9f65ed6a2b3a9806efcc2f027d5f7a4b",
+  "installedSource": "9489abbec746ad964c35702890cca77f7f7f935e",
+  "scope": "Require current shift/equipment Pre-Trip receipt before Return to Yard and Mark Arrived; fail closed while pending or unverified. Restore Resume Pre-Trip as recovery. No inspection completion or JSA routing changes.",
+  "checks": "422 relevant DVIR/arrival/shift-authority/return/JSA tests passed; production TypeScript passed; local runner2tests and ETC profile6tests passed. Updated prior stale disabled-expression assertion to retain full disabled state and require missing-pretrip condition.",
+  "reconciliation": "Fresh fetch all origin heads/tags. Accepted baseline and installed116 ancestry retained. Only since-installed changes before this task are source labels for viewer translations and116 receipt documentation. origin/master July29 baseline; historical nonancestor suite-etc-start-hos Oct16 and desktop launcher Sept10 preserved, no whole-branch merge or old screen restoration. Current lifecycle/SSO work retained. Other-machine unpushed work cannot be discovered.",
+  "versionEvidence": "S24 installed116; existing local Suite116 APK and annotated reservation116; fresh read-only EAS latest10 maximum99; reserve117 above all discovered evidence. No cloud build.",
+  "deviceAcceptance": "Pending S24 install. Existing shift000833 has unfinished Pre-Trip and erroneous prior return/arrival; use it to verify dimmed Mark Arrived and recovery, never mark its inspections complete through tooling. Full JSA test must use normal pre-trip -> test job -> JSA -> close -> yard/post-trip -> shift-end flow.",
+  "fold": "No installation or interaction authorized for this Suite release."
+}

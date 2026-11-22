@@ -143,6 +143,10 @@ export function classifyReturnStartFailure(
   // difference between a report dispatch can act on and a shrug.
   const code = full.split(':', 1)[0] || full;
   const support = ` (code: ${full})`;
+  if (code === 'pre_trip_missing' || code === 'pre_trip_unverified') {
+    return { code: full, recovery: 'retry', message: 'Complete the Pre-Trip DVIR for this shift first. Your shift is still open. Use Resume Pre-Trip DVIR, then try again.', retryable: true };
+  }
+
   // A refused divert leaves the driver STILL RETURNING; saying only "your shift
   // is still open" would read as though the divert had taken effect.
   const stillOpen = flow === 'divert'
