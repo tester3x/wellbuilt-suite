@@ -246,17 +246,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     const reconcile = () => {
       const gen = authorityGenRef.current.current();
-      if (AppState.currentState === 'active') void retryEtcEnds(user).catch(() => {});
       if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
+      if (shiftAuthorityUi.kind === 'checking' || shiftAuthorityUi.kind === 'unavailable') return;
       void import('../services/etcStart/attachEtcHandoff')
         .then(async ({ reconcileEtcOnResume }) => {
           if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
           const { createEtcPort, productionEtcKv, shippedEtcIdentity } = await import('../services/etcStart/etcProduction');
           const { noteEtcActivityState, isEtcActivityVisible } = await import('../services/etcStart/etcActivityGate');
-          const currentSuiteShiftId = await getCurrentShiftId();
+          // A retained storage ID is context, not proof the shift remains open.
+          const currentSuiteShiftId = shiftAuthorityUi.kind === 'open' ? shiftAuthorityUi.periodId
+            : shiftAuthorityUi.kind === 'legacy' && shiftActive ? await getCurrentShiftId() : null;
           noteEtcActivityState(AppState.currentState);
           if (cancelled || !authorityGenRef.current.isCurrent(gen)) return;
-          await reconcileEtcOnResume({
+          const results = await reconcileEtcOnResume({
             currentSuiteShiftId,
             isCurrent: () => !cancelled && authorityGenRef.current.isCurrent(gen),
             companyId,
@@ -266,6 +268,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             identity: shippedEtcIdentity(),
             kv: productionEtcKv(),
             port: createEtcPort(isEtcActivityVisible()),
+          });
+          if (cancelled || !authorityGenRef.current.isCurrent(gen) || currentSuiteShiftId && await getCurrentShiftId() !== currentSuiteShiftId) return;
+          if (AppState.currentState === 'active') await retryEtcEnds(user, {
+            confirmedCurrentStart: results.find(result => result.request?.suiteShiftId === currentSuiteShiftId && result.state === 'completed' && result.hos === 'started'),
+            isCurrent: () => !cancelled && authorityGenRef.current.isCurrent(gen),
           });
         })
         .catch((err) => {
@@ -283,7 +290,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       sub.remove();
     };
-  }, [user?.driverId, user?.companyId]);
+  }, [user?.driverId, user?.companyId, shiftActive, shiftAuthorityUi.kind, shiftAuthorityUi.kind === 'open' ? shiftAuthorityUi.periodId : null]);
   /**
    * The identity the last reconciliation was started for.
    *

@@ -1,0 +1,11 @@
+{
+  "versionCode": 119,
+  "package": "com.wellbuilt.suite",
+  "scope": "Ignore retained closed shift IDs for passive ETC start notices; retain expired older end requests as unconfirmed historical only after confirmed newer ETC start; distinguish pending pre-trip lookup from confirmed missing inspection.",
+  "baseline": "59d708418e0ecbb6a6da5997d8bf105e342eed03",
+  "checks": "361 shift/DVIR/authority/ETC tests, production stale-notice regression, TypeScript, two local release runner tests and ETC profile checks passed.",
+  "reconciliation": "Fresh origin heads/tags reviewed. Installed118 source 3a85841 is an ancestor; accepted baseline preserved. Nonancestor tips are historical development/release branches up through Suite72 and September fixes already reviewed against the active replacement. No newer other-machine source found. Unpushed other-machine work cannot be discovered.",
+  "versionEvidence": "Both installed118; highest remote reservation118; read-only EAS history max99. Reserve119. Existing package/release certificate retained.",
+  "safety": "No shift close, duty clock end, signed inspection mutation, job close, or data clearing. Older end requests remain unconfirmed, with exact original requests retained. Current Fold shift 2026-11-22_111545 stays open; signed Pre-Trip digest f75a0797e5a21c8621a44aae34dbc157c3df78568a0936877624753dc41e8601.",
+  "acceptance": "Pending local signed build, S24 off-shift native smoke first, then Fold active-shift check and signed ledger re-read."
+}

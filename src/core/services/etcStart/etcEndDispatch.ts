@@ -3,6 +3,7 @@ import { createEtcPort } from './etcProduction';
 import { newEtcRequestId } from './etcStartProtocol';
 import { AppState } from 'react-native';
 import { currentEtcNotice, publishEtcNotice } from './etcNoticeStore';
+import type { EtcHandoffResult } from './etcStartDispatch';
 
 export const ETC_END_PENDING_NOTICE = 'WB S ended your shift, but ETC has not confirmed going off duty. Open ETC and check your clock.';
 
@@ -68,7 +69,9 @@ export async function endEtcForSuiteShift(user: { companyId?: string | null; dri
 }
 
 const running = new Set<string>();
-export async function retryEtcEnds(user: { companyId?: string | null; driverId: string }): Promise<void> {
+export async function retryEtcEnds(user: { companyId?: string | null; driverId: string }, context?: {
+  confirmedCurrentStart?: EtcHandoffResult; isCurrent: () => boolean;
+}): Promise<void> {
   if (!user.companyId || !user.driverId) return;
   const key = keyOf(user.companyId, user.driverId);
   if (running.has(key)) return;
@@ -76,8 +79,29 @@ export async function retryEtcEnds(user: { companyId?: string | null; driverId: 
   try {
     const pending: EndRequest[] = JSON.parse(await AsyncStorage.getItem(key) || '[]');
     if (!Array.isArray(pending)) throw Error('Unreadable ETC end queue');
+    const historyKey = key + ':historical';
+    const historical: Record<string, { request: EndRequest; supersededBy: string; observedAtMs: number; outcome: 'unconfirmed_historical' }> = JSON.parse(await AsyncStorage.getItem(historyKey) || '{}');
+    if (!historical || typeof historical !== 'object' || Array.isArray(historical)) throw Error('Unreadable ETC end history');
+    const isHistorical = (request: EndRequest) => historical[request.requestId]?.outcome === 'unconfirmed_historical'
+      && sameReply(request, historical[request.requestId]?.request);
+    const observed = context?.confirmedCurrentStart;
+    const start = observed?.request;
     for (const request of pending) {
+      if (context && !context.isCurrent()) return;
       if (request.companyId !== user.companyId || request.driverId !== user.driverId) continue;
+      if (isHistorical(request)) continue;
+      // A confirmed newer duty session makes an expired older end observation
+      // historical. Preserve both request and unconfirmed outcome; never replay
+      // it into the current session or claim the old session was closed.
+      if (context?.isCurrent() && observed?.state === 'completed' && observed.hos === 'started'
+        && start?.companyId === user.companyId && start.driverId === user.driverId
+        && start.suiteShiftId !== request.suiteShiftId && start.requestedAtMs > request.requestedAtMs
+        && Date.now() - request.requestedAtMs > 600000) {
+        historical[request.requestId] = { request, supersededBy: start.suiteShiftId, observedAtMs: Date.now(), outcome: 'unconfirmed_historical' };
+        await AsyncStorage.setItem(historyKey, JSON.stringify(historical));
+        console.log('[ETC] Retained historical shift-end request', JSON.stringify({ oldShiftId: request.suiteShiftId, currentShiftId: start.suiteShiftId, outcome: 'unconfirmed_historical' }));
+        continue;
+      }
       try {
         if (await deliver(request)) {
           await mutate(key, rows => rows.filter(r => r.requestId !== request.requestId));
@@ -89,7 +113,8 @@ export async function retryEtcEnds(user: { companyId?: string | null; driverId: 
       }
     }
     const remaining: EndRequest[] = JSON.parse(await AsyncStorage.getItem(key) || '[]');
-    if (remaining.length) publishEtcNotice(ETC_END_PENDING_NOTICE);
+    if (context && !context.isCurrent()) return;
+    if (remaining.some(row => !isHistorical(row))) publishEtcNotice(ETC_END_PENDING_NOTICE);
     else if (currentEtcNotice() === ETC_END_PENDING_NOTICE) publishEtcNotice(null);
   } finally { running.delete(key); }
 }

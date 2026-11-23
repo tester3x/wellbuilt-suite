@@ -99,21 +99,25 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const { user, shiftAuthorityUi, refreshShiftAuthority, startShiftBusy } = useAuth();
   const preTripKey = JSON.stringify([user?.driverId, user?.companyId, shiftStartTime]);
   const [preTripVerifiedFor, setPreTripVerifiedFor] = useState<string | null>(null);
+  const [preTripCheckedFor, setPreTripCheckedFor] = useState<string | null>(null);
   const preTripMissing = active && preTripVerifiedFor !== preTripKey;
+  const preTripChecking = preTripMissing && preTripCheckedFor !== preTripKey;
   useEffect(() => {
     let current = true;
     let revision = 0;
     const check = async () => {
       const request = ++revision;
-      setPreTripVerifiedFor(null);
-      if (!active) { setPreTripVerifiedFor(null); return; }
+      if (!active) { setPreTripVerifiedFor(null); setPreTripCheckedFor(null); return; }
       try {
         const { getCurrentShiftId } = await import('@/core/services/shiftTracking');
         const { createSuiteDvirGate } = await import('@/core/services/dvirGate');
         const id = await getCurrentShiftId();
         const complete = id ? await createSuiteDvirGate().isPreTripComplete(id) : false;
-        if (current && request === revision) setPreTripVerifiedFor(complete ? preTripKey : null);
-      } catch { if (current && request === revision) setPreTripVerifiedFor(null); }
+        if (current && request === revision) {
+          setPreTripVerifiedFor(complete ? preTripKey : null);
+          setPreTripCheckedFor(preTripKey);
+        }
+      } catch { if (current && request === revision) { setPreTripVerifiedFor(null); setPreTripCheckedFor(null); } }
     };
     void check();
     const sub = AppState.addEventListener('change', state => { if (state === 'active') void check(); });
@@ -400,7 +404,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
   if (preTripMissing) {
     shiftDisabled = true;
-    shiftSub = completedArrivalRecovery ? 'Finish shift' : 'Finish Pre-Trip';
+    shiftSub = preTripChecking ? 'Checking Pre-Trip…' : completedArrivalRecovery ? 'Finish shift' : 'Finish Pre-Trip';
   }
 
   const openCompletedArrival = async () => {
@@ -422,7 +426,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       Alert.alert('Shift still open', 'Could not verify the completed Post-Trip. Try again.');
     }
   };
-  const preTripRecovery = preTripMissing && <View>
+  const preTripRecovery = preTripMissing && !preTripChecking && <View>
     {completedArrivalRecovery && <Text style={s.etcNotice}>Post-Trip is complete. Pre-Trip was not confirmed. Finish ending this shift without marking Pre-Trip complete.</Text>}
     <Pressable accessibilityRole="button" onPress={() => completedArrivalRecovery ? void openCompletedArrival() : router.push('/dvir-resume' as never)} style={{padding:16,borderWidth:1,borderColor:colors.brand.accent,borderRadius:12,marginTop:10}}>
       <Text style={{color:colors.brand.accent,textAlign:'center',fontWeight:'700'}}>{completedArrivalRecovery ? 'Finish ending shift' : 'Resume Pre-Trip DVIR'}</Text>
@@ -551,7 +555,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         </Pressable>
       </View>
       {preTripRecovery}
-      {preTripMissing && !completedArrivalRecovery && !returning && shiftAuthorityUi.kind === 'open' && <Pressable accessibilityRole="button" onPress={() => router.push('/cancel-unstarted-shift' as never)} style={{padding:14}}>
+      {preTripMissing && !preTripChecking && !completedArrivalRecovery && !returning && shiftAuthorityUi.kind === 'open' && <Pressable accessibilityRole="button" onPress={() => router.push('/cancel-unstarted-shift' as never)} style={{padding:14}}>
         <Text style={{color:colors.text.muted,textAlign:'center'}}>Cancel unstarted shift</Text>
       </Pressable>}
       {etcNotice ? <Text style={s.etcNotice}>{etcNotice}</Text> : null}
