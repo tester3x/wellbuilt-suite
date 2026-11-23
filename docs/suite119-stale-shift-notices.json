@@ -7,5 +7,25 @@
   "reconciliation": "Fresh origin heads/tags reviewed. Installed118 source 3a85841 is an ancestor; accepted baseline preserved. Nonancestor tips are historical development/release branches up through Suite72 and September fixes already reviewed against the active replacement. No newer other-machine source found. Unpushed other-machine work cannot be discovered.",
   "versionEvidence": "Both installed118; highest remote reservation118; read-only EAS history max99. Reserve119. Existing package/release certificate retained.",
   "safety": "No shift close, duty clock end, signed inspection mutation, job close, or data clearing. Older end requests remain unconfirmed, with exact original requests retained. Current Fold shift 2026-11-22_111545 stays open; signed Pre-Trip digest f75a0797e5a21c8621a44aae34dbc157c3df78568a0936877624753dc41e8601.",
-  "acceptance": "Pending local signed build, S24 off-shift native smoke first, then Fold active-shift check and signed ledger re-read."
+  "acceptance": "Local signed119 built and installed S24 only. Incorrect started notice cleared, exposing another expired prior-end warning. Fold held. Follow-up120 adds persisted newer-start observations to historical reconciliation, including when currently off shift.",
+  "build": {
+    "sourceCommit": "c03b09b94606b3be6641d1d6fb78113580765285",
+    "branch": "codex/suite-equipment-entry-20261012",
+    "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+    "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+    "owner": "01a1cd39-d530-7ac2-ae54-c509b9310cfc",
+    "reservation": "android-release-v119",
+    "reservationTagObject": "9fda0a9fff8641c9c6ea129ab028b2c0a3e14ee1",
+    "profile": "preview",
+    "buildMethod": "local Android SDK/Gradle in registered home",
+    "sourceCopy": false,
+    "cloudBuild": false,
+    "package": "com.wellbuilt.suite",
+    "versionCode": 119,
+    "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+    "artifact": "C:\\dev\\release-artifacts\\suite-119-c03b09b\\com.wellbuilt.suite-vc119.apk",
+    "apkSha256": "2b3f42681d0e06dbf82eb4fa9a1add985b6cb5b2f92858259c973ea48b6c863a",
+    "completedAt": "2026-11-23T01:46:58.039Z",
+    "installed": false
+  }
 }

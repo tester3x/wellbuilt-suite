@@ -1,10 +1,11 @@
 const fs=require('fs'),ts=require('typescript'),vm=require('vm'),assert=require('node:assert/strict');
 const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const user={companyId:'c',driverId:'d'},key='suiteEtcEndV1:c:d',now=Date.now();
-function fixture(){const store=new Map(),calls=[],notices=[];let notice='WB S ended your shift, but ETC has not confirmed going off duty. Open ETC and check your clock.';const api={};vm.runInNewContext(compile(fs.readFileSync('src/core/services/etcStart/etcEndDispatch.ts','utf8')),{exports:api,require:n=>{
+function fixture(cachedStarts=[]){const store=new Map(),calls=[],notices=[];let notice='WB S ended your shift, but ETC has not confirmed going off duty. Open ETC and check your clock.';const api={};vm.runInNewContext(compile(fs.readFileSync('src/core/services/etcStart/etcEndDispatch.ts','utf8')),{exports:api,require:n=>{
  if(n.includes('async-storage'))return{default:{getItem:async k=>store.get(k)||null,setItem:async(k,v)=>store.set(k,v)}};
  if(n==='react-native')return{AppState:{currentState:'active'}};
  if(n==='./etcProduction')return{createEtcPort:()=>({call:async(method,payload)=>{const r=JSON.parse(payload);calls.push({method,...r});return{ok:false,reason:'illegal_argument'};}})};
+ if(n==='./etcStartOutbox')return{listEtcStartsForDriver:async()=>cachedStarts};
  if(n==='./etcStartProtocol')return{newEtcRequestId:()=> 'new-id'};
  if(n==='./etcNoticeStore')return{currentEtcNotice:()=>notice,publishEtcNotice:x=>{notice=x;notices.push(x);}};throw Error(n);
  },console,setTimeout,clearTimeout});return{store,calls,notices,api};}
@@ -18,6 +19,7 @@ const flush=async()=>{for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r))
  f=fixture();f.store.set(key,JSON.stringify([old]));await f.api.retryEtcEnds(user,{confirmedCurrentStart:{...confirmed,hos:'unknown'},isCurrent:()=>true});assert.equal(f.calls[0].method,'getEndStatus');assert(!f.store.has(key+':historical'));
  f=fixture();const fresh=end('fresh',now);f.store.set(key,JSON.stringify([fresh]));await f.api.retryEtcEnds(user,{confirmedCurrentStart:confirmed,isCurrent:()=>true});assert.equal(f.calls[0].method,'prepareEnd');assert(!f.store.has(key+':historical'));
  f=fixture();f.store.set(key,JSON.stringify([old]));await f.api.retryEtcEnds(user,{confirmedCurrentStart:confirmed,isCurrent:()=>false});assert.equal(f.calls.length,0);assert(!f.store.has(key+':historical'));assert.equal(f.notices.length,0);
+ f=fixture([{request:confirmed.request,lastState:'completed',lastHos:'started'}]);f.store.set(key,JSON.stringify([old]));await f.api.retryEtcEnds(user,{isCurrent:()=>true});assert.equal(f.calls.length,0,'Off-shift may use a newer persisted confirmed start without publishing started');assert.equal(f.notices.at(-1),null);
  const effect=callback('src/core/context/AuthContext.tsx','reconcileEtcOnResume');
  for(const [ui,active,expected]of [[{kind:'none'},false,null],[{kind:'open',periodId:'current'},true,'current']]){
   const args=[];const context={exports:{},user,shiftActive:active,shiftAuthorityUi:ui,authorityGenRef:{current:{current:()=>1,isCurrent:()=>true}},getCurrentShiftId:async()=>ui.kind==='open'?'current':'OLD-CLOSED',retryEtcEnds:async()=>{},AppState:{currentState:'active',addEventListener:()=>({remove(){}})},console,require:n=>n.includes('attachEtcHandoff')?{reconcileEtcOnResume:async input=>{args.push(input);return[];}}:n.includes('etcActivityGate')?{noteEtcActivityState(){},isEtcActivityVisible:()=>true}:n.includes('etcProduction')?{createEtcPort:()=>({}),productionEtcKv:()=>({}),shippedEtcIdentity:()=>({})}:(()=>{throw Error(n)})()};

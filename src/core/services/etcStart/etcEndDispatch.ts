@@ -4,6 +4,7 @@ import { newEtcRequestId } from './etcStartProtocol';
 import { AppState } from 'react-native';
 import { currentEtcNotice, publishEtcNotice } from './etcNoticeStore';
 import type { EtcHandoffResult } from './etcStartDispatch';
+import { listEtcStartsForDriver } from './etcStartOutbox';
 
 export const ETC_END_PENDING_NOTICE = 'WB S ended your shift, but ETC has not confirmed going off duty. Open ETC and check your clock.';
 
@@ -39,7 +40,7 @@ async function deliver(request: EndRequest): Promise<boolean> {
   const fresh = age >= -30000 && age <= 600000;
   const prepared = await call(fresh ? 'prepareEnd' : 'getEndStatus');
   if (!prepared.ok) {
-    console.warn('[ETC] Off-duty provider did not confirm:', prepared.reason);
+    console.warn('[ETC] Off-duty provider did not confirm:', prepared.reason, JSON.stringify({ shiftId: request.suiteShiftId }));
     return false;
   }
   if (!sameReply(request, prepared.response)) {
@@ -85,7 +86,12 @@ export async function retryEtcEnds(user: { companyId?: string | null; driverId: 
     const isHistorical = (request: EndRequest) => historical[request.requestId]?.outcome === 'unconfirmed_historical'
       && sameReply(request, historical[request.requestId]?.request);
     const observed = context?.confirmedCurrentStart;
-    const start = observed?.request;
+    const cachedStarts = context?.isCurrent() ? await listEtcStartsForDriver(AsyncStorage, user.driverId, user.companyId) : [];
+    // A persisted successful start is historical evidence even after that newer
+    // shift ended. Do not publish it as the driver's current duty state.
+    const start = observed?.state === 'completed' && observed.hos === 'started' ? observed.request
+      : cachedStarts.filter(row => row.lastState === 'completed' && row.lastHos === 'started')
+        .sort((a, b) => b.request.requestedAtMs - a.request.requestedAtMs)[0]?.request;
     for (const request of pending) {
       if (context && !context.isCurrent()) return;
       if (request.companyId !== user.companyId || request.driverId !== user.driverId) continue;
@@ -93,8 +99,7 @@ export async function retryEtcEnds(user: { companyId?: string | null; driverId: 
       // A confirmed newer duty session makes an expired older end observation
       // historical. Preserve both request and unconfirmed outcome; never replay
       // it into the current session or claim the old session was closed.
-      if (context?.isCurrent() && observed?.state === 'completed' && observed.hos === 'started'
-        && start?.companyId === user.companyId && start.driverId === user.driverId
+      if (context?.isCurrent() && start?.companyId === user.companyId && start.driverId === user.driverId
         && start.suiteShiftId !== request.suiteShiftId && start.requestedAtMs > request.requestedAtMs
         && Date.now() - request.requestedAtMs > 600000) {
         historical[request.requestId] = { request, supersededBy: start.suiteShiftId, observedAtMs: Date.now(), outcome: 'unconfirmed_historical' };
