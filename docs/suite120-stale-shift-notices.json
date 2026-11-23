@@ -7,5 +7,44 @@
   "reconciliation": "Fresh origin heads/tags reviewed. Installed118 source 3a85841 is an ancestor; accepted baseline preserved. Nonancestor tips are historical development/release branches up through Suite72 and September fixes already reviewed against the active replacement. No newer other-machine source found. Unpushed other-machine work cannot be discovered.",
   "versionEvidence": "S24 installed119; Fold118; remote119 reserved; EASmax99. Reserve120.",
   "safety": "No shift close, duty clock end, signed inspection mutation, job close, or data clearing. Older end requests remain unconfirmed, with exact original requests retained. Current Fold shift 2026-11-22_111545 stays open; signed Pre-Trip digest f75a0797e5a21c8621a44aae34dbc157c3df78568a0936877624753dc41e8601.",
-  "acceptance": "Pending S24-first native smoke; no Fold rollout until S24 passes."
+  "acceptance": {
+    "s24": "Installed120 and readback. Off-shift Start Shift card; no stale started or end-pending notice on initial launch or cold restart. ETC itself showed OFF SHIFT, no clock change. Old request2026-10-29_115732 retained as unconfirmed historical after persisted successful newer start2026-11-22_102512.",
+    "fold": "S24 passed before Fold install120/readback. Active timer remains running; old ended-shift warning absent on launch, cold restart and foreground resume. Current completed ETC start remains correctly displayed. No Resume/Finish Pre-Trip prompt after verification.",
+    "foldHistoricalRequests": [
+      "2026-10-17_091149",
+      "2026-10-21_092902",
+      "2026-10-29_084519",
+      "2026-10-31_110312"
+    ],
+    "preservation": "Before/after Firestore driver_shift_authority and driver_dvir_completions records deep-equal, including version98, openPeriodId2026-11-22_111545, signed Pre-Trip digest f75a0797e5a21c8621a44aae34dbc157c3df78568a0936877624753dc41e8601, all timestamps and postTrip=null. No current shift or job closed, no signed record changed.",
+    "evidence": [
+      "s24-suite120-first.png",
+      "s24-suite120-cold.png",
+      "fold-suite120-first.png",
+      "fold-suite120-resumed.png",
+      "suite120-s24.log",
+      "suite120-fold-final.log"
+    ],
+    "testingLimits": "Pending-versus-missing initial Pre-Trip state and foreground retention verified by production callback regression; final native screens verified on both phones. No new shift or inspection certification submitted for this repair."
+  },
+  "build": {
+    "sourceCommit": "01c4bc6216ae61e20499c129bf14678b1885bdc7",
+    "branch": "codex/suite-equipment-entry-20261012",
+    "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+    "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+    "owner": "01a1cd39-d530-7ac2-ae54-c509b9310cfc",
+    "reservation": "android-release-v120",
+    "reservationTagObject": "8271b8da165d25224ab2c5eb60e99178a07444d0",
+    "profile": "preview",
+    "buildMethod": "local Android SDK/Gradle in registered home",
+    "sourceCopy": false,
+    "cloudBuild": false,
+    "package": "com.wellbuilt.suite",
+    "versionCode": 120,
+    "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+    "artifact": "C:\\dev\\release-artifacts\\suite-120-01c4bc6\\com.wellbuilt.suite-vc120.apk",
+    "apkSha256": "e54e0688587ad8b784cab91c6f2bc2579e3517862c07f6b70501d7c2167c5a1a",
+    "completedAt": "2026-11-23T01:49:45.053Z",
+    "installed": true
+  }
 }
