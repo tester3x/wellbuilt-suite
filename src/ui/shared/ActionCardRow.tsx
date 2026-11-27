@@ -133,6 +133,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const returnTapLatch = useRef(createReturnTapLatch());
   const [returnError, setReturnError] = useState<string | null>(null);
   const [showArrivalModal, setShowArrivalModal] = useState(false);
+  const [arrivalRecord, setArrivalRecord] = useState<import('@/core/services/dvirGate/arrivalFlow').ArrivalRecord | null>(null);
   const [postTripVerified, setPostTripVerified] = useState(false);
   const [completedArrivalRecovery, setCompletedArrivalRecovery] = useState(false);
   const [arrivalError, setArrivalError] = useState<string | null>(null);
@@ -156,7 +157,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
    * that nothing had verified, launching WB-E only on confirm.
    * It never closes the shift.
    */
-  const handleMarkArrived = useCallback(async () => {
+  const handleMarkArrived = useCallback(async (endMode?: 'already_at_yard') => {
     if (markArrivedBusy.current) return;
     markArrivedBusy.current = true;
     try {
@@ -165,11 +166,14 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         import('@/core/services/dvirGate/arrivalCoordinator'),
       ]);
       const gate = createSuiteDvirGate({ isShiftActive: () => true });
-      const result = await coordinator.markArrived(gate);
+      const result = await coordinator.markArrived(gate, { endMode });
       if (!result.arrived) {
         Alert.alert('Could not mark arrived', result.reason?.startsWith('pre_trip_') ? 'Complete the Pre-Trip DVIR for this shift first. Use Resume Pre-Trip DVIR.' : result.reason || 'Your shift is still open.');
         return;
       }
+      const { readArrivalRecord } = await import('@/core/services/dvirGate/arrivalFlow');
+      setArrivalRecord(await readArrivalRecord(gate.kv));
+      setShowEndModal(false);
       if (result.showFinalModal) {
         // Post-Trip already satisfied for this shift — straight to the final
         // step, no relaunch of WB-E.
@@ -184,7 +188,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         Alert.alert(
           'Post-trip inspection needed',
           (result.reason || 'The inspection app did not open.')
-            + ' Your shift is still open — tap Mark Arrived again to retry.',
+            + ' Your shift is still open — use End shift to retry the post-trip.',
         );
       }
       // Launched: the receipt return opens the final modal.
@@ -198,9 +202,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
 
   /** Restore the final step after a receipt return or a process restart. */
   useEffect(() => {
-    if (!active) { setCompletedArrivalRecovery(false); return; }
+    if (!active) { setCompletedArrivalRecovery(false); setArrivalRecord(null); return; }
     let cancelled = false;
-    (async () => {
+    const restore = async () => {
       try {
         const [{ createSuiteDvirGate }, coordinator] = await Promise.all([
           import('@/core/services/dvirGate'),
@@ -209,17 +213,20 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         const gate = createSuiteDvirGate({ isShiftActive: () => true });
         const view = await coordinator.getResumeArrivalView(gate, { shiftActive: true });
         if (cancelled) return;
+        setArrivalRecord(view.show === 'none' ? null : view.record);
         setCompletedArrivalRecovery(view.show === 'final_modal' && view.preTripUnconfirmed === true);
         if (view.show === 'final_modal') {
           setPostTripVerified(true);
           setRetainedOdometer(
             view.record.odometerMiles !== undefined ? String(view.record.odometerMiles) : undefined,
           );
-          if (returning && !view.preTripUnconfirmed) setShowArrivalModal(true);
+          if ((returning || view.record.endMode === 'already_at_yard') && !view.preTripUnconfirmed) setShowArrivalModal(true);
         }
       } catch { if (!cancelled) setCompletedArrivalRecovery(false); }
-    })();
-    return () => { cancelled = true; };
+    };
+    void restore();
+    const sub = AppState.addEventListener('change', state => { if (state === 'active') void restore(); });
+    return () => { cancelled = true; sub.remove(); };
   }, [active, returning, shiftStartTime, preTripMissing]);
   const [startConfirmBusy, setStartConfirmBusy] = useState(false);
   const [etcNotice, setEtcNotice] = useState<string | null>(null);
@@ -257,7 +264,9 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
   const handleShiftPress = () => {
     if (viewerShiftDisabled) return;
     if (preTripMissing) { router.push('/dvir-resume' as never); return; }
-    if (returning) {
+    if (arrivalRecord?.endMode === 'already_at_yard') {
+      void handleMarkArrived('already_at_yard');
+    } else if (returning) {
       // Returning to yard — branded arrival confirmation with post-trip checklist
       setShowArrivalModal(true);
     } else if (active) {
@@ -360,6 +369,14 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
     });
   };
 
+
+  const handleAlreadyAtYard = async () => {
+    if (preTripMissing) { setReturnError('Complete the Pre-Trip DVIR for this shift first.'); return; }
+    if (!returnTapLatch.current.tryAcquire()) return;
+    setReturnBusy(true); setReturnError(null);
+    try { await handleMarkArrived('already_at_yard'); }
+    finally { returnTapLatch.current.release(); setReturnBusy(false); }
+  };
 
   // ── Shift card state ──
   let shiftIcon: keyof typeof MaterialCommunityIcons.glyphMap = 'play-circle-outline';
@@ -495,6 +512,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
           errorText={arrivalError}
           recoveryAction={jsaRecoveryAction(jsaBlock, onJsaLaunch)}
           returnStartTime={returnStartTime}
+          arrivalRecord={arrivalRecord}
         />
   );
 
@@ -504,7 +522,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
       <View>
         <EnRouteYardCard
           returnStartTime={returnStartTime}
-          onArrived={handleMarkArrived}
+          onArrived={() => handleMarkArrived()}
           arrivalDisabled={preTripMissing}
         />
         {preTripRecovery}
@@ -583,6 +601,7 @@ export function ActionCardRow({ active, returning, returnStartTime, shiftStartTi
         visible={showEndModal}
         onClose={() => { if (!returnTapLatch.current.held()) { setShowEndModal(false); setReturnError(null); } }}
         onReturnToYard={handleReturnToYard}
+        onAlreadyAtYard={handleAlreadyAtYard}
         busy={returnBusy}
         error={returnError}
         shiftStartTime={shiftStartTime}

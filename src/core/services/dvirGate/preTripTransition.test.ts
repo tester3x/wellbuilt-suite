@@ -92,3 +92,26 @@ test('return service and UI keep the receipt gate ahead of mutations and expose 
   assert.match(readFileSync('src/ui/shared/EnRouteYardCard.tsx', 'utf8'), /disabled=\{arrivalDisabled\}/);
   assert.match(readFileSync('src/ui/shared/ActionCardRow.tsx', 'utf8'), /arrivalDisabled=\{preTripMissing\}/);
 });
+
+
+test('already at yard never creates a return event and still requires both inspections', async () => {
+  const f = fixture();
+  assert.equal((await markArrived(f.deps, { endMode: 'already_at_yard' })).arrived, false);
+  assert.equal(await readArrivalRecord(f.deps.kv), null);
+  await f.save('pre_trip');
+  // Post-trip may fail to launch (e.g. no session); arrival remains recoverable, not completed.
+  await markArrived(f.deps, { endMode: 'already_at_yard', nowIso: '2026-11-23T02:00:00.000Z' });
+  const record = await readArrivalRecord(f.deps.kv);
+  assert.equal(record?.endMode, 'already_at_yard');
+  assert.equal(record?.stage, 'awaiting_post_trip');
+  assert.equal((await getResumeArrivalView(f.deps, { shiftActive: true })).show, 'awaiting_post_trip');
+  assert.equal([...f.data.values()].some(v => v.includes('depart_return')), false);
+  await f.save('post_trip');
+  const resumed = await getResumeArrivalView(f.deps, { shiftActive: true });
+  assert.equal(resumed.show, 'final_modal');
+  if (resumed.show === 'final_modal') assert.equal(resumed.record.endMode, 'already_at_yard');
+  const retry = await markArrived(f.deps, { nowIso: '2026-11-23T05:00:00.000Z' });
+  assert.equal(retry.showFinalModal, true);
+  assert.equal((await readArrivalRecord(f.deps.kv))?.arrivedAtIso, record?.arrivedAtIso);
+  assert.equal((await readArrivalRecord(f.deps.kv))?.endMode, 'already_at_yard');
+});

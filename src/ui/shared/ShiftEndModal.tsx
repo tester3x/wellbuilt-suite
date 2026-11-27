@@ -17,6 +17,7 @@ interface ShiftEndModalProps {
   visible: boolean;
   onClose: () => void;
   onReturnToYard: () => void;
+  onAlreadyAtYard: () => void;
   shiftStartTime: string | null;
   busy?: boolean;
   error?: string | null;
@@ -31,7 +32,7 @@ function formatShiftDuration(startIso: string | null): string {
   return `${h}h ${m}m`;
 }
 
-export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftStartTime, busy = false, error }: ShiftEndModalProps) {
+export default function ShiftEndModal({ visible, onClose, onReturnToYard, onAlreadyAtYard, shiftStartTime, busy = false, error }: ShiftEndModalProps) {
   const shiftDuration = formatShiftDuration(shiftStartTime);
 
   return (
@@ -39,8 +40,8 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftS
       <View style={s.overlay}>
         <View style={s.card}>
           <MaterialCommunityIcons name="truck" size={36} color={colors.status.warning} style={s.headerIcon} />
-          <Text style={s.title}>Return to Yard</Text>
-          <Text style={s.subtitle}>Start your return drive. Your drive time will be tracked.</Text>
+          <Text style={s.title}>End shift</Text>
+          <Text style={s.subtitle}>Heading back, or already at the yard/shop? Your shift stays open until you finish the post-trip and sign off.</Text>
 
           {/* Shift Summary */}
           <View style={s.summaryRow}>
@@ -55,7 +56,11 @@ export default function ShiftEndModal({ visible, onClose, onReturnToYard, shiftS
           <View style={s.buttons}>
             <Pressable disabled={busy} onPress={() => { onReturnToYard(); }} style={[s.btn, s.btnReturn, busy && { opacity: 0.6 }]}>
               <MaterialCommunityIcons name="truck-fast" size={20} color="#000" />
-              <Text style={s.btnReturnText}>{busy ? 'Starting return…' : 'Return to Yard'}</Text>
+              <Text style={s.btnReturnText}>{busy ? 'Please wait…' : 'Return to Yard'}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" disabled={busy} onPress={onAlreadyAtYard} style={[s.btn, { borderWidth: 1, borderColor: colors.status.warning }, busy && { opacity: 0.6 }]}>
+              <MaterialCommunityIcons name="warehouse" size={20} color={colors.status.warning} />
+              <Text style={[s.btnReturnText, { color: colors.status.warning }]}>Already at yard/shop</Text>
             </Pressable>
             <Pressable disabled={busy} onPress={onClose} style={[s.btn, s.btnCancel]}>
               <Text style={s.btnCancelText}>Cancel</Text>

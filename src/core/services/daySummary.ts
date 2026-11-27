@@ -13,6 +13,7 @@ const FIREBASE_API_KEY = 'AIzaSyAGWXa-doFGzo7T5SxHVD_v5-SHXIc8wAI';
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface TimelineEvent {
+  endMode?: 'already_at_yard';
   type: string;
   timestamp: string;
   lat: number | null;
@@ -75,6 +76,7 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
 }
 
 interface UnifiedEvent {
+  endMode?: 'already_at_yard';
   type: string;
   timestamp: string;
   lat: number | null;
@@ -118,10 +120,10 @@ function calculateDriveAndOnSiteTime(timeline: UnifiedEvent[]): {
     } else if (curr.type === 'login' && (next.type === 'depart' || next.type === 'accept')) {
       driveMs += diffMs;
       isDrive = true;
-    } else if (curr.type === 'depart_return' && next.type === 'logout') {
+    } else if (curr.type === 'depart_return' && next.type === 'logout' && next.endMode !== 'already_at_yard') {
       driveMs += diffMs;
       isDrive = true;
-    } else if ((curr.type === 'close' || curr.type === 'depart_site') && next.type === 'logout') {
+    } else if ((curr.type === 'close' || curr.type === 'depart_site') && next.type === 'logout' && next.endMode !== 'already_at_yard') {
       driveMs += diffMs;
       isDrive = true;
     } else if (curr.type === 'arrive' && (next.type === 'depart_site' || next.type === 'close')) {
@@ -443,6 +445,7 @@ export async function fetchShiftDocForDate(
         lng: parseFirestoreValue(f.lng) ?? null,
         source: parseFirestoreValue(f.source),
         shiftId: parseFirestoreValue(f.shiftId),
+        ...(parseFirestoreValue(f.endMode) === 'already_at_yard' ? { endMode: 'already_at_yard' as const } : {}),
       };
     });
 
@@ -805,6 +808,7 @@ export function calculateDaySummary(
     if (logoutEvt && evtMs > shiftEndMs + 60000) continue; // 1min grace for logout event itself
     timeline.push({
       type: evt.type,
+      endMode: evt.endMode,
       timestamp: evt.timestamp,
       lat: evt.lat,
       lng: evt.lng,
@@ -819,6 +823,7 @@ export function calculateDaySummary(
       if (logoutEvt && evtMs > shiftEndMs) continue;
       timeline.push({
         type: evt.type,
+      endMode: evt.endMode,
         timestamp: evt.timestamp,
         lat: evt.lat,
         lng: evt.lng,

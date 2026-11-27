@@ -266,8 +266,8 @@ test('REGRESSION (source): Mark Arrived hands off before the mileage modal', () 
     /onArrived=\{\(\) => setShowArrivalModal\(true\)\}/,
     'Mark Arrived must not open the mileage modal directly',
   );
-  assert.ok(src.includes('onArrived={handleMarkArrived}'));
-  assert.ok(src.includes('coordinator.markArrived(gate)'));
+  assert.ok(src.includes('onArrived={() => handleMarkArrived()}'));
+  assert.ok(src.includes('coordinator.markArrived(gate, { endMode })'));
   // The final submit is the only close, and it goes through the checked path.
   assert.ok(src.includes('coordinator.finalizeArrival(gate, {'));
 });

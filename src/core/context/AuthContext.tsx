@@ -1155,6 +1155,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const enforcement = parseSuiteEnforcement(cfg ?? undefined);
     const periodId = await getCurrentShiftId();
 
+    const { readArrivalRecord } = await import('../services/dvirGate/arrivalFlow');
+    const arrival = await readArrivalRecord(AsyncStorage);
+    const endMode = arrival?.shiftId === periodId && arrival.endMode === 'already_at_yard' ? arrival.endMode : undefined;
     let shiftEndOk = false;
     if (isEnforcedExplicitShift(enforcement)) {
       // Server close: periodId + optional total miles (0..5000). No client logout/REST.
@@ -1167,6 +1170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const closed = await closeEnforcedExplicit({
         periodId,
         odometerMiles: odo.kind === 'valid' ? odo.miles : undefined,
+        endMode,
         gate: { isCurrent: () => true },
       });
       shiftEndOk = closed.ok;
@@ -1190,7 +1194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user.companyId,
         'wbs',
         periodId || undefined,
-        { enforcedExplicit: false, allowDirectWrite: true },
+        { enforcedExplicit: false, allowDirectWrite: true, endMode },
       ).catch(() => false);
       if (!shiftEndOk) {
         console.warn('[confirmArrival] logout shift event did not persist after retry — shift may show open until next-login auto-close');

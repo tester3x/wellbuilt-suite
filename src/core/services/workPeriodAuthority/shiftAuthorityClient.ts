@@ -490,7 +490,7 @@ export type ShiftAuthorityClient = {
   claim: (periodId: string, originLocalDate: string) => Promise<ClaimActiveResult>;
   recordDepartReturn: (periodId: string, attemptId: string) => Promise<DepartReturnResult>;
   recordReturnAbandoned: (periodId: string, attemptId: string) => Promise<ReturnAbandonedResult>;
-  close: (periodId: string, odometerMiles?: number) => Promise<CloseActiveResult>;
+  close: (periodId: string, odometerMiles?: number, endMode?: 'already_at_yard') => Promise<CloseActiveResult>;
 };
 
 /**
@@ -553,13 +553,17 @@ export function createShiftAuthorityClient(
       const raw = await call(RECORD_RETURN_ABANDONED, { periodId, attemptId });
       return validateReturnAbandonedResponse(raw);
     },
-    async close(periodId, odometerMiles) {
+    async close(periodId, odometerMiles, endMode) {
       if (!PERIOD_ID_RE.test(periodId)) {
         throw new ShiftAuthorityError('period_mismatch', 'malformed_period');
       }
       const payload: Record<string, unknown> = { periodId };
       if (odometerMiles !== undefined) {
         payload.odometerMiles = normalizeOdometerMiles(odometerMiles);
+      }
+      if (endMode !== undefined) {
+        if (endMode !== 'already_at_yard') throw new ShiftAuthorityError('malformed_response', 'invalid_end_mode');
+        payload.endMode = endMode;
       }
       const raw = await call(CLOSE_DRIVER_SHIFT, payload);
       return validateCloseResponse(raw);

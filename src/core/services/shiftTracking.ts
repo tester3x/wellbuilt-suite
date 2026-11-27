@@ -105,6 +105,7 @@ export interface ShiftEvent {
   lat: number;
   lng: number;
   source: 'wbt' | 'wbm' | 'wbs';
+  endMode?: 'already_at_yard';
   synthetic?: boolean;  // true = auto-closed by system (driver forgot to log out)
   // Additive event metadata (2026-06-11) — purely optional. Readers parse
   // type/timestamp and ignore unknown fields, so omitting these is safe and
@@ -189,6 +190,7 @@ function eventToFirestoreMap(event: ShiftEvent) {
     lng: { doubleValue: event.lng },
     source: { stringValue: event.source },
   };
+  if (event.type === 'logout' && event.endMode === 'already_at_yard') fields.endMode = { stringValue: event.endMode };
   if (event.synthetic) {
     fields.synthetic = { booleanValue: true };
   }
@@ -438,7 +440,7 @@ export async function recordShiftEvent(
   companyId?: string,
   source: 'wbt' | 'wbm' | 'wbs' = 'wbs',
   shiftId?: string,
-  opts?: { allowDirectWrite?: boolean; enforcedExplicit?: boolean },
+  opts?: { allowDirectWrite?: boolean; enforcedExplicit?: boolean; endMode?: 'already_at_yard' },
 ): Promise<boolean> {
   if (opts?.enforcedExplicit && !opts?.allowDirectWrite) {
     console.warn(
@@ -488,6 +490,7 @@ export async function recordShiftEvent(
 
     const event: ShiftEvent = {
       type,
+      ...(type === 'logout' && opts?.endMode === 'already_at_yard' ? { endMode: opts.endMode } : {}),
       timestamp: gps?.timestamp || new Date().toISOString(),
       lat: gps?.lat || 0,
       lng: gps?.lng || 0,

@@ -371,6 +371,7 @@ export async function closeEnforcedExplicit(deps: {
   client?: ShiftAuthorityClient;
   periodId?: string | null;
   odometerMiles?: number;
+  endMode?: 'already_at_yard';
   gate?: GenerationGate;
 }): Promise<{ ok: boolean; reason?: string; alreadyClosed?: boolean }> {
   if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
@@ -378,7 +379,7 @@ export async function closeEnforcedExplicit(deps: {
   const periodId = deps.periodId ?? (await getCurrentShiftId());
   if (!periodId) return { ok: false, reason: 'no_period' };
   try {
-    const result = await client.close(periodId, deps.odometerMiles);
+    const result = await client.close(periodId, deps.odometerMiles, deps.endMode);
     if (stale(deps.gate)) return { ok: false, reason: 'stale_generation' };
     await AsyncStorage.removeItem(OFFLINE_SHIFT_RECEIPT_KEY);
     shiftAuthorityDiag('close.outcome', {

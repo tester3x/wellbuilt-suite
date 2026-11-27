@@ -369,3 +369,17 @@ test('cold-start resolve can finish before client deadline without retrying a mu
   assert.equal((await client.claim('2026-10-16_082200', '2026-10-16')).claimed, true);
   assert.deepEqual(calls, [RESOLVE_ACTIVE_DRIVER_SHIFT, CLAIM_DRIVER_SHIFT]);
 });
+
+
+test('already-at-yard mode is additive and no departure request is sent', async () => {
+  const calls: any[] = [];
+  const period = '2026-11-26_080000';
+  const client = createShiftAuthorityClient(async (name, payload) => {
+    calls.push({ name, payload });
+    return { protocolVersion: 1, state: 'none', closedPeriodId: period, alreadyClosed: false };
+  }, { requireSession: async () => true });
+  await client.close(period, 20, 'already_at_yard');
+  assert.deepEqual(calls, [{ name: CLOSE_DRIVER_SHIFT, payload: { periodId: period, odometerMiles: 20, endMode: 'already_at_yard' } }]);
+  await assert.rejects(client.close(period, 20, 'driving' as any), /invalid_end_mode/);
+  assert.equal(calls.length, 1);
+});

@@ -1,0 +1,26 @@
+{
+  "task": "End shift when already at yard/shop",
+  "date": "2026-11-26",
+  "scope": "S24 build and device test; Fold untouched. No signed-record changes.",
+  "behavior": [
+    "Already at yard/shop records a durable current-shift arrival and opens the governed post-trip without depart_return.",
+    "Shift remains active until final paperwork/mileage submit, JSA and unfinished-job guards.",
+    "New logout endMode is additive, server-authorized, with actual server timestamp. No estimated return driving in Suite summary for this path; total duty time preserved.",
+    "Normal return timer stops at durable arrival in final modal. Old events unchanged."
+  ],
+  "verification": {
+    "suiteRegression": 456,
+    "typescript": "passed",
+    "backendRegression": 40,
+    "backendTypescript": "passed",
+    "etcMotionRegression": 44,
+    "native": "Pending S24 install and human pre-trip/post-trip confirmations; S24 off shift at inspection."
+  },
+  "reconciliation": {
+    "remoteSurvey": "All remote branches freshly fetched and inspected; no new desktop feature commits since last reconciled source. Historical suite-etc-start-hos branch is divergent older recovery history, not release source; preserve current replacement implementations.",
+    "installed120Source": "01c4bc6216ae61e20499c129bf14678b1885bdc7",
+    "preRepairHead": "03e1551d604871724dc9f6b19b64d92df60dd761",
+    "unpublishedOtherMachineChanges": "Cannot inspect unpushed work on another computer."
+  },
+  "versionCode": 121
+}

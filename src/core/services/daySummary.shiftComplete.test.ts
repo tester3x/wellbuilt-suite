@@ -450,3 +450,18 @@ test('Start Job policy never offers a post-shift completion shortcut for missing
     assert.ok(done.show && done.tone === 'complete' && !done.showCompleteAction);
   }
 });
+
+
+test('already at shop beyond 14 hours keeps duty time but adds no inferred return drive', () => {
+  const events = [
+    { type: 'login', timestamp: '2026-11-26T12:00:00Z', lat: null, lng: null },
+    { type: 'close', timestamp: '2026-11-27T01:00:00Z', lat: 48, lng: -103 },
+    { type: 'logout', timestamp: '2026-11-27T04:00:00Z', lat: 48.1, lng: -103, endMode: 'already_at_yard' as const },
+  ];
+  const summary = calculateDaySummary([], events);
+  assert.equal(summary.totalHoursWorked, 16);
+  assert.equal(summary.driveMinutes, 0);
+  assert.equal(summary.driveMiles, 0);
+  const legacy = calculateDaySummary([], events.map(({ endMode, ...event }) => event));
+  assert.equal(legacy.driveMinutes, 180, 'old events keep their historical interpretation');
+});

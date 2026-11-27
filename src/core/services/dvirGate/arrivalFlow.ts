@@ -35,6 +35,8 @@ export type ArrivalRecord = {
   /** When the driver tapped Mark Arrived. The drive timer stops here. */
   arrivedAtIso: string;
   stage: ArrivalStage;
+  /** Driver explicitly chose to end while already at the yard; never a drive start. */
+  endMode?: 'already_at_yard';
   /**
    * The end odometer the driver typed, kept ONLY so a failed close can be
    * retried without re-entering it. It is not a completed reading and must
@@ -90,6 +92,7 @@ export function beginArrival(input: {
   nowIso: string;
   postTripAlreadyComplete: boolean;
   existing: ArrivalRecord | null;
+  endMode?: 'already_at_yard';
 }): BeginArrivalDecision {
   const sameShift = input.existing && input.existing.shiftId === input.shiftId
     ? input.existing
@@ -98,6 +101,7 @@ export function beginArrival(input: {
   const stage: ArrivalStage = input.postTripAlreadyComplete ? 'awaiting_final' : 'awaiting_post_trip';
   const record: ArrivalRecord = {
     shiftId: input.shiftId,
+    ...((sameShift ? sameShift.endMode : input.endMode) === 'already_at_yard' ? { endMode: 'already_at_yard' as const } : {}),
     // Arrival time is set once; re-tapping does not move it.
     arrivedAtIso: sameShift?.arrivedAtIso || input.nowIso,
     // Never regress a shift that already reached the final stage.

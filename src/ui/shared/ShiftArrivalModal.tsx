@@ -18,6 +18,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, radius } from '@/core/theme';
+import { returnDriveDurationMs, type ArrivalRecord } from '@/core/services/dvirGate/arrivalFlow';
 import { useAuth } from '@/core/context/AuthContext';
 import { START_ODOMETER_KEY, readBoundStartOdometer, resolveShiftMiles } from '@/core/services/shiftMileage';
 
@@ -44,12 +45,11 @@ interface ShiftArrivalModalProps {
    */
   recoveryAction?: { label: string; onPress: () => void } | null;
   returnStartTime: string | null;
+  arrivalRecord?: ArrivalRecord | null;
 }
 
-function formatReturnDrive(startIso: string | null): string {
-  if (!startIso) return '--';
-  const ms = Date.now() - new Date(startIso).getTime();
-  if (ms < 0) return '0m';
+function formatReturnDrive(ms: number | null): string {
+  if (ms === null) return '--';
   const mins = Math.round(ms / 60000);
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60);
@@ -69,7 +69,7 @@ function CheckItem({ label, checked, onToggle }: { label: string; checked: boole
 }
 
 export default function ShiftArrivalModal({
-  visible, onClose, onConfirm, returnStartTime,
+  visible, onClose, onConfirm, returnStartTime, arrivalRecord,
   postTripVerified = false, preTripUnconfirmed = false, initialOdometer, errorText, recoveryAction,
 }: ShiftArrivalModalProps) {
   const { user } = useAuth();
@@ -125,7 +125,7 @@ export default function ShiftArrivalModal({
   const hasOdometer = totalMiles !== '' && Number(totalMiles) <= 5000;
   const allChecked = postTripDone && paperworkDone && hasOdometer && !readingMileage;
 
-  const returnDrive = formatReturnDrive(returnStartTime);
+  const returnDrive = formatReturnDrive(returnDriveDurationMs({ returnStartIso: returnStartTime, arrivedAtIso: arrivalRecord?.arrivedAtIso ?? null, nowMs: Date.now() }));
 
   const handleConfirm = useCallback(async () => {
     if (busy) return;
@@ -162,10 +162,10 @@ export default function ShiftArrivalModal({
 
             {/* Summary cards */}
             <View style={s.summaryRow}>
-              <View style={s.summaryItem}>
+              {returnStartTime && arrivalRecord?.endMode !== 'already_at_yard' ? <View style={s.summaryItem}>
                 <Text style={s.summaryLabel}>RETURN DRIVE</Text>
                 <Text style={s.summaryValue}>{returnDrive}</Text>
-              </View>
+              </View> : null}
               {startOdometer ? (
                 <View style={s.summaryItem}>
                   <Text style={s.summaryLabel}>START ODO</Text>

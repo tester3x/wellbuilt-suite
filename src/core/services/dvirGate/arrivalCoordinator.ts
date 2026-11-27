@@ -44,7 +44,7 @@ export type MarkArrivedResult = {
  */
 export async function markArrived(
   deps: DvirGateDeps,
-  opts?: { nowIso?: string },
+  opts?: { nowIso?: string; endMode?: 'already_at_yard' },
 ): Promise<MarkArrivedResult> {
   const preTrip = await checkPreTripTransition(deps);
   if (!preTrip.allowed) return { arrived: false, launched: false, showFinalModal: false, shiftId: null, reason: preTrip.reason };
@@ -56,6 +56,7 @@ export async function markArrived(
     nowIso: opts?.nowIso ?? new Date().toISOString(),
     postTripAlreadyComplete,
     existing,
+    endMode: opts?.endMode,
   });
 
   // Persist BEFORE launching: a process death during the handoff must still
