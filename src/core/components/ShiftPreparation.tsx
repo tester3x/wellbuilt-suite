@@ -1,5 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {AppState,View,Text,Pressable} from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useAuth} from '../context/AuthContext';
 import {getCurrentShiftId} from '../services/shiftTracking';
 import {preparedShiftJsa,prepareShiftJsa} from '../services/preparedShiftJsa';
@@ -7,6 +8,7 @@ import {preparedShiftJsa,prepareShiftJsa} from '../services/preparedShiftJsa';
 /** Preparation remains visible until a complete, durable bundle is available.
  * Losing service never removes a previously prepared shift's content. */
 export default function ShiftPreparation(){
+ const insets=useSafeAreaInsets();
  const {shiftActive}=useAuth();const [state,setState]=useState<'loading'|'ready'|'error'>('loading');
  const [retry,setRetry]=useState(0);
  useEffect(()=>{if(!shiftActive)return;let live=true,running=false;
@@ -19,5 +21,5 @@ export default function ShiftPreparation(){
   return()=>{live=false;foreground.remove();connection?.remove();};
  },[shiftActive,retry]);
  if(!shiftActive||state==='ready')return null;
- return <View style={{padding:12,backgroundColor:'#32280a'}}><Text style={{color:'#ffe295',textAlign:'center'}}>{state==='loading'?'Preparing offline jobs…':'Offline jobs are not ready yet. Connect to finish shift preparation.'}</Text>{state==='error'&&<Pressable onPress={()=>setRetry(v=>v+1)}><Text style={{color:'#ffffff',textAlign:'center',paddingTop:8}}>Retry preparation</Text></Pressable>}</View>;
+ return <View style={{padding:12,paddingTop:insets.top+12,backgroundColor:'#32280a'}}><Text style={{color:'#ffe295',textAlign:'center'}}>{state==='loading'?'Preparing offline jobs…':'Offline jobs are not ready yet. Connect to finish shift preparation.'}</Text>{state==='error'&&<Pressable onPress={()=>setRetry(v=>v+1)}><Text style={{color:'#ffffff',textAlign:'center',paddingTop:8}}>Retry preparation</Text></Pressable>}</View>;
 }
