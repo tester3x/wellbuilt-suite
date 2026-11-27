@@ -14,7 +14,9 @@
     "backendRegression": 40,
     "backendTypescript": "passed",
     "etcMotionRegression": 44,
-    "native": "Pending S24 install and human pre-trip/post-trip confirmations; S24 off shift at inspection."
+    "native": "S24 install succeeded; package versionCode 121 confirmed; Home and Start Shift checklist open normally. Left at user document/vehicle confirmations. Full Already-at-yard -> post-trip -> final-close test awaits user pre-trip/post-trip attestations.",
+    "backendLive": "Only closeDriverShift deployed; ACTIVE; downloaded adapter, core and unfinished-job guard byte-match 2feb4e36f2def1455f0c1d9f571b33a5d06ae60b.",
+    "fold": "Not operated or installed for this task."
   },
   "reconciliation": {
     "remoteSurvey": "All remote branches freshly fetched and inspected; no new desktop feature commits since last reconciled source. Historical suite-etc-start-hos branch is divergent older recovery history, not release source; preserve current replacement implementations.",
@@ -22,5 +24,28 @@
     "preRepairHead": "03e1551d604871724dc9f6b19b64d92df60dd761",
     "unpublishedOtherMachineChanges": "Cannot inspect unpushed work on another computer."
   },
-  "versionCode": 121
+  "versionCode": 121,
+  "hosting": "Matching web driver-log interpretation committed only; not deployed.",
+  "build": {
+    "sourceCommit": "cc546d85c5c87d0ce60d6cb704db7daf9669623e",
+    "branch": "codex/suite-equipment-entry-20261012",
+    "checkout": "C:\\dev\\TicketTimeExpo\\tmp\\suite-equipment-entry-20261012",
+    "remote": "https://github.com/tester3x/wellbuilt-suite.git",
+    "owner": "01a1cd39-d530-7ac2-ae54-c509b9310cfc",
+    "reservation": "android-release-v121",
+    "reservationTagObject": "a562d8058a957aeb947119e1d45100062973e621",
+    "profile": "preview",
+    "buildMethod": "local Android SDK/Gradle in registered home",
+    "sourceCopy": false,
+    "cloudBuild": false,
+    "package": "com.wellbuilt.suite",
+    "versionCode": 121,
+    "signingSha256": "a7d1b6fb35c848239ccdc52e0e1c36be9a96b0786ff5628fa9b98bae80fa6aa6",
+    "artifact": "C:\\dev\\release-artifacts\\suite-121-cc546d8\\com.wellbuilt.suite-vc121.apk",
+    "apkSha256": "66eac0c9662b7fc1f1b11933fff9c452075db21583949f44f120535873b0f663",
+    "completedAt": "2026-11-27T00:39:29.610Z",
+    "installed": [
+      "S24"
+    ]
+  }
 }
