@@ -14,7 +14,7 @@
     "backendRegression": 40,
     "backendTypescript": "passed",
     "etcMotionRegression": 44,
-    "native": "S24 install succeeded; package versionCode 121 confirmed; Home and Start Shift checklist open normally. Left at user document/vehicle confirmations. Full Already-at-yard -> post-trip -> final-close test awaits user pre-trip/post-trip attestations.",
+    "native": "PASS: current-period post-trip accepted, final modal showed verified Post-Trip and no RETURN DRIVE row, driver completed final sign-off. Off-shift Home shows Start Shift.",
     "backendLive": "Only closeDriverShift deployed; ACTIVE; downloaded adapter, core and unfinished-job guard byte-match 2feb4e36f2def1455f0c1d9f571b33a5d06ae60b.",
     "fold": "Not operated or installed for this task."
   },
@@ -47,5 +47,30 @@
     "installed": [
       "S24"
     ]
+  },
+  "devicePass": {
+    "shiftId": "2026-11-26_185940",
+    "serverLoginCount": 1,
+    "serverLogoutCount": 1,
+    "serverDepartReturnCount": 0,
+    "serverLogoutAt": "2026-11-27T01:22:54.637Z",
+    "logoutEndMode": "already_at_yard",
+    "authorityOpenPeriodId": null,
+    "lastClosedPeriodId": "2026-11-26_185940",
+    "dayCurrentShiftId": "",
+    "signedInspections": {
+      "preTrip": {
+        "signedLocalTime": "2026-11-26 19:00:03 America/Chicago",
+        "reportDigest": "b80beed3128db9b1c7848d1e9e48141bf6e57a77406261bc01d524561b132777",
+        "localReport": "Opened Report Details; all categories and original signer/time present; Sync pending"
+      },
+      "postTrip": {
+        "signedLocalTime": "2026-11-26 19:19:49 America/Chicago",
+        "reportDigest": "e1c55e7821ec00381688ae43cce8ef279e6006ef4f82c20f9987d97b88485ae2",
+        "localReport": "Opened Report Details; all categories and original signer/time present; Saved signed phase on this device"
+      },
+      "scope": "Firebase completion digests present; full report cloud query returned no matching copies. Local signed phases verified by read-only UI inspection, not claimed as cloud-uploaded or independently byte-hashed."
+    },
+    "actions": "Read-only Firebase verification and local report viewing only. No signatures, inspections or history edited; no printing; Fold untouched."
   }
 }
